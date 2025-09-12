@@ -285,7 +285,6 @@ class WindowManager(ManagerProcess):
     def move_bead(self, id: int, x, y):
         graphic = self._bead_graphics[id]
         graphic.moveBy(x, y)
-        self.update_bead_rois()
 
     def add_bead(self, pos: QPoint):
         # Add a bead graphic

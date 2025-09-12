@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame,
                              QGraphicsOpacityEffect)
 
 from magscope import Message, AcquisitionMode, ManagerProcess
-from magscope.gui import (CollapsibleGroupBox, FlashingLabel, LabeledCheckbox, LabeledLineEditWithValue,
+from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEditWithValue,
                           LabeledStepperLineEdit, LabeledLineEdit)
 from magscope.gui.widgets import FlashLabel
 

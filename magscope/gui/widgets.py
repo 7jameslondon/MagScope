@@ -2,6 +2,7 @@
 Miscellaneous custom Qt widgets for the GUI
 """
 from __future__ import annotations
+from time import time
 from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QPropertyAnimation, QTimer, QSettings, Qt,
                           QRect, pyqtSignal, QPointF, QPoint, QMimeData, QRectF)
@@ -378,6 +379,7 @@ class BeadGraphic(QGraphicsRectItem):
     def __init__(self, parent: WindowManager, id: int, x, y, width, view_scene):
         self._parent: WindowManager = parent
         self.id: int = id
+        self._is_moving: bool = False
         self._locked: bool
         self.scene_rect = None
         self.border_color_unlocked = (0, 255, 255, 255)
@@ -489,15 +491,30 @@ class BeadGraphic(QGraphicsRectItem):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             value = self.validate_move(value)
             self.move_label()
+            if not self._is_moving:
+                self.on_move_completed()
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event):
+        # Left click - Maybe move
+        if event.button() == Qt.MouseButton.LeftButton and not self.locked:
+            self._is_moving = True
         # Right Click - Delete self
-        if event.button() == Qt.MouseButton.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             if not self.locked:
                 self._parent.remove_bead(self.id)
         else:
             super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        # Call function when done moving
+        if event.button() == Qt.MouseButton.LeftButton and self._is_moving and not self.locked:
+            self._is_moving = False
+            self.on_move_completed()
+        super().mouseReleaseEvent(event)
+
+    def on_move_completed(self):
+        self._parent.update_bead_rois()
 
 
 class FlashLabel(QLabel):
