@@ -352,6 +352,9 @@ class WindowManager(ManagerProcess):
     def update_camera_setting(self, name: str, value: str):
         self.controls.cam_panel.update_camera_setting(name, value)
 
+    def update_video_buffer_purge(self, t: float):
+        self.controls.status_panel.update_video_buffer_purge(t)
+
 
 class LoadingWindow(QMainWindow):
 

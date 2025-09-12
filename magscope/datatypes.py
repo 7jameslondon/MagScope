@@ -57,6 +57,9 @@ class VideoBuffer:
         self.stack_size = self.image_size * self.n_images
         self.buffer_size = self.stack_size * self.n_stacks
 
+        if create:
+            print(f'Creating VideoBuffer with size {self.buffer_size/1e6} MB')
+
         # Setup the buffer and buffer indexes
         self._shm = SharedMemory(
             create=create, name=self.name, size=self.buffer_size)

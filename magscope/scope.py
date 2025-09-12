@@ -1,11 +1,12 @@
-from multiprocessing import Event, freeze_support, Pipe, Lock
+from ctypes import c_uint8
+from multiprocessing import Event, freeze_support, Pipe, Lock, Value
 import numpy as np
 import os
 from typing import TYPE_CHECKING
 from warnings import warn
 import yaml
 
-from magscope import CameraManager, ManagerProcess, Message, VideoBuffer, MatrixBuffer
+from magscope import CameraManager, ManagerProcess, Message, VideoBuffer, MatrixBuffer, VideoProcessorManager
 from magscope.beads import BeadManager
 from magscope.gui import WindowManager
 
@@ -22,6 +23,7 @@ class MagScope:
         self._settings = self._get_default_settings()
         self.bead_manager = BeadManager()
         self.camera_manager = CameraManager()
+        self.video_processor_manager = VideoProcessorManager()
         self.window_manager = WindowManager()
         self.pipes: dict[str, Connection] = {}
         self.locks: dict[str, LockType] = {}
@@ -29,6 +31,7 @@ class MagScope:
         process_instances: list[ManagerProcess] = [
             self.bead_manager,
             self.camera_manager,
+            self.video_processor_manager,
             self.window_manager]
         self.processes: dict[str, ManagerProcess] = self._setup_processes(process_instances)
         self._quitting: Event = Event()
@@ -46,25 +49,7 @@ class MagScope:
 
         # Second, set up multiprocessing resources
         freeze_support()  # To prevent recursion in windows executable
-        self._setup_quitting_events()
-        self._setup_pipes()
-        self._setup_locks()
-        self.video_buffer = VideoBuffer(
-            create=True,
-            locks=self.locks,
-            n_stacks=self._settings['video buffer n stacks'],
-            n_images=self._settings['video buffer n images'],
-            width=self.camera_manager.camera.width,
-            height=self.camera_manager.camera.height,
-            bits=np.iinfo(self.camera_manager.camera.dtype).bits)
-        self.tracks_buffer = MatrixBuffer(
-            create=True,
-            locks=self.locks,
-            name='TracksBuffer',
-            shape=(self._settings['tracks max datapoints'], 7))
-
-        for proc in self.processes.values():
-            proc._camera_type = type(self.camera_manager.camera)
+        self._setup_shared_resources()
 
         # Third, start the managers
         for proc in self.processes.values():
@@ -120,6 +105,32 @@ class MagScope:
         for proc in proc_list:
             proc_dict[proc.name] = proc
         return proc_dict
+
+    def _setup_shared_resources(self):
+        # Create and share locks, pipes, flags, ect
+        video_process_flag = Value(c_uint8, 0)
+        for proc in self.processes.values():
+            proc._camera_type = type(self.camera_manager.camera)
+            proc._video_process_flag = video_process_flag
+        self._setup_quitting_events()
+        self._setup_pipes()
+        self._setup_locks()
+
+        # Create the shared buffers
+        self.video_buffer = VideoBuffer(
+            create=True,
+            locks=self.locks,
+            n_stacks=self._settings['video buffer n stacks'],
+            n_images=self._settings['video buffer n images'],
+            width=self.camera_manager.camera.width,
+            height=self.camera_manager.camera.height,
+            bits=np.iinfo(self.camera_manager.camera.dtype).bits)
+        self.tracks_buffer = MatrixBuffer(
+            create=True,
+            locks=self.locks,
+            name='TracksBuffer',
+            shape=(self._settings['tracks max datapoints'], 7))
+
 
     def _setup_quitting_events(self):
         for name, proc in self.processes.items():

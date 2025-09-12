@@ -1,5 +1,5 @@
 """"
-Miscellaneous small custom Qt widgets for the GUI
+Miscellaneous custom Qt widgets for the GUI
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING
@@ -14,37 +14,6 @@ from PyQt6.QtWidgets import (QCheckBox, QGroupBox, QLineEdit, QSplitter,
 
 if TYPE_CHECKING:
     from magscope.gui.windows import WindowManager
-
-class FlashingLabel(QLabel):
-    """A warning QLabel that alternates colors"""
-
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self._state = False
-        self._timer = None
-        self.setVisible(False)
-
-    def start(self, interval=200):
-        if self._timer is None:
-            self._timer = QTimer(self)
-            self._timer.timeout.connect(self.toggle_color)
-            self._timer.setInterval(interval)  # ms
-            self._timer.start()
-            self.setVisible(True)
-
-    def stop(self):
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
-            self.setVisible(False)
-
-    def toggle_color(self):
-        self._state = not self._state
-        if self._state:
-            self.setStyleSheet("color: red; background-color: white;")
-        else:
-            self.setStyleSheet("color: white; background-color: red;")
-
 
 class LabeledLineEditWithValue(QWidget):
     """Horizontally combined QLabel, QLineedit, and a second QLabel to show the value."""
@@ -155,6 +124,7 @@ class LabeledCheckbox(QWidget):
         self.layout.addWidget(self.checkbox, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.layout.addStretch(1)
+
 
 class LabeledStepperLineEdit(QWidget):
     """Horizontally combined QLabel and QLineedit with a QButton to increment/decrement the value on either side."""
@@ -304,6 +274,7 @@ class CollapsibleGroupBox(QGroupBox):
         arrow = '▼' if expanded else '❯'
         return f' {arrow} {title}'
 
+
 class GripHandle(QSplitterHandle):
     """ Simple class for adding '...' to QSplitter handles."""
     released: pyqtSignal = pyqtSignal()
@@ -366,6 +337,7 @@ class GripHandle(QSplitterHandle):
             for i in range(5):
                 p.drawEllipse(QRect(left + i * 6, cy - 2, 4, 4))
 
+
 class GripSplitter(QSplitter):
     """ Simple class for adding '...' to QSplitter handles."""
     def __init__(self, orientation, name=None, parent=None):
@@ -399,6 +371,7 @@ class GripSplitter(QSplitter):
         if self.setting_name:
             settings = QSettings('MagScope', 'MagScope')
             settings.setValue(self.setting_name, self.sizes())
+
 
 class BeadGraphic(QGraphicsRectItem):
 
@@ -525,3 +498,48 @@ class BeadGraphic(QGraphicsRectItem):
                 self._parent.remove_bead(self.id)
         else:
             super().mousePressEvent(event)
+
+
+class FlashLabel(QLabel):
+    def __init__(self, text=""):
+        super().__init__(text)
+        self._flash_progress = 0.0
+        self._timer = QTimer()
+        self._timer.timeout.connect(self._update_flash)
+        self._step = 0
+
+        # Set initial white text color
+        self.setStyleSheet("color: white;")
+
+    def _update_flash(self):
+        self._step += 1
+
+        # Quick flash to red, then fade back to white
+        if self._step <= 5:
+            self._flash_progress = self._step / 5.0  # 0 to 1
+        else:
+            self._flash_progress = 1.0 - (self._step - 5) / 35.0  # 1 to 0
+
+        # Calculate color (white to red interpolation)
+        red = int(255)
+        green = int(255 * (1 - self._flash_progress))
+        blue = int(255 * (1 - self._flash_progress))
+
+        self.setStyleSheet(f"color: rgb({red}, {green}, {blue});")
+
+        # Stop after 40 steps
+        if self._step >= 40:
+            self._timer.stop()
+            self._step = 0
+            self.setStyleSheet("color: white;")
+
+    def setText(self, text):
+        if text != self.text():
+            super().setText(text)
+            # Start flash animation
+            if self._timer.isActive():
+                self._timer.stop()
+            self._step = 0
+            self._timer.start(15)
+        else:
+            super().setText(text)

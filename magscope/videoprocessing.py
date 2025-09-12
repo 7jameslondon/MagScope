@@ -8,74 +8,97 @@ import cupy as cp
 import tifffile
 from typing import TYPE_CHECKING
 
-from magscope import VideoBuffer, MatrixBuffer, AcquisitionMode
+from magscope import VideoBuffer, MatrixBuffer, AcquisitionMode, ManagerProcess, Message
+from magscope.gui import WindowManager
 from magscope.utils import crop_stack_to_rois, PoolVideoFlag, date_timestamp_str
 import magtrack
 
 if TYPE_CHECKING:
-    from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.synchronize import Lock as LockType
+    from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.queues import Queue as QueueType
     ValueTypeUI8 = Synchronized[int]
 
-class VideoWorkerPool:
-    def __init__(self,
-                 n_workers: int,
-                 video_flag: ValueTypeUI8,
-                 locks: dict[str, LockType]):
-        self._tasks: QueueType = Queue(maxsize=n_workers)
-        self._n_workers: int = n_workers
+class VideoProcessorManager(ManagerProcess):
+    def __init__(self):
+        super().__init__()
+        self._tasks: QueueType | None = None
+        self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
-        self._locks: dict[str, LockType] = locks
-        self._video_flag: ValueTypeUI8 = video_flag
         self._busy_count: ValueTypeUI8 = Value(c_uint8, 0)
-        gpu_lock = Lock()
+        self._gpu_lock: LockType = Lock()
+
+        # TODO: Check implementation
+        self._save_profiles = False
+        self._zlut = None
+
+    def run(self):
+        super().run()
+
+        self._n_workers = self._settings['video processors n']
+        self._tasks = Queue(maxsize=self._n_workers)
 
         # Create the workers
-        for _ in range(n_workers):
+        for _ in range(self._n_workers):
             worker = VideoWorker(tasks=self._tasks,
-                                 locks=locks,
-                                 video_flag=self._video_flag,
+                                 locks=self._locks,
+                                 video_flag=self._video_process_flag,
                                  busy_count=self._busy_count,
-                                 gpu_lock=gpu_lock)
+                                 gpu_lock=self._gpu_lock)
             self._workers.append(worker)
 
         # Start the workers
         for worker in self._workers:
             worker.start()
 
-    def __del__(self):
-        self.close()
-        self.join()
-        self.terminate()
+        while self._running:
+            self._check_pipe()
 
-    def add_task(self, kwargs):
-        self._tasks.put(kwargs)
+            # Check if images are ready for image processing
+            if self._acquisition_on:
+                if self._video_process_flag.value == PoolVideoFlag.READY:
+                    if self._video_buffer.check_read_stack():
+                        self._video_process_flag.value = PoolVideoFlag.RUNNING
+                        self._add_task()
 
-    def close(self):
+            # Update the GUI's status info
+            pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
+            message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
+            self._send(message)
+
+    def quit(self):
+        super().quit()
+
+        # Close
         if hasattr(self, '_workers'):
             for _ in self._workers:
                 self._tasks.put(None)
 
-    def join(self):
+        # Join
         if hasattr(self, '_workers'):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.join()
 
-    def terminate(self):
+        # Terminate
         if hasattr(self, '_workers'):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.terminate()
 
-    @property
-    def busy_count(self) -> int:
-        return self._busy_count.value
+    def _add_task(self):
+        kwargs = {
+            'acquisition_dir': self._acquisition_dir,
+            'acquisition_dir_on': self._acquisition_dir_on,
+            'acquisition_mode': self._acquisition_mode,
+            'bead_rois': self._bead_rois,
+            'magnification': self._settings['magnification'],
+            'nm_per_px': self._camera_type.nm_per_px,
+            'save_profiles': self._save_profiles,
+            'zlut': self._zlut
+        }
 
-    @property
-    def n_workers(self) -> int:
-        return self._n_workers
+        self._tasks.put(kwargs)
 
 
 class VideoWorker(Process):

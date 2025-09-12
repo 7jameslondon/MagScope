@@ -9,7 +9,6 @@ from warnings import warn
 
 from magscope import BufferUnderflow, ManagerProcess, Message, VideoBuffer
 from magscope.gui import WindowManager
-from magscope.videoprocessing import VideoWorkerPool
 from magscope.utils import PoolVideoFlag
 
 if TYPE_CHECKING:
@@ -20,24 +19,9 @@ class CameraManager(ManagerProcess):
     def __init__(self):
         super().__init__()
         self.camera: CameraABC = DummyCamera()
-        self._pool: VideoWorkerPool | None = None
-        self._pool_video_flag: ValueTypeUI8 | None = None
-        self._video_buffer: VideoBuffer | None = None
-
-        # TODO: Check implementation
-        self._save_profiles = False
-        self._zlut = None
 
     def run(self):
         super().run()
-
-        # Set up the parallel video processing pool
-        self._pool_video_flag = Value(c_uint8, 0)
-        self._pool = VideoWorkerPool(
-            n_workers=self._settings['video processors n'],
-            video_flag=self._pool_video_flag,
-            locks=self._locks
-        )
 
         # Attempt to connect to the camera
         try:
@@ -53,9 +37,6 @@ class CameraManager(ManagerProcess):
         while self._running:
             self._do_main_loop()
 
-        self._pool.close()
-        self._pool.join()
-
     def __del__(self):
         self._running = False
 
@@ -66,10 +47,17 @@ class CameraManager(ManagerProcess):
             del self._pool
 
     def _do_main_loop(self):
-        # Update the GUI's status info
-        pool_text = f'{self._pool.busy_count}/{self._pool.n_workers} busy'
-        message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
-        self._send(message)
+        # Check if images are done processing
+        if self._acquisition_on:
+            if self._video_process_flag.value == PoolVideoFlag.FINISHED:
+                self._release_pool_buffers()
+                self._video_process_flag.value = PoolVideoFlag.READY
+        else:
+            if self._video_process_flag.value == PoolVideoFlag.READY:
+                self._release_unattached_buffers()
+            elif self._video_process_flag.value == PoolVideoFlag.FINISHED:
+                self._release_pool_buffers()
+                self._video_process_flag.value = PoolVideoFlag.READY
 
         # Check if the video buffer is about to overflow
         fraction_available = (1 - self._video_buffer.get_level())
@@ -77,43 +65,15 @@ class CameraManager(ManagerProcess):
         if frames_available <= 1:
             warn(f'Video buffer overflowed. Purging.')
             self._purge_buffers()
+            message = Message(WindowManager, WindowManager.update_video_buffer_purge, time())
+            self._send(message)
 
         # Check for new images from the camera
         if self.camera.is_connected:
             self.camera.fetch()
 
-        # Check if images are ready for image processing
-        if self._acquisition_on:
-            if self._pool_video_flag.value == PoolVideoFlag.READY:
-                if self._video_buffer.check_read_stack():
-                    self._pool_video_flag.value = PoolVideoFlag.RUNNING
-                    self._start_batch_on_pool()
-            elif self._pool_video_flag.value == PoolVideoFlag.FINISHED:
-                self._release_pool_buffers()
-                self._pool_video_flag.value = PoolVideoFlag.READY
-        else:
-            if self._pool_video_flag.value == PoolVideoFlag.READY:
-                self._release_unattached_buffers()
-            elif self._pool_video_flag.value == PoolVideoFlag.FINISHED:
-                self._release_pool_buffers()
-                self._pool_video_flag.value = PoolVideoFlag.READY
-
         # Check the pipe
         self._check_pipe()
-
-    def _start_batch_on_pool(self):
-        kwargs = {
-            'acquisition_dir': self._acquisition_dir,
-            'acquisition_dir_on': self._acquisition_dir_on,
-            'acquisition_mode': self._acquisition_mode,
-            'bead_rois': self._bead_rois,
-            'magnification': self._settings['magnification'],
-            'nm_per_px': self._camera_type.nm_per_px,
-            'save_profiles': self._save_profiles,
-            'zlut': self._zlut
-        }
-
-        self._pool.add_task(kwargs)
 
     def _release_unattached_buffers(self):
         if self._video_buffer is None:
@@ -159,7 +119,8 @@ class CameraManager(ManagerProcess):
             self.camera[name] = value
         except Exception as e:
             warn(f'Could not set camera setting {name} to {value}: {e}')
-        self.get_camera_setting(name)
+        for setting in self.camera.settings:
+            self.get_camera_setting(setting)
 
 
 class CameraABC(metaclass=abc.ABCMeta):

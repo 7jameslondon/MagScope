@@ -7,18 +7,20 @@ import time
 import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
-from PyQt6.QtCore import Qt, QObject, QPoint, QRectF, QTimer, QVariant, pyqtSignal, QSettings
+from PyQt6.QtCore import Qt, QObject, QPoint, QRectF, QTimer, QVariant, pyqtSignal, QSettings, QPropertyAnimation
 from PyQt6.QtGui import (QBrush, QColor, QCursor, QDoubleValidator, QGuiApplication,
                          QImage, QIntValidator, QPixmap, QTextOption)
 from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame,
                              QGraphicsPixmapItem, QGraphicsScene, QGraphicsView,
                              QGridLayout, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QMainWindow, QProgressDialog, QPushButton,
-                             QRadioButton, QTextEdit, QVBoxLayout, QWidget, QComboBox, QProgressBar)
+                             QRadioButton, QTextEdit, QVBoxLayout, QWidget, QComboBox, QProgressBar,
+                             QGraphicsOpacityEffect)
 
 from magscope import Message, AcquisitionMode, ManagerProcess
 from magscope.gui import (CollapsibleGroupBox, FlashingLabel, LabeledCheckbox, LabeledLineEditWithValue,
                           LabeledStepperLineEdit, LabeledLineEdit)
+from magscope.gui.widgets import FlashLabel
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
@@ -271,6 +273,10 @@ class StatusPanel(ControlPanel):
         self.video_buffer_status_bar.setOrientation(Qt.Orientation.Horizontal)
         self.layout.addWidget(self.video_buffer_status_bar)
 
+        # Video Buffer Purge
+        self.video_buffer_purge_label = FlashLabel('Video Buffer Purged at: ')
+        self.layout.addWidget(self.video_buffer_purge_label)
+
     def update_display_rate(self, text):
         self.dot = (self.dot + 1) % 4
         dot_text = '.'*self.dot
@@ -283,6 +289,11 @@ class StatusPanel(ControlPanel):
         self.video_buffer_status.setText(f'Video Buffer: {text}')
         value = int(text.split('%')[0])
         self.video_buffer_status_bar.setValue(value)
+
+    def update_video_buffer_purge(self, t: float):
+        string = time.strftime("%I:%M:%S %p", time.localtime(t))
+        self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {string}')
+
 
 
 class ForceCalibartionPanel:

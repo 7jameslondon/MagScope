@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from multiprocessing.connection import Connection
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
+    from multiprocessing.sharedctypes import Synchronized
+    ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraABC
 
 class SingletonMeta(type):
@@ -47,6 +49,7 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
         self._settings = None
         self._tracks_buffer: MatrixBuffer | None = None
         self._video_buffer: VideoBuffer | None = None
+        self._video_process_flag: ValueTypeUI8 | None = None
 
     def run(self):
         """ Start the process when 'start()' is called
