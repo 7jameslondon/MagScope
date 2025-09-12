@@ -1,0 +1,5 @@
+.idea/
+dev/
+*.log
+*.whl
+/magscope/settings.yaml

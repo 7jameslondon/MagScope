@@ -1,0 +1,9 @@
+bead roi width: 256
+
+magnification: 100
+
+video processors n: 3
+video buffer n stacks: 20
+video buffer n images: 20
+
+tracks max datapoints: 1000000

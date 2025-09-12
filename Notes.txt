@@ -1,0 +1,38 @@
+* Should be able to run with out any hardware. Even if hardware has been setup.
+* Should be Multi-processing based
+* Should have a simple system for piping information and function calls
+* Each process should be able to run seperatly
+* Shared Memory should be managed by its own process
+* Remove logging
+
+* Rename motor manger hardware manager
+* rename videobuffer ImageStack
+
+
+How to get started:
+
+Install Python on your computer
+Setup a new virtual enviorment
+Install MagScope
+Run MagScope (by default this will simulate motors and a camera)
+
+There are several ways to Run MagScope
+you can import it to a notebook or run a main file in an editor like PyCharm or VSCode
+	import magscope
+	
+	scope = magscope.Scope
+	scope.start()
+
+Setup your own camera
+Test the camera
+Run MagScope with the camera
+
+	import magscope
+	
+	scope = magscope.Scope
+	scope.camera = myCustomCamera
+	scope.start()
+
+Setup your own fine z-motor (such a pizeo motor you use to make a zlut)
+Test
+Run with MagScope
