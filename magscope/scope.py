@@ -9,6 +9,7 @@ import yaml
 from magscope import CameraManager, ManagerProcess, Message, VideoBuffer, MatrixBuffer, VideoProcessorManager
 from magscope.beads import BeadManager
 from magscope.gui import WindowManager
+from magscope.hardware import HardwareManager
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
@@ -17,50 +18,57 @@ if TYPE_CHECKING:
 
 class MagScope:
     def __init__(self):
-        self._running: bool = False
-        self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
-        self._settings_path = 'settings.yaml'
-        self._settings = self._get_default_settings()
         self.bead_manager = BeadManager()
         self.camera_manager = CameraManager()
-        self.video_processor_manager = VideoProcessorManager()
-        self.window_manager = WindowManager()
-        self.pipes: dict[str, Connection] = {}
+        self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
+        self._hardware: dict[str, HardwareManager] = {}
+        self._hardware_buffers: dict[str, MatrixBuffer] = {}
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['VideoBuffer', 'TracksBuffer']
-        process_instances: list[ManagerProcess] = [
-            self.bead_manager,
-            self.camera_manager,
-            self.video_processor_manager,
-            self.window_manager]
-        self.processes: dict[str, ManagerProcess] = self._setup_processes(process_instances)
+        self.pipes: dict[str, Connection] = {}
+        self.processes: dict[str, ManagerProcess] = {}
         self._quitting: Event = Event()
         self.quitting_events: dict[str, EventType] = {}
+        self._running: bool = False
+        self._settings = self._get_default_settings()
+        self._settings_path = 'settings.yaml'
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
+        self.video_processor_manager = VideoProcessorManager()
+        self.window_manager = WindowManager()
 
     def start(self):
         if self._running:
             warn('MagScope is already running')
         self._running = True
 
-        # First, attempt to load the settings file
-        self._load_settings()
+        #  --- Collect separate processes in a dictionary ---
+        proc_list: list[ManagerProcess] = [
+            self.bead_manager,
+            self.camera_manager,
+            self.video_processor_manager,
+            self.window_manager
+        ]
+        proc_list.extend(self._hardware.values())
+        for proc in proc_list:
+            self.processes[proc.name] = proc
 
-        # Second, set up multiprocessing resources
+        # --- Setup and share resources ---
         freeze_support()  # To prevent recursion in windows executable
+        self._load_settings()
         self._setup_shared_resources()
 
-        # Third, start the managers
+        # --- Start the managers ---
         for proc in self.processes.values():
             proc.start() # calls 'run()'
 
+        # --- Wait in loop for inter-process messages ---
         print('MagScope main loop starting ...')
         while self._running:
             self._check_pipes()
         print('MagScope main loop ended.')
 
-        # Forth, join the parelle processes
+        # --- End program by joining each process ---
         for name, proc in self.processes.items():
             proc.join()
             print(name, 'ended.')
@@ -99,20 +107,18 @@ class MagScope:
             else:
                 warn(f'Unknown pipe {message.to} with {message}')
 
-    @staticmethod
-    def _setup_processes(proc_list: list[ManagerProcess]):
-        proc_dict = {}
-        for proc in proc_list:
-            proc_dict[proc.name] = proc
-        return proc_dict
-
     def _setup_shared_resources(self):
-        # Create and share locks, pipes, flags, ect
+        # Create and share: locks, pipes, flags, types, ect
+        camera_type = type(self.camera_manager.camera)
+        hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
         video_process_flag = Value(c_uint8, 0)
-        for proc in self.processes.values():
-            proc._camera_type = type(self.camera_manager.camera)
+        for name, proc in self.processes.items():
+            proc._camera_type = camera_type
+            proc._hardware_types = hardware_types
+            proc._magscope_quitting = self._quitting
+            proc._settings = self._settings
             proc._video_process_flag = video_process_flag
-        self._setup_quitting_events()
+            self.quitting_events[name] = proc._quitting
         self._setup_pipes()
         self._setup_locks()
 
@@ -124,20 +130,24 @@ class MagScope:
             n_images=self._settings['video buffer n images'],
             width=self.camera_manager.camera.width,
             height=self.camera_manager.camera.height,
-            bits=np.iinfo(self.camera_manager.camera.dtype).bits)
+            bits=np.iinfo(self.camera_manager.camera.dtype).bits
+        )
         self.tracks_buffer = MatrixBuffer(
             create=True,
             locks=self.locks,
             name='TracksBuffer',
-            shape=(self._settings['tracks max datapoints'], 7))
-
-
-    def _setup_quitting_events(self):
-        for name, proc in self.processes.items():
-            proc._magscope_quitting = self._quitting
-            self.quitting_events[name] = proc._quitting
+            shape=(self._settings['tracks max datapoints'], 7)
+        )
+        for name, hardware in self._hardware.items():
+            self._hardware_buffers[name] = MatrixBuffer(
+                create=True,
+                locks=self.locks,
+                name=name,
+                shape=hardware.buffer_shape
+            )
 
     def _setup_locks(self):
+        self.lock_names.extend(self._hardware.keys())
         for name in self.lock_names:
             self.locks[name] = Lock()
         for proc in self.processes.values():
@@ -169,9 +179,6 @@ class MagScope:
             except yaml.YAMLError as e:
                 warn(f"Error loading settings file {self._settings_path}: {e}")
 
-        for proc in self.processes.values():
-            proc.set_settings(self._settings)
-
     @property
     def settings_path(self):
         return self._settings_path
@@ -192,3 +199,6 @@ class MagScope:
         if self._running:
             for pipe in self.pipes.values():
                 pipe.send(Message(ManagerProcess, ManagerProcess.set_settings, value))
+
+    def add_hardware(self, hardware: HardwareManager):
+        self._hardware[hardware.name] = hardware

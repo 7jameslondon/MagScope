@@ -1,6 +1,4 @@
-import abc
-from ctypes import c_uint8
-from multiprocessing import Value
+from abc import ABCMeta, abstractmethod
 import numpy as np
 import queue
 from time import time
@@ -10,10 +8,6 @@ from warnings import warn
 from magscope import BufferUnderflow, ManagerProcess, Message, VideoBuffer
 from magscope.gui import WindowManager
 from magscope.utils import PoolVideoFlag
-
-if TYPE_CHECKING:
-    from multiprocessing.sharedctypes import Synchronized
-    ValueTypeUI8 = Synchronized[int]
 
 class CameraManager(ManagerProcess):
     def __init__(self):
@@ -123,7 +117,7 @@ class CameraManager(ManagerProcess):
             self.get_camera_setting(setting)
 
 
-class CameraABC(metaclass=abc.ABCMeta):
+class CameraABC(metaclass=ABCMeta):
     """ Abstract base class for camera implementation """
     bits: int
     dtype: np.dtypes
@@ -158,7 +152,7 @@ class CameraABC(metaclass=abc.ABCMeta):
             self.release_all()
         del self.video_buffer
 
-    @abc.abstractmethod
+    @abstractmethod
     def connect(self, video_buffer):
         """
         Attempts to connect to the camera.
@@ -168,7 +162,7 @@ class CameraABC(metaclass=abc.ABCMeta):
         """
         self.video_buffer = video_buffer
 
-    @abc.abstractmethod
+    @abstractmethod
     def fetch(self):
         """
         Checks if the camera has new images.
@@ -182,7 +176,7 @@ class CameraABC(metaclass=abc.ABCMeta):
         """
         pass
 
-    @abc.abstractmethod
+    @abstractmethod
     def release(self):
         """
         Gives the buffer back to the camera.
@@ -194,13 +188,13 @@ class CameraABC(metaclass=abc.ABCMeta):
         ) > 0:
             self.release()
 
-    @abc.abstractmethod
+    @abstractmethod
     def get_setting(self, name: str) -> str: # noqa
         """ Should return the current value of the setting from the camera """
         if name not in self.settings:
             raise KeyError(f"Unknown setting {name}")
 
-    @abc.abstractmethod
+    @abstractmethod
     def set_setting(self, name: str, value: str):
         """ Should set the value of the setting on the camera """
         if name not in self.settings:

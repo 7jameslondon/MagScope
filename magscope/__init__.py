@@ -2,6 +2,7 @@ from magscope.datatypes import VideoBuffer, MatrixBuffer, BufferUnderflow, Buffe
 from magscope.utils import Message, AcquisitionMode
 
 from magscope.processes import ManagerProcess
+from magscope.hardware import HardwareManager
 from magscope.camera import CameraManager, CameraABC
 from magscope.videoprocessing import VideoProcessorManager
 

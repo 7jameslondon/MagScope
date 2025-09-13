@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from multiprocessing.sharedctypes import Synchronized
     ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraABC
+    from magscope.hardware import HardwareManager
 
 class SingletonMeta(type):
     _instances = {}
@@ -37,15 +38,16 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
         self._acquisition_dir: str | None = None
         self._acquisition_dir_on: bool = False
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
+        self._bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
         self._camera_type: type[CameraABC] | None = None
+        self._hardware_types: dict[str, type[HardwareManager]] = {}
         self._locks: dict[str, LockType] | None = None
+        self._magscope_quitting: EventType | None = None
         self._name: str = type(self).__name__ # Read-only
         self._pipe: Connection | None = None # Pipe back to the 'MagScope' for inter-process communication
-        self._bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
-        self._running: bool = False
         self._quitting: EventType = Event()
-        self._magscope_quitting: EventType | None = None
         self._quit_requested: bool = False # A flag to prevent repeated calls to 'quit()' after one process asks the others to quit
+        self._running: bool = False
         self._settings = None
         self._tracks_buffer: MatrixBuffer | None = None
         self._video_buffer: VideoBuffer | None = None

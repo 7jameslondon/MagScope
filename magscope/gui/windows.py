@@ -9,7 +9,6 @@ from time import time
 from warnings import warn
 
 from magscope import ManagerProcess, Message, VideoBuffer
-from magscope.beads import BeadManager
 from magscope.gui import (VideoViewer, Plots, CameraSettingsPanel, GripSplitter, BeadSelectionPanel, AcquisitionPanel,
                           ObjectiveMotorPanel, LinearMotorPanel, RotaryMotorPanel, ScriptPanel, ZlutPanel,
                           ForceCalibartionPanel, HistogramPanel, PlotSettingsPanel, CollapsibleGroupBox, StatusPanel,
