@@ -21,6 +21,7 @@ from magscope import Message, AcquisitionMode, ManagerProcess
 from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEditWithValue,
                           LabeledStepperLineEdit, LabeledLineEdit)
 from magscope.gui.widgets import FlashLabel
+from magscope.utils import crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
@@ -249,6 +250,80 @@ class CameraSettingsPanel(ControlPanel):
         self.settings[name].value_label.setText(value)
 
 
+class HistogramPanel(ControlPanel):
+
+    def __init__(self, parent: WindowManager):
+        super().__init__(parent)
+
+        # Groupbox
+        self.groupbox = CollapsibleGroupBox('Histogram')
+
+        # Layout
+        layout = QVBoxLayout()
+        self.groupbox.setContentLayout(layout)
+
+        # Enable
+        self.enable = LabeledCheckbox(
+            label_text='Enabled',
+            callback=self.clear,
+            widths=(50, 0))
+        layout.addWidget(self.enable)
+
+        # Only beads
+        self.only_beads = LabeledCheckbox(
+            label_text='Only Measure Bead ROIs', default=True)
+        layout.addWidget(self.only_beads)
+
+        # Histogram
+        self.n_bins = 256
+        self.histogram_widget = pg.PlotWidget()
+        self.histogram_widget.setMaximumHeight(150)
+        self.histogram_widget.setLabel('left', 'Count')
+        self.histogram_widget.setLabel('bottom', 'Intensity')
+        self.histogram_widget.getAxis('left').setStyle(showValues=False,
+                                                       tickLength=0)
+        self.histogram_widget.getAxis('bottom').setStyle(showValues=False,
+                                                         tickLength=0)
+        self.histogram_widget.setMouseEnabled(False, False)
+        self.histogram_widget.setMenuEnabled(False)
+        self.histogram_widget.hideButtons()
+        self.histogram_widget.getViewBox().setMouseEnabled(False, False)
+        self.histogram_widget.getViewBox().setMenuEnabled(False)
+        self.histogram_widget.enableAutoRange(False)
+        layout.addWidget(self.histogram_widget)
+        bins = np.arange(self.n_bins)
+        self.histogram_item = pg.BarGraphItem(
+            x0=bins,  # Left edges of bins
+            x1=bins + 1,  # Right edges of bins
+            height=np.zeros(self.n_bins),
+            brush='w')
+        self.histogram_widget.addItem(self.histogram_item)
+
+    def update(self, data):
+        if self.enable.checkbox.isChecked() and not self.groupbox.collapsed:
+            dtype = self._parent._camera_type.dtype
+            max_int = 2**self._parent._camera_type.bits
+            shape = self._parent._video_buffer.image_shape
+            image = np.frombuffer(data, dtype).reshape(shape)
+
+            if self.only_beads.checkbox.isChecked():
+                bead_rois = self._parent._bead_rois
+                if len(bead_rois) > 0:
+                    image = crop_stack_to_rois(
+                        np.swapaxes(image, 0, 1)[:, :, None], list(bead_rois.values()))
+                else:
+                    self.clear()
+                    return
+
+            binned_data, _ = np.histogram(image, bins=256, range=(0, max_int))
+            # fast safe log to prevent log(0)
+            binned_data = np.log(binned_data + 1)
+            self.histogram_item.setOpts(height=binned_data)
+
+    def clear(self):
+        self.histogram_item.setOpts(height=np.zeros(self.n_bins))
+
+
 class StatusPanel(ControlPanel):
     def __init__(self, parent: WindowManager):
         super().__init__(parent)
@@ -294,6 +369,10 @@ class StatusPanel(ControlPanel):
         string = time.strftime("%I:%M:%S %p", time.localtime(t))
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {string}')
 
+
+#############################################
+#############################################
+#############################################
 
 
 class ForceCalibartionPanel:
@@ -424,79 +503,6 @@ class ForceCalibartionPanel:
         elif direction == 'A<-B':
             self._parent.app.move_motor_signal.emit('linear_motor', 'force_ramp',
                                                     (stop, start, rate, speed))
-
-
-class HistogramPanel:
-
-    def __init__(self, parent):
-        self._parent = parent
-
-        # Groupbox
-        self.groupbox = CollapsibleGroupBox('Histogram')
-
-        # Layout
-        layout = QVBoxLayout()
-        self.groupbox.setContentLayout(layout)
-
-        # Enable
-        self.enable = LabeledCheckbox(label_text='Enabled',
-                                                   callback=self.clear,
-                                                   widths=(50, 0))
-        layout.addWidget(self.enable)
-
-        # Only beads
-        self.only_beads = LabeledCheckbox(
-            label_text='Only Measure Bead ROIs', default=True)
-        layout.addWidget(self.only_beads)
-
-        # Histogram
-        self.n_bins = 256
-        self.histogram_widget = pg.PlotWidget()
-        self.histogram_widget.setMaximumHeight(150)
-        self.histogram_widget.setLabel('left', 'Count')
-        self.histogram_widget.setLabel('bottom', 'Intensity')
-        self.histogram_widget.getAxis('left').setStyle(showValues=False,
-                                                       tickLength=0)
-        self.histogram_widget.getAxis('bottom').setStyle(showValues=False,
-                                                         tickLength=0)
-        self.histogram_widget.setMouseEnabled(False, False)
-        self.histogram_widget.setMenuEnabled(False)
-        self.histogram_widget.hideButtons()
-        self.histogram_widget.getViewBox().setMouseEnabled(False, False)
-        self.histogram_widget.getViewBox().setMenuEnabled(False)
-        self.histogram_widget.enableAutoRange(False)
-        layout.addWidget(self.histogram_widget)
-        bins = np.arange(self.n_bins)
-        self.histogram_item = pg.BarGraphItem(
-            x0=bins,  # Left edges of bins
-            x1=bins + 1,  # Right edges of bins
-            height=np.zeros(self.n_bins),
-            brush='w')
-        self.histogram_widget.addItem(self.histogram_item)
-
-    def update(self, data):
-        if self.enable.checkbox.isChecked() and not self.groupbox.collapsed:
-            dtype = magscope.camera.ImplementedCamera.dtype
-            max_int = 2**magscope.camera.ImplementedCamera.bits
-            shape = self._parent.app.video_buf.image_shape
-            image = np.frombuffer(data, dtype).reshape(shape)
-
-            if self.only_beads.checkbox.isChecked():
-                bead_rois = self._parent.app.bead_manager.rois
-                if bead_rois.shape[0] > 0:
-                    image = magscope.utils.crop_stack_to_rois(
-                        np.swapaxes(image, 0, 1)[:, :, None], bead_rois[:, 1:])
-                else:
-                    self.clear()
-                    return
-
-            binned_data, _ = np.histogram(image, bins=256, range=(0, max_int))
-            # fast safe log to prevent log(0)
-            binned_data = np.log(binned_data + 1)
-            self.histogram_item.setOpts(height=binned_data)
-
-    def clear(self):
-        self.histogram_item.setOpts(height=np.zeros(self.n_bins))
 
 
 class LinearMotorPanel:

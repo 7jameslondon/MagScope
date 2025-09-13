@@ -2,7 +2,6 @@
 Miscellaneous custom Qt widgets for the GUI
 """
 from __future__ import annotations
-from time import time
 from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QPropertyAnimation, QTimer, QSettings, Qt,
                           QRect, pyqtSignal, QPointF, QPoint, QMimeData, QRectF)
@@ -15,6 +14,7 @@ from PyQt6.QtWidgets import (QCheckBox, QGroupBox, QLineEdit, QSplitter,
 
 if TYPE_CHECKING:
     from magscope.gui.windows import WindowManager
+
 
 class LabeledLineEditWithValue(QWidget):
     """Horizontally combined QLabel, QLineedit, and a second QLabel to show the value."""

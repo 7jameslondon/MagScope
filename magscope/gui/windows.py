@@ -255,7 +255,7 @@ class WindowManager(ManagerProcess):
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
 
             # Update the histogram
-            #self.hist_panel.update(image_bytes)
+            self.controls.histogram_panel.update(image_bytes)
 
             # Increment the display rate counter
             self._display_rate_counter += 1
@@ -422,6 +422,9 @@ class Controls(QWidget):
 
         self.bead_panel = BeadSelectionPanel(self._parent)
         self.add_panel(self.bead_panel, column_id=1)
+
+        self.histogram_panel = HistogramPanel(self._parent)
+        self.add_panel(self.histogram_panel, column_id=1)
 
         # Add a stretch to the bottom of each column
         for column in self.columns:
