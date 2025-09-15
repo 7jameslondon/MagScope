@@ -1,16 +1,18 @@
 from __future__ import annotations
-import os
 from ctypes import c_uint8
+import cupy as cp
 import traceback
 from multiprocessing import Process, Queue, Value, Lock
 import numpy as np
-import cupy as cp
+import os
 import tifffile
 from typing import TYPE_CHECKING
 
-from magscope import VideoBuffer, MatrixBuffer, AcquisitionMode, ManagerProcess, Message
+from magscope.datatypes import VideoBuffer, MatrixBuffer
 from magscope.gui import WindowManager
-from magscope.utils import crop_stack_to_rois, PoolVideoFlag, date_timestamp_str
+from magscope.processes import ManagerProcess
+from magscope.scripting import ScriptManager
+from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
 import magtrack
 
 if TYPE_CHECKING:
@@ -52,19 +54,22 @@ class VideoProcessorManager(ManagerProcess):
             worker.start()
 
         while self._running:
-            self._check_pipe()
+            self._do_main_loop()
 
-            # Check if images are ready for image processing
-            if self._acquisition_on:
-                if self._video_process_flag.value == PoolVideoFlag.READY:
-                    if self._video_buffer.check_read_stack():
-                        self._video_process_flag.value = PoolVideoFlag.RUNNING
-                        self._add_task()
+    def _do_main_loop(self):
+        self._check_pipe()
 
-            # Update the GUI's status info
-            pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
-            message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
-            self._send(message)
+        # Check if images are ready for image processing
+        if self._acquisition_on:
+            if self._video_process_flag.value == PoolVideoFlag.READY:
+                if self._video_buffer.check_read_stack():
+                    self._video_process_flag.value = PoolVideoFlag.RUNNING
+                    self._add_task()
+
+        # Update the GUI's status info
+        pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
+        message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
+        self._send(message)
 
     def quit(self):
         super().quit()
@@ -100,6 +105,14 @@ class VideoProcessorManager(ManagerProcess):
 
         self._tasks.put(kwargs)
 
+    def script_wait_unitl_acquisition_on(self, value: bool):
+        while self._acquisition_on != value:
+            self._do_main_loop()
+        message = Message(
+            to=ScriptManager,
+            func=ScriptManager.update_waiting
+        )
+        self._send(message)
 
 class VideoWorker(Process):
     def __init__(self,

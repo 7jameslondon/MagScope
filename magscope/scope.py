@@ -6,10 +6,15 @@ from typing import TYPE_CHECKING
 from warnings import warn
 import yaml
 
-from magscope import CameraManager, ManagerProcess, Message, VideoBuffer, MatrixBuffer, VideoProcessorManager
 from magscope.beads import BeadManager
+from magscope.camera import CameraManager
+from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import WindowManager
-from magscope.hardware import HardwareManager
+from magscope.hardware import HardwareManagerABC
+from magscope.processes import ManagerProcess
+from magscope.scripting import ScriptManager
+from magscope.utils import Message
+from magscope.videoprocessing import VideoProcessorManager
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
@@ -21,7 +26,7 @@ class MagScope:
         self.bead_manager = BeadManager()
         self.camera_manager = CameraManager()
         self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
-        self._hardware: dict[str, HardwareManager] = {}
+        self._hardware: dict[str, HardwareManagerABC] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['VideoBuffer', 'TracksBuffer']
@@ -30,6 +35,7 @@ class MagScope:
         self._quitting: Event = Event()
         self.quitting_events: dict[str, EventType] = {}
         self._running: bool = False
+        self.script_manager = ScriptManager()
         self._settings = self._get_default_settings()
         self._settings_path = 'settings.yaml'
         self.tracks_buffer: MatrixBuffer | None = None
@@ -46,6 +52,7 @@ class MagScope:
         proc_list: list[ManagerProcess] = [
             self.bead_manager,
             self.camera_manager,
+            self.script_manager,
             self.video_processor_manager,
             self.window_manager
         ]
@@ -57,6 +64,7 @@ class MagScope:
         freeze_support()  # To prevent recursion in windows executable
         self._load_settings()
         self._setup_shared_resources()
+        self._register_script_functions()
 
         # --- Start the managers ---
         for proc in self.processes.values():
@@ -159,6 +167,11 @@ class MagScope:
             self.pipes[name] = pipe[0]
             proc._pipe = pipe[1]
 
+    def _register_script_functions(self):
+        self.script_manager.script_registry.register_class_functions(ManagerProcess())
+        for proc in self.processes.values():
+            self.script_manager.script_registry.register_class_functions(proc)
+
     def _get_default_settings(self):
         with open(self._default_settings_path, 'r') as f:
             settings = yaml.safe_load(f)
@@ -200,5 +213,5 @@ class MagScope:
             for pipe in self.pipes.values():
                 pipe.send(Message(ManagerProcess, ManagerProcess.set_settings, value))
 
-    def add_hardware(self, hardware: HardwareManager):
+    def add_hardware(self, hardware: HardwareManagerABC):
         self._hardware[hardware.name] = hardware

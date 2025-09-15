@@ -17,11 +17,12 @@ from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame,
                              QRadioButton, QTextEdit, QVBoxLayout, QWidget, QComboBox, QProgressBar,
                              QGraphicsOpacityEffect)
 
-from magscope import Message, AcquisitionMode, ManagerProcess
 from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEditWithValue,
                           LabeledStepperLineEdit, LabeledLineEdit)
 from magscope.gui.widgets import FlashLabel
-from magscope.utils import crop_stack_to_rois
+from magscope.processes import ManagerProcess
+from magscope.scripting import ScriptStatus, ScriptManager
+from magscope.utils import AcquisitionMode, crop_stack_to_rois, Message
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
@@ -113,9 +114,11 @@ class AcquisitionPanel(ControlPanel):
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
-        last_value = settings.value('last acquisition_dir',
-                                    os.path.expanduser("~"),
-                                    type=str)
+        last_value = settings.value(
+            'last acquisition_dir',
+            os.path.expanduser("~"),
+            type=str
+        )
         value = QFileDialog.getExistingDirectory(None,
                                                  'Select Folder',
                                                  last_value)
@@ -322,6 +325,93 @@ class HistogramPanel(ControlPanel):
 
     def clear(self):
         self.histogram_item.setOpts(height=np.zeros(self.n_bins))
+
+
+class ScriptPanel(ControlPanel):
+    no_file_str = 'No Script Loaded'
+
+    def __init__(self, parent: WindowManager):
+        super().__init__(parent)
+
+        self.groupbox = CollapsibleGroupBox('Scripting', collapsed=False)
+        self.layout = QVBoxLayout()
+        self.groupbox.setContentLayout(self.layout)
+
+        # Status
+        self.status_base_text = 'Status'
+        self.status = QLabel('Status: Empty')
+        self.layout.addWidget(self.status)
+
+        # Button Layout
+        self.button_layout = QHBoxLayout()
+        self.layout.addLayout(self.button_layout)
+
+        # Buttons
+        self.load_button = QPushButton('Load')
+        self.start_button = QPushButton('Start')
+        self.pause_button = QPushButton('Pause')
+        self.button_layout.addWidget(self.load_button)
+        self.button_layout.addWidget(self.start_button)
+        self.button_layout.addWidget(self.pause_button)
+        self.load_button.clicked.connect(self.callback_load) # type: ignore
+        self.start_button.clicked.connect(self.callback_start) # type: ignore
+        self.pause_button.clicked.connect(self.callback_pause) # type: ignore
+
+        # Filepath
+        self.filepath_textedit = QTextEdit(self.no_file_str)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.filepath_textedit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.filepath_textedit.setFixedHeight(40)
+        self.filepath_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self.filepath_textedit.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.layout.addWidget(self.filepath_textedit)
+
+    def update_status(self, status: ScriptStatus):
+        self.status.setText(f'{self.status_base_text}: {status}')
+        if status == ScriptStatus.PAUSED:
+            self.pause_button.setText('Resume')
+        else:
+            self.pause_button.setText('Pause')
+
+        if status == ScriptStatus.EMPTY:
+            self.filepath_textedit.setText(self.no_file_str)
+            self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def callback_load(self):
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value(
+            'last script filepath',
+            os.path.expanduser("~"),
+            type=str
+        )
+        path, _ = QFileDialog.getOpenFileName(None,
+                                              'Select Script File',
+                                              last_value,
+                                              'Script (*.py)')
+
+        message = Message(ScriptManager, ScriptManager.load_script, path)
+        self._parent._send(message)
+
+        if not path:  # user selected cancel
+            path = self.no_file_str
+        else:
+            settings.setValue('last script filepath', QVariant(path))
+        self.filepath_textedit.setText(path)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def callback_start(self):
+        message = Message(ScriptManager, ScriptManager.start_script)
+        self._parent._send(message)
+
+    def callback_pause(self):
+        if self.pause_button.text() == 'Pause':
+            message = Message(ScriptManager, ScriptManager.pause_script)
+            self._parent._send(message)
+        else:
+            message = Message(ScriptManager, ScriptManager.resume_script)
+            self._parent._send(message)
 
 
 class StatusPanel(ControlPanel):
@@ -900,89 +990,6 @@ class RotaryMotorPanel:
         self._parent.app.move_motor_signal.emit('rotary_motor',
                                                 'move_relative',
                                                 (direction * step, speed))
-
-
-class ScriptPanel:
-    no_file_str = 'No Script Loaded'
-
-    def __init__(self, parent):
-        self._parent = parent
-
-        self.groupbox = CollapsibleGroupBox('Scripting',
-                                                         collapsed=False)
-        self.layout = QVBoxLayout()
-        self.groupbox.setContentLayout(self.layout)
-
-        # Status
-        self.status_base_text = 'Status'
-        self.status = QLabel('Status: Empty')
-        self.layout.addWidget(self.status)
-        self._parent.app.script_manager.status_signal.connect(self.update_status)
-
-        # Button Layout
-        self.button_layout = QHBoxLayout()
-        self.layout.addLayout(self.button_layout)
-
-        # Buttons
-        self.load_button = QPushButton('Load')
-        self.start_button = QPushButton('Start')
-        self.pause_button = QPushButton('Pause')
-        self.button_layout.addWidget(self.load_button)
-        self.button_layout.addWidget(self.start_button)
-        self.button_layout.addWidget(self.pause_button)
-        self.load_button.clicked.connect(self.callback_load)
-        self.start_button.clicked.connect(self.callback_start)
-        self.pause_button.clicked.connect(self.callback_pause)
-
-        # Filepath
-        self.filepath_textedit = QTextEdit(self.no_file_str)
-        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.filepath_textedit.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.filepath_textedit.setFixedHeight(40)
-        self.filepath_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
-        self.filepath_textedit.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.layout.addWidget(self.filepath_textedit)
-
-    def update_status(self, status):
-        self.status.setText(f'{self.status_base_text}: {status}')
-        if status == magscope.scripting.ScriptStatus.PAUSED:
-            self.pause_button.setText('Resume')
-        else:
-            self.pause_button.setText('Pause')
-
-    def callback_load(self):
-        last_path = self._parent.app.settings.value('last_script_load_filepath',
-                                                    os.path.expanduser("~"))
-        path, _ = QFileDialog.getOpenFileName(self._parent,
-                                              'Select Script File',
-                                              last_path,
-                                              'Script (*.py)')
-
-        try:
-            self._parent.app.script_manager.load_script(path)
-        except Exception as e:
-            print(e)
-            path = None
-
-        if not path:  # user selected a file
-            path = self.no_file_str
-            self._parent.app.zlut.unload()
-        self._parent.app.settings.setValue('last_script_load_filepath',
-                                           QVariant(path))
-        self.filepath_textedit.setText(path)
-        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-
-    def callback_start(self):
-        self._parent.app.script_manager.start_script()
-
-    def callback_pause(self):
-        if self.pause_button.text() == 'Pause':
-            self._parent.app.script_manager.pause_script()
-        else:
-            self._parent.app.script_manager.resume_script()
 
 
 class ZlutPanel:

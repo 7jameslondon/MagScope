@@ -2,7 +2,7 @@ from math import copysign, isnan
 import numpy as np
 from time import time
 
-from magscope import ManagerProcess, Message
+from magscope.processes import ManagerProcess
 
 class BeadManager(ManagerProcess):
     def __init__(self):

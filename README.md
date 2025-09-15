@@ -20,6 +20,20 @@ Example:\
 1.030 5.156\
 ...
 
+## Scripting
+Valid functions:
+* 'print' - Print a message to the GUI
+* 'sleep' - Do nothing for a fixed amount of seconds
+* 'set_acquisition_on' - Whether frames are sent for processing
+* 'set_acquisition_dir' - The directory to save data to
+* 'set_acquisition_dir_on' - Whether to save data
+* 'set_acquisition_mode' - Set the mode such as tracking or video recording
+
+An example script is included exxample_script.py
+
+You can add your own methods to the scripting system with a decorator.
+`@registerwithscript(func_str)` where `func_str` is the first argument when calling a function in a script.
+
 ## Development
 To format the python files run 
 ``` yapf main.py -i ```, 

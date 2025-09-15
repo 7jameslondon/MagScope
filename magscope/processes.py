@@ -1,8 +1,9 @@
-from warnings import warn
 from multiprocessing import Process, Event
 from typing import TYPE_CHECKING
+from warnings import warn
 
-from magscope import AcquisitionMode, Message, VideoBuffer, MatrixBuffer
+from magscope.datatypes import VideoBuffer, MatrixBuffer
+from magscope.utils import AcquisitionMode, Message, registerwithscript
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
@@ -11,7 +12,8 @@ if TYPE_CHECKING:
     from multiprocessing.sharedctypes import Synchronized
     ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraABC
-    from magscope.hardware import HardwareManager
+    from magscope.hardware import HardwareManagerABC
+
 
 class SingletonMeta(type):
     _instances = {}
@@ -40,7 +42,7 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
         self._bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
         self._camera_type: type[CameraABC] | None = None
-        self._hardware_types: dict[str, type[HardwareManager]] = {}
+        self._hardware_types: dict[str, type[HardwareManagerABC]] = {}
         self._locks: dict[str, LockType] | None = None
         self._magscope_quitting: EventType | None = None
         self._name: str = type(self).__name__ # Read-only
@@ -129,15 +131,19 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
     def name(self, value):
         raise AttributeError("This property is read-only.")
 
+    @registerwithscript('set_acquisition_dir')
     def set_acquisition_dir(self, value: str):
         self._acquisition_dir = value
 
+    @registerwithscript('set_acquisition_dir_on')
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
+    @registerwithscript('set_acquisition_mode')
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
+    @registerwithscript('set_acquisition_on')
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 

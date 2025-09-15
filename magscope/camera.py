@@ -2,12 +2,11 @@ from abc import ABCMeta, abstractmethod
 import numpy as np
 import queue
 from time import time
-from typing import TYPE_CHECKING
 from warnings import warn
 
-from magscope import BufferUnderflow, ManagerProcess, Message, VideoBuffer
-from magscope.gui import WindowManager
-from magscope.utils import PoolVideoFlag
+from magscope.datatypes import BufferUnderflow, VideoBuffer
+from magscope.processes import ManagerProcess
+from magscope.utils import Message, PoolVideoFlag
 
 class CameraManager(ManagerProcess):
     def __init__(self):
@@ -57,8 +56,9 @@ class CameraManager(ManagerProcess):
         fraction_available = (1 - self._video_buffer.get_level())
         frames_available = fraction_available * self._video_buffer.n_total_images
         if frames_available <= 1:
-            warn(f'Video buffer overflowed. Purging.')
             self._purge_buffers()
+            # local import to avoid circular imports
+            from magscope.gui import WindowManager
             message = Message(WindowManager, WindowManager.update_video_buffer_purge, time())
             self._send(message)
 
@@ -103,6 +103,8 @@ class CameraManager(ManagerProcess):
 
     def get_camera_setting(self, name: str):
         value = self.camera[name]
+        # local import to avoid circular imports
+        from magscope.gui import WindowManager
         message = Message(to=WindowManager,
                           func=WindowManager.update_camera_setting,
                           args=(name, value))

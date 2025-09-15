@@ -11,17 +11,22 @@ if TYPE_CHECKING:
     from magscope import ManagerProcess
 
 class Message:
-    def __init__(self, to: Type['ManagerProcess'], func: Callable, *args, **kwargs):
-        self.to: str = to.__name__
-        self.func: str = func.__name__
+    def __init__(self, to: Type['ManagerProcess'] | str, func: Callable | str, *args, **kwargs):
+        if isinstance(to, str):
+            self.to = to
+        else:
+            self.to: str = to.__name__
+
+        if isinstance(func, str):
+            self.func = func
+        else:
+            self.func: str = func.__name__
+
         self.args = args
         if 'args' in kwargs:
             self.args = self.args + kwargs['args']
             del kwargs['args']
         self.kwargs = kwargs
-
-        if not hasattr(to, self.func):
-            warn(f"Function '{func}' not found in {to}")
 
     def __str__(self):
         return f"Message(to={self.to}, func={self.func}, args={self.args}, kwargs={self.kwargs})"
@@ -75,3 +80,40 @@ class PoolVideoFlag(IntEnum):
     READY = 0
     RUNNING = 1
     FINISHED = 2
+
+class Units:
+    # Meters
+    m = 1.
+    cm = 1e-2
+    mm = 1e-3
+    um = 1e-6
+    nm = 1e-9
+
+    # Newtons
+    N = 1.
+    mN = 1e-3
+    uN = 1e-6
+    nN = 1e-9
+    pN = 1e-12
+    fN = 1e-15
+
+    # Seconds
+    sec = s = 1.
+    ms = 1e-3
+    us = 1e-6
+    ns = 1e-9
+    ps = 1e-12
+    fs = 1e-15
+
+    # Directions
+    clockwise = cw = 1.
+    counterclockwise = ccw = -1.
+
+def registerwithscript(func_str: str):
+    def decorator(func: callable):
+        func._scriptable = True
+        func._script_str = func_str
+        func._script_cls = func.__qualname__.split('.')[0]
+        return func
+
+    return decorator

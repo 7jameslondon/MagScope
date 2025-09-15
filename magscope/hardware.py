@@ -1,12 +1,12 @@
 from abc import ABC, ABCMeta, abstractmethod
 
-from magscope import ManagerProcess, MatrixBuffer
-from magscope.processes import SingletonMeta
+from magscope.datatypes import MatrixBuffer
+from magscope.processes import ManagerProcess, SingletonMeta
 
 class ABCSingletonMeta(ABCMeta, SingletonMeta):
     pass
 
-class HardwareManager(ManagerProcess, ABC, metaclass=ABCSingletonMeta):
+class HardwareManagerABC(ManagerProcess, ABC, metaclass=ABCSingletonMeta):
     def __init__(self):
         super().__init__()
         self.buffer_shape = (1000, 2)

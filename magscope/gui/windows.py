@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QMessageBox,
                              QHBoxLayout, QPushButton, QLabel, QTextEdit, QGroupBox, QSplitter, QLayout)
 from PyQt6.QtCore import QObject, QPoint, QPointF, QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
@@ -8,12 +8,15 @@ import sys
 from time import time
 from warnings import warn
 
-from magscope import ManagerProcess, Message, VideoBuffer
+from magscope import AcquisitionMode
+from magscope.datatypes import VideoBuffer
 from magscope.gui import (VideoViewer, Plots, CameraSettingsPanel, GripSplitter, BeadSelectionPanel, AcquisitionPanel,
                           ObjectiveMotorPanel, LinearMotorPanel, RotaryMotorPanel, ScriptPanel, ZlutPanel,
                           ForceCalibartionPanel, HistogramPanel, PlotSettingsPanel, CollapsibleGroupBox, StatusPanel,
                           BeadGraphic)
-from magscope.utils import numpy_type_to_qt_image_type
+from magscope.processes import ManagerProcess
+from magscope.scripting import ScriptStatus, registerwithscript
+from magscope.utils import Message, numpy_type_to_qt_image_type
 
 
 class WindowManager(ManagerProcess):
@@ -353,6 +356,50 @@ class WindowManager(ManagerProcess):
     def update_video_buffer_purge(self, t: float):
         self.controls.status_panel.update_video_buffer_purge(t)
 
+    def update_script_status(self, status: ScriptStatus):
+        self.controls.script_panel.update_status(status)
+
+    @registerwithscript('print')
+    def print(self, text: str, details: str | None = None):
+        msg = QMessageBox(self.windows[0])
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Information")
+        msg.setText(text)
+        if details:
+            print(f'{text}: {details}')
+            msg.setDetailedText(details)
+        else:
+            print(f'{text}')
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.show()
+
+    def set_acquisition_on(self, value: bool):
+        super().set_acquisition_on(value)
+        checkbox = self.controls.acquisition_panel.acquisition_on_checkbox.checkbox
+        checkbox.blockSignals(True) # to prevent a loop
+        checkbox.setChecked(value)
+        checkbox.blockSignals(False)
+
+    def set_acquisition_dir(self, value: str):
+        super().set_acquisition_dir(value)
+        textedit = self.controls.acquisition_panel.acquisition_dir_textedit
+        textedit.blockSignals(True) # to prevent a loop
+        textedit.setText(value)
+        textedit.blockSignals(False)
+
+    def set_acquisition_dir_on(self, value: bool):
+        super().set_acquisition_dir_on(value)
+        checkbox = self.controls.acquisition_panel.acquisition_dir_on_checkbox.checkbox
+        checkbox.blockSignals(True)  # to prevent a loop
+        checkbox.setChecked(value)
+        checkbox.blockSignals(False)
+
+    def set_acquisition_mode(self, value: AcquisitionMode):
+        super().set_acquisition_mode(value)
+        combobox = self.controls.acquisition_panel.acquisition_mode_combobox
+        combobox.blockSignals(True)  # to prevent a loop
+        combobox.setCurrentText(value)
+        combobox.blockSignals(False)
 
 class LoadingWindow(QMainWindow):
 
@@ -425,6 +472,9 @@ class Controls(QWidget):
 
         self.histogram_panel = HistogramPanel(self._parent)
         self.add_panel(self.histogram_panel, column_id=1)
+
+        self.script_panel = ScriptPanel(self._parent)
+        self.add_panel(self.script_panel, column_id=1)
 
         # Add a stretch to the bottom of each column
         for column in self.columns:
