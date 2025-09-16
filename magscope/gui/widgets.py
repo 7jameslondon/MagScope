@@ -178,7 +178,7 @@ class LabeledStepperLineEdit(QWidget):
 class CollapsibleGroupBox(QGroupBox):
     """A collapsible QGroupBox with the title text as a toggle button to show/hide its content"""
 
-    def __init__(self, title="", collapsed=True):
+    def __init__(self, title="", collapsed=False):
         super().__init__()
 
         self.title = title
@@ -210,7 +210,7 @@ class CollapsibleGroupBox(QGroupBox):
         self.layout().setContentsMargins(0, 0, 0, 2)
         title_widget = QWidget()
         title_layout = QVBoxLayout(title_widget)
-        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setContentsMargins(4, 4, 4, 4)
         title_layout.addWidget(self.toggle_button)
         self.setTitle("")
         self.layout().addWidget(title_widget)
@@ -256,13 +256,13 @@ class CollapsibleGroupBox(QGroupBox):
     def setContentLayout(self, content_layout):
         wrapper_layout = QVBoxLayout()
         wrapper_layout.setContentsMargins(5, 0, 5, 5)
-        wrapper_layout.setSpacing(4)
+        #wrapper_layout.setSpacing(4)
 
         # A subtle horizontal line that will have the same width as the content area
         sep = QFrame(self.content_area)
         sep.setObjectName("groupContentSeparator")
         sep.setFrameShape(QFrame.Shape.HLine)
-        #sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
         sep.setFixedHeight(1)
 
         wrapper_layout.addWidget(sep)

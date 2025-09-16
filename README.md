@@ -20,6 +20,15 @@ Example:\
 1.030 5.156\
 ...
 
+## Adding your own hardware
+To add hardware create a subclass of `HardwareManagerBase`.
+* Set `buffer_shape` in the `__init__`. This will store data (if any needs storing) from the device.
+It should each row will be an time point. So a shape `(100000,3)` would be 100000 timepoints with 3 values.
+For example this might be a motor that stores the 3 values at each time point such as time, position, speed.
+* Implement `connect` which should set `self._is_connected` to `True` when succsefuly connected.
+* Implement `disconnect`
+* Implement `fetch` which add an entry to the buffer when automatically called by the program.
+
 ## Scripting
 Valid functions:
 * 'print' - Print a message to the GUI

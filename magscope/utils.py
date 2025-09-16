@@ -8,10 +8,10 @@ from typing import Callable, TYPE_CHECKING, Type
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
-    from magscope import ManagerProcess
+    from magscope import ManagerProcessBase
 
 class Message:
-    def __init__(self, to: Type['ManagerProcess'] | str, func: Callable | str, *args, **kwargs):
+    def __init__(self, to: Type['ManagerProcessBase'] | str, func: Callable | str, *args, **kwargs):
         if isinstance(to, str):
             self.to = to
         else:

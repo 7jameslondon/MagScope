@@ -5,13 +5,13 @@ from time import time
 from warnings import warn
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
-from magscope.processes import ManagerProcess
+from magscope.processes import ManagerProcessBase
 from magscope.utils import Message, PoolVideoFlag
 
-class CameraManager(ManagerProcess):
+class CameraManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
-        self.camera: CameraABC = DummyCamera()
+        self.camera: CameraBase = DummyCamera()
 
     def run(self):
         super().run()
@@ -29,15 +29,6 @@ class CameraManager(ManagerProcess):
 
         while self._running:
             self._do_main_loop()
-
-    def __del__(self):
-        self._running = False
-
-        if hasattr(self, 'camera'):
-            del self.camera
-
-        if hasattr(self, '_pool') and self._pool:
-            del self._pool
 
     def _do_main_loop(self):
         # Check if images are done processing
@@ -119,7 +110,7 @@ class CameraManager(ManagerProcess):
             self.get_camera_setting(setting)
 
 
-class CameraABC(metaclass=ABCMeta):
+class CameraBase(metaclass=ABCMeta):
     """ Abstract base class for camera implementation """
     bits: int
     dtype: np.dtypes
@@ -211,7 +202,7 @@ class CameraABC(metaclass=ABCMeta):
         self.set_setting(name, value)
 
 
-class DummyCamera(CameraABC):
+class DummyCamera(CameraBase):
     width = 2560
     height = 2560
     bits = 12

@@ -9,9 +9,9 @@ import yaml
 from magscope.beads import BeadManager
 from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.gui import WindowManager
-from magscope.hardware import HardwareManagerABC
-from magscope.processes import ManagerProcess
+from magscope.gui import WindowManager, ControlPanelBase
+from magscope.hardware import HardwareManagerBase
+from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
@@ -26,12 +26,12 @@ class MagScope:
         self.bead_manager = BeadManager()
         self.camera_manager = CameraManager()
         self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
-        self._hardware: dict[str, HardwareManagerABC] = {}
+        self._hardware: dict[str, HardwareManagerBase] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['VideoBuffer', 'TracksBuffer']
         self.pipes: dict[str, Connection] = {}
-        self.processes: dict[str, ManagerProcess] = {}
+        self.processes: dict[str, ManagerProcessBase] = {}
         self._quitting: Event = Event()
         self.quitting_events: dict[str, EventType] = {}
         self._running: bool = False
@@ -49,7 +49,7 @@ class MagScope:
         self._running = True
 
         #  --- Collect separate processes in a dictionary ---
-        proc_list: list[ManagerProcess] = [
+        proc_list: list[ManagerProcessBase] = [
             self.bead_manager,
             self.camera_manager,
             self.script_manager,
@@ -95,7 +95,7 @@ class MagScope:
                 continue
 
             # Process the message
-            if message.to == ManagerProcess.__name__: # the message is to all processes
+            if message.to == ManagerProcessBase.__name__: # the message is to all processes
                 if message.func == 'quit':
                     print('MagScope quitting ...')
                     self._quitting.set()
@@ -168,7 +168,7 @@ class MagScope:
             proc._pipe = pipe[1]
 
     def _register_script_functions(self):
-        self.script_manager.script_registry.register_class_functions(ManagerProcess())
+        self.script_manager.script_registry.register_class_functions(ManagerProcessBase())
         for proc in self.processes.values():
             self.script_manager.script_registry.register_class_functions(proc)
 
@@ -211,7 +211,10 @@ class MagScope:
         self._settings = value
         if self._running:
             for pipe in self.pipes.values():
-                pipe.send(Message(ManagerProcess, ManagerProcess.set_settings, value))
+                pipe.send(Message(ManagerProcessBase, ManagerProcessBase.set_settings, value))
 
-    def add_hardware(self, hardware: HardwareManagerABC):
+    def add_hardware(self, hardware: HardwareManagerBase):
         self._hardware[hardware.name] = hardware
+
+    def add_control(self, control: ControlPanelBase, column: int):
+        self.window_manager.controls_to_add.append((control, column))

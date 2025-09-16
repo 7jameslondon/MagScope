@@ -10,16 +10,15 @@ from warnings import warn
 
 from magscope import AcquisitionMode
 from magscope.datatypes import VideoBuffer
-from magscope.gui import (VideoViewer, Plots, CameraSettingsPanel, GripSplitter, BeadSelectionPanel, AcquisitionPanel,
-                          ObjectiveMotorPanel, LinearMotorPanel, RotaryMotorPanel, ScriptPanel, ZlutPanel,
-                          ForceCalibartionPanel, HistogramPanel, PlotSettingsPanel, CollapsibleGroupBox, StatusPanel,
-                          BeadGraphic)
-from magscope.processes import ManagerProcess
+from magscope.gui import (VideoViewer, Plots, CameraPanel, GripSplitter, BeadSelectionPanel, AcquisitionPanel,
+                          ScriptPanel, HistogramPanel, StatusPanel,
+                          BeadGraphic, ControlPanelBase)
+from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import Message, numpy_type_to_qt_image_type
 
 
-class WindowManager(ManagerProcess):
+class WindowManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self._bead_graphics: dict[int, BeadGraphic] = {}
@@ -27,6 +26,7 @@ class WindowManager(ManagerProcess):
         self.central_widgets: list[QWidget] = []
         self.central_layouts: list[QLayout] = []
         self.controls: Controls | None = None
+        self.controls_to_add = []
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
@@ -82,7 +82,7 @@ class WindowManager(ManagerProcess):
 
         # Pipe timer
         self._timer = QTimer()
-        self._timer.setInterval(10)
+        self._timer.setInterval(20)
         self._timer.timeout.connect(self._do_main_loop) # noqa PyUnresolvedReferences
         self._timer.start()
 
@@ -258,13 +258,13 @@ class WindowManager(ManagerProcess):
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
 
             # Update the histogram
-            self.controls.histogram_panel.update(image_bytes)
+            self.controls.panels['HistogramPanel'].update_plot(image_bytes)
 
             # Increment the display rate counter
             self._display_rate_counter += 1
 
     def callback_view_clicked(self, pos: QPoint):
-        if not self.controls.bead_panel.lock_button.isChecked():
+        if not self.controls.panels['BeadSelectionPanel'].lock_button.isChecked():
             self.add_bead(pos)
 
     def set_bead_rois(self, _):
@@ -281,7 +281,7 @@ class WindowManager(ManagerProcess):
             y1 = int(round(br.y() + graphic.pen_width / 2))
             bead_rois[id] = (x0, x1, y0, y1)
         self._bead_rois = bead_rois
-        message = Message(ManagerProcess, ManagerProcess.set_bead_rois, bead_rois)
+        message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, bead_rois)
         self._send(message)
 
     def move_bead(self, id: int, x, y):
@@ -310,7 +310,7 @@ class WindowManager(ManagerProcess):
         # Update bead ROIs
         rois = self._bead_rois
         rois.pop(id)
-        message = Message(ManagerProcess, ManagerProcess.set_bead_rois, rois)
+        message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, rois)
         self._send(message)
 
     def clear_beads(self):
@@ -321,7 +321,7 @@ class WindowManager(ManagerProcess):
         self._bead_next_id = 0
 
         # Update bead ROIs
-        message = Message(ManagerProcess, ManagerProcess.set_bead_rois, {})
+        message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, {})
         self._send(message)
 
     def lock_beads(self, locked: bool):
@@ -329,13 +329,13 @@ class WindowManager(ManagerProcess):
             graphic.locked = locked
 
     def update_video_processors_status(self, text):
-        self.controls.status_panel.update_video_processors_status(text)
+        self.controls.panels['StatusPanel'].update_video_processors_status(text)
 
     def update_video_buffer_status(self):
         level = self._video_buffer.get_level()
         size = self._video_buffer.n_total_images
         text = f'{level:.0%} full, {size} max images'
-        self.controls.status_panel.update_video_buffer_status(text)
+        self.controls.panels['StatusPanel'].update_video_buffer_status(text)
 
     def _update_display_rate(self):
         # If it has been more than a second, re-calculate the display rate
@@ -345,19 +345,19 @@ class WindowManager(ManagerProcess):
             self._display_rate_last_time = t
             self._display_rate_counter = 0
             self._display_rate_last_rate = rate
-            self.controls.status_panel.update_display_rate(f'{rate:.0f} updates/sec')
+            self.controls.panels['StatusPanel'].update_display_rate(f'{rate:.0f} updates/sec')
         else:
             # This is used to force the "..." to update
-            self.controls.status_panel.update_display_rate(f'{self._display_rate_last_rate:.0f} updates/sec')
+            self.controls.panels['StatusPanel'].update_display_rate(f'{self._display_rate_last_rate:.0f} updates/sec')
 
     def update_camera_setting(self, name: str, value: str):
-        self.controls.cam_panel.update_camera_setting(name, value)
+        self.controls.panels['CameraPanel'].update_camera_setting(name, value)
 
     def update_video_buffer_purge(self, t: float):
-        self.controls.status_panel.update_video_buffer_purge(t)
+        self.controls.panels['StatusPanel'].update_video_buffer_purge(t)
 
     def update_script_status(self, status: ScriptStatus):
-        self.controls.script_panel.update_status(status)
+        self.controls.panels['StatusPanel'].update_status(status)
 
     @registerwithscript('print')
     def print(self, text: str, details: str | None = None):
@@ -375,28 +375,28 @@ class WindowManager(ManagerProcess):
 
     def set_acquisition_on(self, value: bool):
         super().set_acquisition_on(value)
-        checkbox = self.controls.acquisition_panel.acquisition_on_checkbox.checkbox
+        checkbox = self.controls.panels['AcquisitionPanel'].acquisition_on_checkbox.checkbox
         checkbox.blockSignals(True) # to prevent a loop
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
     def set_acquisition_dir(self, value: str):
         super().set_acquisition_dir(value)
-        textedit = self.controls.acquisition_panel.acquisition_dir_textedit
+        textedit = self.controls.panels['AcquisitionPanel'].acquisition_dir_textedit
         textedit.blockSignals(True) # to prevent a loop
         textedit.setText(value)
         textedit.blockSignals(False)
 
     def set_acquisition_dir_on(self, value: bool):
         super().set_acquisition_dir_on(value)
-        checkbox = self.controls.acquisition_panel.acquisition_dir_on_checkbox.checkbox
+        checkbox = self.controls.panels['AcquisitionPanel'].acquisition_dir_on_checkbox.checkbox
         checkbox.blockSignals(True)  # to prevent a loop
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
     def set_acquisition_mode(self, value: AcquisitionMode):
         super().set_acquisition_mode(value)
-        combobox = self.controls.acquisition_panel.acquisition_mode_combobox
+        combobox = self.controls.panels['AcquisitionPanel'].acquisition_mode_combobox
         combobox.blockSignals(True)  # to prevent a loop
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
@@ -436,21 +436,21 @@ class LoadingWindow(QMainWindow):
 
 
 class Controls(QWidget):
-    def __init__(self, parent: WindowManager):
+    def __init__(self, manager: WindowManager):
         super().__init__()
-        self._parent:WindowManager = parent
+        self.manager:WindowManager = manager
+        self.panels: dict[str, ControlPanelBase] = {}
 
         # Columns
         layout = QHBoxLayout()
-        layout.setSpacing(2)
+        layout.setSpacing(6)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
         self.columns = [QVBoxLayout(), QVBoxLayout()]
         for column in self.columns:
-            column.setSpacing(2)
+            column.setSpacing(6)
             column.setContentsMargins(0, 0, 0, 0)
             column_widget = QWidget()
-            column_widget.setStyleSheet('CollapsibleGroupBox{margin: 0;}')
             column_widget.setContentsMargins(0, 0, 0, 0)
             column_widget.setLayout(column)
             column_widget.setFixedWidth(300)
@@ -458,45 +458,33 @@ class Controls(QWidget):
         layout.addStretch(1)
 
         # Add control panels
-        self.status_panel = StatusPanel(self._parent)
-        self.add_panel(self.status_panel, column_id=0)
+        self.add_panel(StatusPanel(self.manager), column=0)
+        self.add_panel(CameraPanel(self.manager), column=0)
+        self.add_panel(AcquisitionPanel(self.manager), column=1)
+        self.add_panel(BeadSelectionPanel(self.manager), column=1)
+        self.add_panel(HistogramPanel(self.manager), column=1)
+        self.add_panel(ScriptPanel(self.manager), column=1)
+        # self.zlut_panel = ZlutPanel(self)
+        # self.force_calibration_panel = ForceCalibartionPanel(self)
+        # self.plot_settings_panel = PlotSettingsPanel(self)
 
-        self.cam_panel = CameraSettingsPanel(self._parent)
-        self.add_panel(self.cam_panel, column_id=0)
-
-        self.acquisition_panel = AcquisitionPanel(self._parent)
-        self.add_panel(self.acquisition_panel, column_id=1)
-
-        self.bead_panel = BeadSelectionPanel(self._parent)
-        self.add_panel(self.bead_panel, column_id=1)
-
-        self.histogram_panel = HistogramPanel(self._parent)
-        self.add_panel(self.histogram_panel, column_id=1)
-
-        self.script_panel = ScriptPanel(self._parent)
-        self.add_panel(self.script_panel, column_id=1)
+        for c in self.manager.controls_to_add:
+            control = c[0]
+            column = c[1]
+            self.add_panel(control(self.manager), column=column)
 
         # Add a stretch to the bottom of each column
         for column in self.columns:
             column.addStretch(1)
 
-        # Create Panels
-        # self.obj_panel = ObjectiveMotorPanel(self)
-        # self.lin_panel = LinearMotorPanel(self)
-        # self.rot_panel = RotaryMotorPanel(self)
-        # self.script_panel = ScriptPanel(self)
-        # self.zlut_panel = ZlutPanel(self)
-        # self.force_calibration_panel = ForceCalibartionPanel(self)
-        # self.hist_panel = HistogramPanel(self)
-        # self.plot_settings_panel = PlotSettingsPanel(self)
-
     @property
     def settings(self):
-        return self._parent._settings
+        return self.manager._settings
 
     @settings.setter
     def settings(self, value):
         raise AttributeError("Read-only attribute.")
 
-    def add_panel(self, panel, column_id: int):
-        self.columns[column_id].addWidget(panel.groupbox)
+    def add_panel(self, panel: ControlPanelBase, column: int):
+        self.columns[column].addWidget(panel)
+        self.panels[panel.__class__.__name__] = panel

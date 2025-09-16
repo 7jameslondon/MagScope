@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from magscope.datatypes import VideoBuffer, MatrixBuffer
 from magscope.gui import WindowManager
-from magscope.processes import ManagerProcess
+from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
 import magtrack
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from multiprocessing.queues import Queue as QueueType
     ValueTypeUI8 = Synchronized[int]
 
-class VideoProcessorManager(ManagerProcess):
+class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self._tasks: QueueType | None = None

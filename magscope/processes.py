@@ -11,8 +11,8 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
     from multiprocessing.sharedctypes import Synchronized
     ValueTypeUI8 = Synchronized[int]
-    from magscope.camera import CameraABC
-    from magscope.hardware import HardwareManagerABC
+    from magscope.camera import CameraBase
+    from magscope.hardware import HardwareManagerBase
 
 
 class SingletonMeta(type):
@@ -25,7 +25,7 @@ class SingletonMeta(type):
             raise TypeError(f"Cannot create another instance of {cls.__name__}. This is a Singleton class.")
         return cls._instances[cls]
 
-class ManagerProcess(Process, metaclass=SingletonMeta):
+class ManagerProcessBase(Process, metaclass=SingletonMeta):
     """ Abstract base class for processes in the MagScope
 
         Subclass requirements:
@@ -41,8 +41,8 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
         self._acquisition_dir_on: bool = False
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
         self._bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
-        self._camera_type: type[CameraABC] | None = None
-        self._hardware_types: dict[str, type[HardwareManagerABC]] = {}
+        self._camera_type: type[CameraBase] | None = None
+        self._hardware_types: dict[str, type[HardwareManagerBase]] = {}
         self._locks: dict[str, LockType] | None = None
         self._magscope_quitting: EventType | None = None
         self._name: str = type(self).__name__ # Read-only
@@ -90,7 +90,7 @@ class ManagerProcess(Process, metaclass=SingletonMeta):
         self._quitting.set()
         self._running = False
         if not self._quit_requested:
-            message = Message(ManagerProcess, ManagerProcess.quit)
+            message = Message(ManagerProcessBase, ManagerProcessBase.quit)
             self._send(message)
         if self._pipe:
             while not self._magscope_quitting.is_set():

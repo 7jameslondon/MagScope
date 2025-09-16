@@ -352,11 +352,8 @@ class MatrixBuffer:
             count = self._get_count_index()
             r = min(np_array.nbytes, self.nbytes - write)
             l = np_array.nbytes - r
-            self._buf[write:(
-                write +
-                r)] = np.ravel(np_array).view('uint8')[0:r].tobytes()  # right
-            self._buf[0:l] = np.ravel(np_array).view(
-                'uint8')[r:].tobytes()  # left
+            self._buf[write:(write + r)] = np.ravel(np_array).view('uint8')[0:r].tobytes()  # right
+            self._buf[0:l] = np.ravel(np_array).view('uint8')[r:].tobytes()  # left
             self._set_write_index(write + np_array.nbytes)
             self._set_count_index(count + np_array.nbytes)
 

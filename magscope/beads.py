@@ -2,9 +2,9 @@ from math import copysign, isnan
 import numpy as np
 from time import time
 
-from magscope.processes import ManagerProcess
+from magscope.processes import ManagerProcessBase
 
-class BeadManager(ManagerProcess):
+class BeadManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self.auto_center_thresholds: tuple[float, float] = (1.1, 10.0)  # pixels

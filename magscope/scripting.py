@@ -2,10 +2,10 @@ from enum import StrEnum
 import inspect
 from time import time
 import traceback
-from typing import Callable, Literal
+from typing import Callable
 from warnings import warn
 
-from magscope.processes import ManagerProcess
+from magscope.processes import ManagerProcessBase
 from magscope.utils import Message, registerwithscript
 
 
@@ -89,7 +89,7 @@ class ScriptStatus(StrEnum):
     ERROR = 'Error'
 
 
-class ScriptManager(ManagerProcess):
+class ScriptManager(ManagerProcessBase):
 
     def __init__(self):
         super().__init__()
