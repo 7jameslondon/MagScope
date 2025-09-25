@@ -1,31 +1,28 @@
 from abc import ABC, ABCMeta, abstractmethod
 
 from magscope.datatypes import MatrixBuffer
-from magscope.processes import ManagerProcessBase, SingletonMeta
+from magscope.processes import ManagerProcessBase, SingletonABCMeta
 
-class ABCSingletonMeta(ABCMeta, SingletonMeta):
-    pass
 
-class HardwareManagerBase(ManagerProcessBase, ABC, metaclass=ABCSingletonMeta):
+class HardwareManagerBase(ManagerProcessBase, ABC, metaclass=SingletonABCMeta):
     def __init__(self):
         super().__init__()
         self.buffer_shape = (1000, 2)
         self._buffer: MatrixBuffer | None = None
         self._is_connected: bool = False
 
-    def run(self):
-        super().run()
-
+    def setup(self):
         self._buffer = MatrixBuffer(
             create=False,
-            locks=self._locks,
+            locks=self.locks,
             name=self.name,
         )
 
-        while self._running:
-            self._check_pipe()
-            self.fetch()
+    def do_main_loop(self):
+        self.fetch()
 
+    def quit(self):
+        super().quit()
         self.disconnect()
 
     @abstractmethod

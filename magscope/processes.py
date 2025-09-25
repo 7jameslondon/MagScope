@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from abc import abstractmethod, ABC, ABCMeta
 from multiprocessing import Process, Event
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -25,7 +28,10 @@ class SingletonMeta(type):
             raise TypeError(f"Cannot create another instance of {cls.__name__}. This is a Singleton class.")
         return cls._instances[cls]
 
-class ManagerProcessBase(Process, metaclass=SingletonMeta):
+class SingletonABCMeta(ABCMeta, SingletonMeta):
+    pass
+
+class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     """ Abstract base class for processes in the MagScope
 
         Subclass requirements:
@@ -82,8 +88,23 @@ class ManagerProcessBase(Process, metaclass=SingletonMeta):
             locks=self._locks,
             name='TracksBuffer')
 
+        self.setup()
+
         print(f'{self.name} is running')
         self._running = True
+
+        while self._running:
+            self.do_main_loop()
+            self.check_pipe()
+
+    @abstractmethod
+    def setup(self):
+        pass
+
+    @abstractmethod
+    def do_main_loop(self):
+        """ Main loop for the process """
+        pass
 
     def quit(self):
         """ Shutdown the process (and ask the other processes to quit too) """
@@ -91,7 +112,7 @@ class ManagerProcessBase(Process, metaclass=SingletonMeta):
         self._running = False
         if not self._quit_requested:
             message = Message(ManagerProcessBase, ManagerProcessBase.quit)
-            self._send(message)
+            self.send(message)
         if self._pipe:
             while not self._magscope_quitting.is_set():
                 if self._pipe.poll():
@@ -100,11 +121,11 @@ class ManagerProcessBase(Process, metaclass=SingletonMeta):
             self._pipe = None
         print(f'{self.name} quit')
 
-    def _send(self, message: Message):
+    def send(self, message: Message):
         if self._pipe and not self._magscope_quitting.is_set():
             self._pipe.send(message)
 
-    def _check_pipe(self):
+    def check_pipe(self):
         # Check pipe for new messages
         if self._pipe is None or not self._pipe.poll():
             return
@@ -114,14 +135,14 @@ class ManagerProcessBase(Process, metaclass=SingletonMeta):
 
         # Special case: if the message is 'quit'
         # then set a flag to prevent this message repeating
-        if message.func == 'quit':
+        if message.meth == 'quit':
             self._quit_requested = True
 
         # Dispatch the message
-        if hasattr(self, message.func):
-            getattr(self, message.func)(*message.args, **message.kwargs)
+        if hasattr(self, message.meth):
+            getattr(self, message.meth)(*message.args, **message.kwargs)
         else:
-            warn(f"Function '{message.func}' not found in {self.name}")
+            warn(f"Function '{message.meth}' not found in {self.name}")
 
     @property
     def name(self):
@@ -130,6 +151,17 @@ class ManagerProcessBase(Process, metaclass=SingletonMeta):
     @name.setter
     def name(self, value):
         raise AttributeError("This property is read-only.")
+
+    @property
+    def locks(self):
+        return self._locks
+
+    @locks.setter
+    def locks(self, value):
+        raise AttributeError("This property is read-only.")
+
+    def _set_locks(self, locks: dict[str, LockType]):
+        self._locks = locks
 
     @registerwithscript('set_acquisition_dir')
     def set_acquisition_dir(self, value: str):

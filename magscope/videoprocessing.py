@@ -29,21 +29,20 @@ class VideoProcessorManager(ManagerProcessBase):
         self._workers: list[VideoWorker] = []
         self._busy_count: ValueTypeUI8 = Value(c_uint8, 0)
         self._gpu_lock: LockType = Lock()
+        self._loop:int = 0
 
         # TODO: Check implementation
         self._save_profiles = False
         self._zlut = None
 
-    def run(self):
-        super().run()
-
+    def setup(self):
         self._n_workers = self._settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
 
         # Create the workers
         for _ in range(self._n_workers):
             worker = VideoWorker(tasks=self._tasks,
-                                 locks=self._locks,
+                                 locks=self.locks,
                                  video_flag=self._video_process_flag,
                                  busy_count=self._busy_count,
                                  gpu_lock=self._gpu_lock)
@@ -53,11 +52,7 @@ class VideoProcessorManager(ManagerProcessBase):
         for worker in self._workers:
             worker.start()
 
-        while self._running:
-            self._do_main_loop()
-
-    def _do_main_loop(self):
-        self._check_pipe()
+    def do_main_loop(self):
 
         # Check if images are ready for image processing
         if self._acquisition_on:
@@ -66,10 +61,13 @@ class VideoProcessorManager(ManagerProcessBase):
                     self._video_process_flag.value = PoolVideoFlag.RUNNING
                     self._add_task()
 
-        # Update the GUI's status info
-        pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
-        message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
-        self._send(message)
+        self._loop += 1
+        self._loop %= 100
+        if self._loop == 0:
+            # Update the GUI's status info
+            pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
+            message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
+            self.send(message)
 
     def quit(self):
         super().quit()
@@ -110,9 +108,9 @@ class VideoProcessorManager(ManagerProcessBase):
             self._do_main_loop()
         message = Message(
             to=ScriptManager,
-            func=ScriptManager.update_waiting
+            meth=ScriptManager.update_waiting
         )
-        self._send(message)
+        self.send(message)
 
 class VideoWorker(Process):
     def __init__(self,

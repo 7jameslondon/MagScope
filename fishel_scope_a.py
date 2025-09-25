@@ -79,7 +79,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
         # Buffer
         self._buffer = MatrixBuffer(
             create=False,
-            locks=self.manager._locks,
+            locks=self.manager.locks,
             name='FakeLinearMotor'
         )
 
@@ -158,19 +158,18 @@ class LinearMotorControls(magscope.ControlPanelBase):
         # Send inter-process message to motor
         message = Message(
             to=FakeLinearMotor,
-            func=FakeLinearMotor.move,
+            meth=FakeLinearMotor.move,
             target=target,
             speed=speed,
         )
-        self.manager._send(message)
+        self.manager.send(message)
 
 
 if __name__ == "__main__":
     scope = magscope.MagScope()
 
     # Add the motor
-    my_linear_motor = FakeLinearMotor()
-    scope.add_hardware(my_linear_motor)
+    scope.add_hardware(FakeLinearMotor())
 
     # Add a GUI to control the Motor
     scope.add_control(LinearMotorControls, column=0)

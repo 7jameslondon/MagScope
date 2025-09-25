@@ -1,21 +1,138 @@
+from __future__ import annotations
+
+from abc import abstractmethod
 from datetime import datetime, timedelta
 import time
 import numpy as np
 from PyQt6.QtWidgets import *
 import pyqtgraph as pg
+from typing import TYPE_CHECKING
+
+from magscope.datatypes import MatrixBuffer
+
+if TYPE_CHECKING:
+    from magscope import WindowManager
 
 pg.setConfigOption('background', '#1e1e1e')
 
-class Plots(QWidget):
+class Plots:
+    def __init__(self, manager):
+        """ Called before the parent process is started """
+        super().__init__()
+        self.manager: WindowManager = manager
+        self.layout: pg.GraphicsLayoutWidget
+        self.plots: list[TimeSeriesPlotBase] = []
+
+        # Add plots for bead tracks
+        self.plots.append(TracksTimeSeriesPlot('X'))
+        self.plots.append(TracksTimeSeriesPlot('Y'))
+        self.plots.append(TracksTimeSeriesPlot('Z'))
+
+    def setup(self):
+        """ Called after the parent process is started """
+        # Layout
+        self.layout = pg.GraphicsLayoutWidget()
+        self.layout.setEnabled(False)
+
+        # Add plots to layout
+        for plot in self.plots:
+            plot_item = self.layout.addPlot()
+            self.layout.nextRow()
+            plot._set_plot_item(plot_item)
+
+        # Set manager for each plot
+        for plot in self.plots:
+            plot._set_manager(self.manager)
+
+        # Setup each plot
+        for plot in self.plots:
+            plot.setup()
+
+    def get_ui(self):
+        """ Returns the central widget for the GUI"""
+        return self.layout
+
+    def add_plot(self, plot: TimeSeriesPlotBase):
+        """ Used to add plots before the process has started """
+        if self.manager._running:
+            raise Exception('Cannot add plots after the program has started')
+        self.plots.append(plot)
+
+    def update(self):
+        """ Called by the parent process on a regular timer """
+        for plot in self.plots:
+            plot.update()
+
+
+class TimeSeriesPlotBase:
+    def __init__(self, buffer_name: str):
+        self.plot_item: pg.PlotItem
+        self.plot_data_item: pg.PlotDataItem
+        self.buffer: MatrixBuffer
+        self.buffer_name = buffer_name
+        self.manager: WindowManager
+
+    def setup(self):
+        """ Called after the parent process is started """
+
+        # Buffer
+        self.buffer = MatrixBuffer(
+            create=False,
+            name='TracksBuffer',
+            locks=self.manager.locks
+        )
+
+        # Plot
+        self.plot_data_item = self.plot_item.plot()
+        self.plot_data_item.setDownsampling(ds=None, auto=True, method='peak')
+
+    def _set_manager(self, manager: WindowManager):
+        self.manager = manager
+
+    def _set_plot_item(self, plot_item: pg.PlotItem):
+        self.plot_item = plot_item
+
+    @abstractmethod
+    def update(self):
+        pass
+
+class TracksTimeSeriesPlot(TimeSeriesPlotBase):
+    def __init__(self, axis: str):
+        super().__init__('TracksBuffer')
+        self.axis = axis
+        self.axis_index = ['X', 'Y', 'Z'].index(axis) + 1
+
+    def update(self):
+        # Get data from buffer
+        data = self.buffer.peak_unsorted()
+        t = data[:, 0]
+        v = data[:, self.axis_index]
+
+        # Remove nan/inf
+        selection = np.isfinite(t)
+        t = t[selection]
+        v = v[selection]
+
+        # Update the plot
+        self.plot_data_item.setData(t, v)
+
+class MyMotorTimeSeriesPlot:
+    pass
+
+
+# =========================================== #
+# =========================================== #
+# =========================================== #
+
+class Plots2(QWidget):
 
     def __init__(self):
         super().__init__()
 
         # Layout
-        layout = QGridLayout()
-        self.setLayout(layout)
+        self.setLayout(QGridLayout())
         self.plot_area = pg.GraphicsLayoutWidget()
-        layout.addWidget(self.plot_area, 0, 0, 1, 2)
+        self.layout().addWidget(self.plot_area, 0, 0, 1, 2)
 
         # Plots
         self._plots = {}
@@ -34,30 +151,6 @@ class Plots(QWidget):
                                           y_label='Z (nm)',
                                           n_lines=1,
                                           bead=True)
-        # self._plots['Force'] = TimeSeriesPlot(
-        #     parent=self,
-        #     row=len(self._plots),
-        #     y_label='Force (pN)',
-        #     n_lines=2,
-        #     text_decimals=2,
-        #     force_converter=self.app.force_converter)
-        self._plots['Linear Motor'] = TimeSeriesPlot(
-            parent=self,
-            row=len(self._plots),
-            y_label='Linear Motor (mm)',
-            n_lines=2,
-            text_decimals=1)
-        self._plots['Rotary Motor'] = TimeSeriesPlot(
-            parent=self,
-            row=len(self._plots),
-            y_label='Rotary Motor (turns)',
-            n_lines=2,
-            text_decimals=2)
-        self._plots['Objective Motor'] = TimeSeriesPlot(
-            parent=self,
-            row=len(self._plots),
-            y_label='Objective Motor (nm)',
-            n_lines=2)
         self.n_plots = len(self._plots)
 
         # Find bottom-most plot
@@ -75,12 +168,6 @@ class Plots(QWidget):
         # Set bottom plot x-label
         self.bottom_plot.plot.setLabel('bottom', 'Time (H:M:S)')
         self.bottom_plot.plot.getAxis('bottom').setStyle(showValues=True)
-
-        # # Timer
-        # self.timer = QTimer()
-        # self.timer.setInterval(100)
-        # self.timer.timeout.connect(self.update_plots)
-        # self.timer.start()
 
     def update_plots(self):
         # Beads - Get data

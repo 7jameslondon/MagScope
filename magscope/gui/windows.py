@@ -2,7 +2,7 @@ import numpy as np
 import os
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QMessageBox,
                              QHBoxLayout, QPushButton, QLabel, QTextEdit, QGroupBox, QSplitter, QLayout)
-from PyQt6.QtCore import QObject, QPoint, QPointF, QTimer, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, QPoint, QPointF, QTimer, pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
 import sys
 from time import time
@@ -30,8 +30,9 @@ class WindowManager(ManagerProcessBase):
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
+        self._last_time: float = 0
         self._n_windows: int | None = None
-        self.plots: Plots | None = None
+        self.plots: Plots = Plots(self)
         self.qt_app: QApplication | None = None
         self._timer: QTimer | None = None
         self._video_buffer: VideoBuffer | None = None
@@ -39,9 +40,7 @@ class WindowManager(ManagerProcessBase):
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
 
-    def run(self):
-        super().run()
-
+    def setup(self):
         self.qt_app = QApplication.instance()
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
@@ -59,7 +58,7 @@ class WindowManager(ManagerProcessBase):
         # Create the GUI widgets
         self.controls = Controls(self)
         self.video_viewer = VideoViewer()
-        self.plots = Plots()
+        self.plots.setup()
 
         # Create the layouts for each window
         self.create_central_widgets()
@@ -80,25 +79,35 @@ class WindowManager(ManagerProcessBase):
         self.video_viewer.coordinatesChanged.connect(self.update_view_coords)
         self.video_viewer.clicked.connect(self.callback_view_clicked)
 
-        # Pipe timer
+        # Timer
         self._timer = QTimer()
-        self._timer.setInterval(20)
-        self._timer.timeout.connect(self._do_main_loop) # noqa PyUnresolvedReferences
+        self._timer.timeout.connect(self.do_main_loop)
+        self._timer.setInterval(0)
         self._timer.start()
 
-        return self.qt_app.exec()
+        print(f'{self.name} is running')
+        self._running = True
+
+        # Start app
+        self.qt_app.exec()
 
     def quit(self):
         super().quit()
         for window in self.windows:
             window.close()
 
-    def _do_main_loop(self):
+    def do_main_loop(self):
+        # Because the WindowManager is a special case with a GUI
+        # the main loop is actually called by a timer, not the
+        # run method of it's super()
         if self._running:
+            if (now:=time()) - self._last_time > 1:
+                self.plots.update()
+                self._last_time = now
             self._update_view_and_hist()
             self._update_display_rate()
             self.update_video_buffer_status()
-            self._check_pipe()
+            self.check_pipe()
 
     @property
     def n_windows(self):
@@ -166,7 +175,7 @@ class WindowManager(ManagerProcessBase):
         right_top_widget.setLayout(right_top_layout)
 
         # Add plots to right-top
-        right_top_layout.addWidget(self.plots)
+        right_top_layout.addWidget(self.plots.get_ui())
 
         # Right-bottom
         right_bottom_widget = QWidget()
@@ -214,7 +223,7 @@ class WindowManager(ManagerProcessBase):
         ### Window 1 ###
 
         # Add plots to window-1
-        self.central_layouts[1].addWidget(self.plots)
+        self.central_layouts[1].addWidget(self.plots.get_ui())
 
     def create_three_window_widgets(self):
         for i in range(3):
@@ -232,7 +241,7 @@ class WindowManager(ManagerProcessBase):
 
         ### Window 2 ###
         # Add plots to window-2
-        self.central_layouts[2].addWidget(self.plots)
+        self.central_layouts[2].addWidget(self.plots.get_ui())
 
     def update_view_coords(self):
         pass
@@ -258,13 +267,13 @@ class WindowManager(ManagerProcessBase):
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
 
             # Update the histogram
-            self.controls.panels['HistogramPanel'].update_plot(image_bytes)
+            self.controls.histogram_panel.update_plot(image_bytes)
 
             # Increment the display rate counter
             self._display_rate_counter += 1
 
     def callback_view_clicked(self, pos: QPoint):
-        if not self.controls.panels['BeadSelectionPanel'].lock_button.isChecked():
+        if not self.controls.bead_selection_panel.lock_button.isChecked():
             self.add_bead(pos)
 
     def set_bead_rois(self, _):
@@ -282,7 +291,7 @@ class WindowManager(ManagerProcessBase):
             bead_rois[id] = (x0, x1, y0, y1)
         self._bead_rois = bead_rois
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, bead_rois)
-        self._send(message)
+        self.send(message)
 
     def move_bead(self, id: int, x, y):
         graphic = self._bead_graphics[id]
@@ -311,7 +320,7 @@ class WindowManager(ManagerProcessBase):
         rois = self._bead_rois
         rois.pop(id)
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, rois)
-        self._send(message)
+        self.send(message)
 
     def clear_beads(self):
         # Update graphics
@@ -322,20 +331,20 @@ class WindowManager(ManagerProcessBase):
 
         # Update bead ROIs
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, {})
-        self._send(message)
+        self.send(message)
 
     def lock_beads(self, locked: bool):
         for graphic in self._bead_graphics.values():
             graphic.locked = locked
 
     def update_video_processors_status(self, text):
-        self.controls.panels['StatusPanel'].update_video_processors_status(text)
+        self.controls.status_panel.update_video_processors_status(text)
 
     def update_video_buffer_status(self):
         level = self._video_buffer.get_level()
         size = self._video_buffer.n_total_images
         text = f'{level:.0%} full, {size} max images'
-        self.controls.panels['StatusPanel'].update_video_buffer_status(text)
+        self.controls.status_panel.update_video_buffer_status(text)
 
     def _update_display_rate(self):
         # If it has been more than a second, re-calculate the display rate
@@ -345,19 +354,19 @@ class WindowManager(ManagerProcessBase):
             self._display_rate_last_time = t
             self._display_rate_counter = 0
             self._display_rate_last_rate = rate
-            self.controls.panels['StatusPanel'].update_display_rate(f'{rate:.0f} updates/sec')
+            self.controls.status_panel.update_display_rate(f'{rate:.0f} updates/sec')
         else:
             # This is used to force the "..." to update
-            self.controls.panels['StatusPanel'].update_display_rate(f'{self._display_rate_last_rate:.0f} updates/sec')
+            self.controls.status_panel.update_display_rate(f'{self._display_rate_last_rate:.0f} updates/sec')
 
     def update_camera_setting(self, name: str, value: str):
-        self.controls.panels['CameraPanel'].update_camera_setting(name, value)
+        self.controls.camera_panel.update_camera_setting(name, value)
 
     def update_video_buffer_purge(self, t: float):
-        self.controls.panels['StatusPanel'].update_video_buffer_purge(t)
+        self.controls.status_panel.update_video_buffer_purge(t)
 
     def update_script_status(self, status: ScriptStatus):
-        self.controls.panels['StatusPanel'].update_status(status)
+        self.controls.script_panel.update_status(status)
 
     @registerwithscript('print')
     def print(self, text: str, details: str | None = None):
@@ -375,28 +384,28 @@ class WindowManager(ManagerProcessBase):
 
     def set_acquisition_on(self, value: bool):
         super().set_acquisition_on(value)
-        checkbox = self.controls.panels['AcquisitionPanel'].acquisition_on_checkbox.checkbox
+        checkbox = self.controls.acquisition_panel.acquisition_on_checkbox.checkbox
         checkbox.blockSignals(True) # to prevent a loop
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
     def set_acquisition_dir(self, value: str):
         super().set_acquisition_dir(value)
-        textedit = self.controls.panels['AcquisitionPanel'].acquisition_dir_textedit
+        textedit = self.controls.acquisition_panel.acquisition_dir_textedit
         textedit.blockSignals(True) # to prevent a loop
         textedit.setText(value)
         textedit.blockSignals(False)
 
     def set_acquisition_dir_on(self, value: bool):
         super().set_acquisition_dir_on(value)
-        checkbox = self.controls.panels['AcquisitionPanel'].acquisition_dir_on_checkbox.checkbox
+        checkbox = self.controls.acquisition_panel.acquisition_dir_on_checkbox.checkbox
         checkbox.blockSignals(True)  # to prevent a loop
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
     def set_acquisition_mode(self, value: AcquisitionMode):
         super().set_acquisition_mode(value)
-        combobox = self.controls.panels['AcquisitionPanel'].acquisition_mode_combobox
+        combobox = self.controls.acquisition_panel.acquisition_mode_combobox
         combobox.blockSignals(True)  # to prevent a loop
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
@@ -458,12 +467,20 @@ class Controls(QWidget):
         layout.addStretch(1)
 
         # Add control panels
-        self.add_panel(StatusPanel(self.manager), column=0)
-        self.add_panel(CameraPanel(self.manager), column=0)
-        self.add_panel(AcquisitionPanel(self.manager), column=1)
-        self.add_panel(BeadSelectionPanel(self.manager), column=1)
-        self.add_panel(HistogramPanel(self.manager), column=1)
-        self.add_panel(ScriptPanel(self.manager), column=1)
+        self.status_panel = StatusPanel(self.manager)
+        self.camera_panel = CameraPanel(self.manager)
+        self.acquisition_panel = AcquisitionPanel(self.manager)
+        self.bead_selection_panel = BeadSelectionPanel(self.manager)
+        self.histogram_panel = HistogramPanel(self.manager)
+        self.script_panel = ScriptPanel(self.manager)
+
+        self.add_panel(self.status_panel, column=0)
+        self.add_panel(self.camera_panel, column=0)
+        self.add_panel(self.acquisition_panel, column=1)
+        self.add_panel(self.bead_selection_panel, column=1)
+        self.add_panel(self.histogram_panel, column=1)
+        self.add_panel(self.script_panel, column=1)
+
         # self.zlut_panel = ZlutPanel(self)
         # self.force_calibration_panel = ForceCalibartionPanel(self)
         # self.plot_settings_panel = PlotSettingsPanel(self)

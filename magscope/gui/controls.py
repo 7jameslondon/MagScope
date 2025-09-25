@@ -109,15 +109,15 @@ class AcquisitionPanel(ControlPanelBase):
 
     def callback_acquisition_on(self):
         value: bool = self.acquisition_on_checkbox.checkbox.isChecked()
-        self.manager._send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
+        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
 
     def callback_acquisition_dir_on(self):
         value: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
-        self.manager._send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
+        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
 
     def callback_acquisition_mode(self):
         value: AcquisitionMode = self.acquisition_mode_combobox.currentText()
-        self.manager._send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
+        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
@@ -135,7 +135,7 @@ class AcquisitionPanel(ControlPanelBase):
         else:
             value = None
             self.acquisition_dir_textedit.setText(self.no_file_str)
-        self.manager._send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
+        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -229,9 +229,9 @@ class CameraPanel(ControlPanelBase):
         for name in self.manager._camera_type.settings:
             from magscope import CameraManager
             message = Message(to=CameraManager,
-                              func=CameraManager.get_camera_setting,
+                              meth=CameraManager.get_camera_setting,
                               args=(name,))
-            self.manager._send(message)
+            self.manager.send(message)
 
     def callback_set_camera_setting(self, name):
         value = self.settings[name].lineedit.text()
@@ -241,9 +241,9 @@ class CameraPanel(ControlPanelBase):
         self.settings[name].value_label.setText('')
         from magscope import CameraManager
         message = Message(to=CameraManager,
-                          func=CameraManager.set_camera_setting,
+                          meth=CameraManager.set_camera_setting,
                           args=(name, value))
-        self.manager._send(message)
+        self.manager.send(message)
         
     def update_camera_setting(self, name: str, value: str):
         self.settings[name].value_label.setText(value)
@@ -380,7 +380,7 @@ class ScriptPanel(ControlPanelBase):
                                               'Script (*.py)')
 
         message = Message(ScriptManager, ScriptManager.load_script, path)
-        self.manager._send(message)
+        self.manager.send(message)
 
         if not path:  # user selected cancel
             path = self.no_file_str
@@ -391,15 +391,15 @@ class ScriptPanel(ControlPanelBase):
 
     def callback_start(self):
         message = Message(ScriptManager, ScriptManager.start_script)
-        self.manager._send(message)
+        self.manager.send(message)
 
     def callback_pause(self):
         if self.pause_button.text() == 'Pause':
             message = Message(ScriptManager, ScriptManager.pause_script)
-            self.manager._send(message)
+            self.manager.send(message)
         else:
             message = Message(ScriptManager, ScriptManager.resume_script)
-            self.manager._send(message)
+            self.manager.send(message)
 
 
 class StatusPanel(ControlPanelBase):

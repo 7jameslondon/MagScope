@@ -11,16 +11,16 @@ if TYPE_CHECKING:
     from magscope import ManagerProcessBase
 
 class Message:
-    def __init__(self, to: Type['ManagerProcessBase'] | str, func: Callable | str, *args, **kwargs):
+    def __init__(self, to: Type['ManagerProcessBase'] | str, meth: Callable | str, *args, **kwargs):
         if isinstance(to, str):
             self.to = to
         else:
             self.to: str = to.__name__
 
-        if isinstance(func, str):
-            self.func = func
+        if isinstance(meth, str):
+            self.meth = meth
         else:
-            self.func: str = func.__name__
+            self.meth: str = meth.__name__
 
         self.args = args
         if 'args' in kwargs:
@@ -29,7 +29,7 @@ class Message:
         self.kwargs = kwargs
 
     def __str__(self):
-        return f"Message(to={self.to}, func={self.func}, args={self.args}, kwargs={self.kwargs})"
+        return f"Message(to={self.to}, func={self.meth}, args={self.args}, kwargs={self.kwargs})"
 
 class AcquisitionMode(StrEnum):
     """ Enum for the different acquisition modes """
@@ -109,11 +109,11 @@ class Units:
     clockwise = cw = 1.
     counterclockwise = ccw = -1.
 
-def registerwithscript(func_str: str):
-    def decorator(func: callable):
-        func._scriptable = True
-        func._script_str = func_str
-        func._script_cls = func.__qualname__.split('.')[0]
-        return func
+def registerwithscript(meth_str: str):
+    def decorator(meth: callable):
+        meth._scriptable = True
+        meth._script_str = meth_str
+        meth._script_cls = meth.__qualname__.split('.')[0]
+        return meth
 
     return decorator

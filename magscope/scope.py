@@ -64,7 +64,7 @@ class MagScope:
         freeze_support()  # To prevent recursion in windows executable
         self._load_settings()
         self._setup_shared_resources()
-        self._register_script_functions()
+        self._register_script_methods()
 
         # --- Start the managers ---
         for proc in self.processes.values():
@@ -96,18 +96,18 @@ class MagScope:
 
             # Process the message
             if message.to == ManagerProcessBase.__name__: # the message is to all processes
-                if message.func == 'quit':
+                if message.meth == 'quit':
                     print('MagScope quitting ...')
                     self._quitting.set()
                     self._running = False
                 for name, pipe2 in self.pipes.items():
                     if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
                         pipe2.send(message)
-                        if message.func == 'quit':
+                        if message.meth == 'quit':
                             while not self.quitting_events[name].is_set():
                                 if pipe2.poll():
                                     pipe2.recv()
-                if message.func == 'quit':
+                if message.meth == 'quit':
                     break
             elif message.to in self.pipes.keys(): # the message is to one process
                 if self.processes[message.to].is_alive() and not self.quitting_events[message.to].is_set():
@@ -159,7 +159,7 @@ class MagScope:
         for name in self.lock_names:
             self.locks[name] = Lock()
         for proc in self.processes.values():
-            proc._locks = self.locks
+            proc._set_locks(self.locks)
 
     def _setup_pipes(self):
         for name, proc in self.processes.items():
@@ -167,10 +167,10 @@ class MagScope:
             self.pipes[name] = pipe[0]
             proc._pipe = pipe[1]
 
-    def _register_script_functions(self):
-        self.script_manager.script_registry.register_class_functions(ManagerProcessBase())
+    def _register_script_methods(self):
+        self.script_manager.script_registry.register_class_methods(ManagerProcessBase)
         for proc in self.processes.values():
-            self.script_manager.script_registry.register_class_functions(proc)
+            self.script_manager.script_registry.register_class_methods(proc)
 
     def _get_default_settings(self):
         with open(self._default_settings_path, 'r') as f:

@@ -12,11 +12,11 @@ class BeadManager(ManagerProcessBase):
         self.auto_center_on: bool = False
         self._auto_center_last_time: float = time()
 
-    def run(self):
-        super().run()
+    def setup(self):
+        pass
 
-        while self._running:
-            self._check_pipe()
+    def do_main_loop(self):
+        pass
 
     def set_auto_center_on(self, value: bool):
         self._auto_center_on = value

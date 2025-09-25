@@ -43,6 +43,14 @@ An example script is included exxample_script.py
 You can add your own methods to the scripting system with a decorator.
 `@registerwithscript(func_str)` where `func_str` is the first argument when calling a function in a script.
 
+## Adding your own process
+You can extened the `ManagerProcessBase` to create a seperate process to manage something more
+complex then just hardware. To do so you will need to implment the following abstract methods:
+* 'setup' - this gets called when the process is started on a seperate processor. This is a good place to initate
+complex objects like timers or connections to hardware. If you do not need to do anything here the just `pass`.
+* 'do_main_loop' - this is repeatly called in the process as fast as possible. This is where all the stuff your process
+does by itself should happen. If you do not need to do anything here the just `pass`.
+
 ## Development
 To format the python files run 
 ``` yapf main.py -i ```, 

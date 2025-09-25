@@ -12,65 +12,70 @@ from magscope.utils import Message, registerwithscript
 class Script:
     def __init__(self):
         self.steps: list[tuple[str, tuple, dict]] = []
-    def __call__(self, func: str, *args, **kwargs):
-        self.steps.append((func, args, kwargs))
+
+    def __call__(self, meth: str, *args, **kwargs):
+        self.steps.append((meth, args, kwargs))
 
 
 class ScriptRegistry:
     avoided_names = ['sentinel', 'send_ipc']
     def __init__(self):
-        self._functions: dict[str, tuple[str, str, Callable]] = {}
+        self._methods: dict[str, tuple[str, str, Callable]] = {}
 
-    def __call__(self, func_str: str) -> tuple[str, str, Callable]:
-        if func_str not in self._functions:
-            raise ValueError(f"Script function {func_str} is not registered.")
-        return self._functions[func_str]
+    def __call__(self, meth_str: str) -> tuple[str, str, Callable]:
+        if meth_str not in self._methods:
+            raise ValueError(f"Script method {meth_str} is not registered.")
+        return self._methods[meth_str]
 
-    def register_class_functions(self, cls):
+    def register_class_methods(self, cls):
         cls_name = self.get_class_name(cls)
-        func_names = dir(cls)
-        for func_name in func_names:
-            # Skip some special functions
-            if func_name in self.avoided_names:
+        meth_names = dir(cls)
+        for meth_name in meth_names:
+            # Skip some special methods
+            if meth_name in self.avoided_names:
                 continue
 
-            # Check if the function was decorated for registration
-            func = getattr(cls, func_name)
-            if not hasattr(func, "_scriptable") or not func._scriptable:
+            # Check if the method was decorated for registration
+            meth = getattr(cls, meth_name)
+            if not hasattr(meth, "_scriptable") or not meth._scriptable:
                 continue
 
             # Check if it is a subclass only inheriting the registration
-            if cls_name != func._script_cls:
+            if cls_name != meth._script_cls:
                 continue
 
-            # Check the script function name is unique
-            if func_name in self._functions:
-                cls_name_reg, func_name_reg, _ = self._functions[func_name]
+            # Check the script method name is unique
+            if meth_name in self._methods:
+                cls_name_reg, meth_name_reg, _ = self._methods[meth_name]
                 raise ValueError(
-                    f"Script function {func_name} for {cls_name}.{func_name} is already registered with {cls_name_reg}.{func_name_reg}.")
+                    f"Script method {meth_name} for {cls_name}.{meth_name} is already registered with {cls_name_reg}.{meth_name_reg}.")
 
-            # Add function to registry
-            self._functions[func._script_str] = (cls_name, func_name, func)
+            # Add method to registry
+            self._methods[meth._script_str] = (cls_name, meth_name, meth)
 
     def check_script(self, script: list[tuple[str, tuple, dict]]):
         for step in script:
-            step_func: str = step[0]
+            step_meth: str = step[0]
             step_args: tuple = step[1]
             step_kwargs: dict = step[2]
 
-            if step_func not in self._functions:
-                raise ValueError(f"Script contains an unknown function: {step_func}")
+            if step_meth not in self._methods:
+                raise ValueError(f"Script contains an unknown method: {step_meth}")
 
             if wait := step_kwargs.get('wait', False):
                 if not isinstance(wait, bool):
                     raise ValueError(f"Argument 'wait' must be a boolean. Got {wait}")
 
-            cls_name, func_name, func = self._functions[step_func]
+            # Test is the method will be called with the correct arguments
+            cls_name, meth_name, meth = self._methods[step_meth]
             try:
-                signature = inspect.signature(func)
-                signature.bind(*step_args, **step_kwargs)
+                if inspect.ismethod(meth):
+                    inspect.signature(meth).bind(*step_args, **step_kwargs)
+                else:
+                    # "None" is used in place of "self" for unbound functions of class methods
+                    inspect.signature(meth).bind(None, *step_args, **step_kwargs)
             except TypeError as e:
-                raise TypeError(f"Invalid arguments for {func.__name__} to call {cls_name}.{func_name}: {e}")
+                raise TypeError(f"Invalid arguments for {meth.__name__} to call {cls_name}.{meth_name}: {e}")
 
     @staticmethod
     def get_class_name(cls):
@@ -102,15 +107,10 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_duration: float | None = None
         self._script_sleep_start: float = 0
 
-    def run(self):
-        super().run()
+    def setup(self):
+        pass
 
-        while self._running:
-            self._do_main_loop()
-
-    def _do_main_loop(self):
-        self._check_pipe()
-
+    def do_main_loop(self):
         if self._script_status == ScriptStatus.RUNNING:
             # Check if were waiting on a previous step to finish
             if self._script_waiting:
@@ -198,7 +198,7 @@ class ScriptManager(ManagerProcessBase):
         step_args: tuple = step[1]
         step_kwargs: dict = step[2]
 
-        cls_name, func_name, func = self.script_registry(step_name)
+        cls_name, meth_name, meth = self.script_registry(step_name)
 
         if wait := step_kwargs.get('wait', False):
             self._script_waiting = wait
@@ -207,8 +207,8 @@ class ScriptManager(ManagerProcessBase):
         if step_name == 'sleep':
             self._script_waiting = True
 
-        message = Message(cls_name, func_name, *step_args, **step_kwargs)
-        self._send(message)
+        message = Message(cls_name, meth_name, *step_args, **step_kwargs)
+        self.send(message)
 
     def update_waiting(self):
         """ Lets the script resume after waiting for a previous step to finish."""
@@ -231,7 +231,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_status = status
         message = Message(
             to=WindowManager,
-            func=WindowManager.update_script_status,
+            meth=WindowManager.update_script_status,
             args=(status,)
         )
-        self._send(message)
+        self.send(message)

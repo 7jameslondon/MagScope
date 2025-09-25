@@ -13,9 +13,7 @@ class CameraManager(ManagerProcessBase):
         super().__init__()
         self.camera: CameraBase = DummyCamera()
 
-    def run(self):
-        super().run()
-
+    def setup(self):
         # Attempt to connect to the camera
         try:
             self.camera.connect(self._video_buffer)
@@ -27,10 +25,7 @@ class CameraManager(ManagerProcessBase):
             for setting in self.camera.settings:
                 self.get_camera_setting(setting)
 
-        while self._running:
-            self._do_main_loop()
-
-    def _do_main_loop(self):
+    def do_main_loop(self):
         # Check if images are done processing
         if self._acquisition_on:
             if self._video_process_flag.value == PoolVideoFlag.FINISHED:
@@ -51,14 +46,11 @@ class CameraManager(ManagerProcessBase):
             # local import to avoid circular imports
             from magscope.gui import WindowManager
             message = Message(WindowManager, WindowManager.update_video_buffer_purge, time())
-            self._send(message)
+            self.send(message)
 
         # Check for new images from the camera
         if self.camera.is_connected:
             self.camera.fetch()
-
-        # Check the pipe
-        self._check_pipe()
 
     def _release_unattached_buffers(self):
         if self._video_buffer is None:
@@ -97,9 +89,9 @@ class CameraManager(ManagerProcessBase):
         # local import to avoid circular imports
         from magscope.gui import WindowManager
         message = Message(to=WindowManager,
-                          func=WindowManager.update_camera_setting,
+                          meth=WindowManager.update_camera_setting,
                           args=(name, value))
-        self._send(message)
+        self.send(message)
 
     def set_camera_setting(self, name: str, value: str):
         try:
