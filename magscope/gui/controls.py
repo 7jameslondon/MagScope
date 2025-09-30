@@ -1,8 +1,9 @@
 from __future__ import annotations
 import datetime
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 import numpy as np
 import os
-import pyqtgraph as pg
 import time
 from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt, QVariant, pyqtSignal, QSettings
@@ -263,6 +264,9 @@ class HistogramPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Histogram')
 
+        self.update_interval: float = 1 # seconds
+        self._update_last_time: float = 0
+
         # ===== First Row ===== #
         row_1 = QHBoxLayout()
         self.layout().addLayout(row_1)
@@ -282,50 +286,76 @@ class HistogramPanel(ControlPanelBase):
 
         # ===== Plot ===== #
         self.n_bins = 256
-        self.histogram_widget = pg.PlotWidget()
-        self.histogram_widget.setFixedHeight(100)
-        self.histogram_widget.setLabel('left', 'Count')
-        self.histogram_widget.setLabel('bottom', 'Intensity')
-        self.histogram_widget.getAxis('left').setStyle(showValues=False, tickLength=0)
-        self.histogram_widget.getAxis('bottom').setStyle(showValues=False, tickLength=0)
-        self.histogram_widget.setMouseEnabled(False, False)
-        self.histogram_widget.setMenuEnabled(False)
-        self.histogram_widget.hideButtons()
-        self.histogram_widget.getViewBox().setMouseEnabled(False, False)
-        self.histogram_widget.getViewBox().setMenuEnabled(False)
-        self.histogram_widget.enableAutoRange(False)
-        self.layout().addWidget(self.histogram_widget)
-        bins = np.arange(self.n_bins)
-        self.histogram_item = pg.BarGraphItem(
-            x0=bins,  # Left edges of bins
-            x1=bins + 1,  # Right edges of bins
-            height=np.zeros(self.n_bins),
-            brush='w')
-        self.histogram_widget.addItem(self.histogram_item)
+        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setFixedHeight(100)
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.figure.tight_layout()
+        self.figure.subplots_adjust(bottom=0.2, top=1)
+
+        _, _, self.bars = self.axes.hist(
+            [],
+            bins=self.n_bins,
+            edgecolor=None,
+            facecolor='white'
+        )
+
+        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_xlabel('Intensity')
+        self.axes.set_ylabel('Count')
+        self.axes.set_yticks([])
+        self.axes.set_xticks([])
+        self.axes.spines['left'].set_visible(False)
+        self.axes.spines['top'].set_visible(False)
+        self.axes.spines['right'].set_visible(False)
+        self.axes.set_xlim(0, 1)
+
+        self.layout().addWidget(self.canvas)
 
     def update_plot(self, data):
-        if self.enable.checkbox.isChecked() and not self.groupbox.collapsed:
-            dtype = self.manager._camera_type.dtype
-            max_int = 2**self.manager._camera_type.bits
-            shape = self.manager._video_buffer.image_shape
-            image = np.frombuffer(data, dtype).reshape(shape)
+        # Check if its enabled
+        if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
+            return
 
-            if self.only_beads.checkbox.isChecked():
-                bead_rois = self.manager._bead_rois
-                if len(bead_rois) > 0:
-                    image = crop_stack_to_rois(
-                        np.swapaxes(image, 0, 1)[:, :, None], list(bead_rois.values()))
-                else:
-                    self.clear()
-                    return
+        # Check if it has been enough time
+        if (now:=time.time()) - self._update_last_time < self.update_interval:
+            return
+        self._update_last_time = now
 
-            binned_data, _ = np.histogram(image, bins=256, range=(0, max_int))
-            # fast safe log to prevent log(0)
-            binned_data = np.log(binned_data + 1)
-            self.histogram_item.setOpts(height=binned_data)
+        dtype = self.manager._camera_type.dtype
+        max_int = 2**self.manager._camera_type.bits
+        shape = self.manager._video_buffer.image_shape
+        image = np.frombuffer(data, dtype).reshape(shape)
+
+        if self.only_beads.checkbox.isChecked():
+            bead_rois = self.manager._bead_rois
+            if len(bead_rois) > 0:
+                image = crop_stack_to_rois(
+                    np.swapaxes(image, 0, 1)[:, :, None], list(bead_rois.values()))
+            else:
+                self.clear()
+                return
+
+        # Perform histogram binning
+        counts, _ = np.histogram(image, bins=256, range=(0, max_int))
+        # fast safe log to prevent log(0)
+        counts = np.log(counts + 1)
+
+        # Update the plot with the new bin counts
+        for count, rect in zip(counts, self.bars.patches):
+            rect.set_height(count)
+
+        # Update y-limit
+        max_count = counts.max() if len(counts) > 0 else 1
+        self.axes.set_ylim(0, max_count * 1.1)
+
+        # Re-draw the graphic
+        self.canvas.draw()
 
     def clear(self):
-        self.histogram_item.setOpts(height=np.zeros(self.n_bins))
+        for rect in self.bars.patches:
+            rect.set_height(0)
+        self.canvas.draw()
 
 
 class ScriptPanel(ControlPanelBase):
