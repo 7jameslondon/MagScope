@@ -1,8 +1,16 @@
 import numpy as np
 import os
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QMessageBox,
-                             QHBoxLayout, QPushButton, QLabel, QTextEdit, QGroupBox, QSplitter, QLayout)
-from PyQt6.QtCore import QObject, QPoint, QPointF, QTimer, pyqtSignal, Qt, QThread
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QMessageBox,
+    QHBoxLayout,
+    QLabel,
+    QLayout
+)
+from PyQt6.QtCore import QPoint, QTimer, pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
 import sys
 from time import time
@@ -10,9 +18,22 @@ from warnings import warn
 
 from magscope import AcquisitionMode
 from magscope.datatypes import VideoBuffer
-from magscope.gui import (VideoViewer, Plots, CameraPanel, GripSplitter, BeadSelectionPanel, AcquisitionPanel,
-                          ScriptPanel, HistogramPanel, StatusPanel,
-                          BeadGraphic, ControlPanelBase)
+from magscope.gui import (
+    VideoViewer,
+    PlotWorker,
+    TimeSeriesPlotBase,
+    CameraPanel,
+    GripSplitter,
+    BeadSelectionPanel,
+    AcquisitionPanel,
+    ScriptPanel,
+    HistogramPanel,
+    StatusPanel,
+    BeadGraphic,
+    ControlPanelBase,
+    ResizableLabel,
+)
+from magscope.gui.controls import PlotSettingsPanel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import Message, numpy_type_to_qt_image_type
@@ -30,9 +51,11 @@ class WindowManager(ManagerProcessBase):
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
-        self._last_time: float = 0
         self._n_windows: int | None = None
-        self.plots: Plots = Plots(self)
+        self.plot_worker: PlotWorker
+        self.plot_thread: QThread
+        self.plots_widget: QLabel
+        self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
         self._timer: QTimer | None = None
         self._video_buffer: VideoBuffer | None = None
@@ -55,10 +78,28 @@ class WindowManager(ManagerProcessBase):
         if self._n_windows is None:
             self._n_windows = len(QApplication.screens())
 
-        # Create the GUI widgets
+        # Create the live plots in a separate thread (but dont start it)
+        self.plots_widget = ResizableLabel()
+        self.plots_widget.setScaledContents(True)
+        self.plots_thread = QThread()
+        self.plot_worker = PlotWorker()
+        for plot in self.plots_to_add:
+            self.plot_worker.add_plot(plot)
+        self.plot_worker.set_locks(self.locks)
+        self.plot_worker.setup()
+
+        # Create controls panel
         self.controls = Controls(self)
+
+        # Create the video viewer
         self.video_viewer = VideoViewer()
-        self.plots.setup()
+
+        # Finally start the live plots
+        self.plot_worker.moveToThread(self.plots_thread)
+        self.plots_thread.started.connect(self.plot_worker.run)
+        self.plot_worker.image_signal.connect(lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img)))
+        self.plots_widget.resized.connect(self.update_plot_figure_size)
+        self.plots_thread.start()
 
         # Create the layouts for each window
         self.create_central_widgets()
@@ -91,8 +132,17 @@ class WindowManager(ManagerProcessBase):
         # Start app
         self.qt_app.exec()
 
+    def update_plot_figure_size(self, w, h):
+        self.plot_worker.figure_size_signal.emit(w,h)
+
     def quit(self):
         super().quit()
+
+        # Stop the plot worker
+        self.plot_worker._stop()
+        self.plots_thread.quit()
+        self.plots_thread.wait()
+
         for window in self.windows:
             window.close()
 
@@ -101,9 +151,6 @@ class WindowManager(ManagerProcessBase):
         # the main loop is actually called by a timer, not the
         # run method of it's super()
         if self._running:
-            if (now:=time()) - self._last_time > 1:
-                self.plots.update()
-                self._last_time = now
             self._update_view_and_hist()
             self._update_display_rate()
             self.update_video_buffer_status()
@@ -175,7 +222,7 @@ class WindowManager(ManagerProcessBase):
         right_top_widget.setLayout(right_top_layout)
 
         # Add plots to right-top
-        right_top_layout.addWidget(self.plots.get_ui())
+        right_top_layout.addWidget(self.plots_widget)
 
         # Right-bottom
         right_bottom_widget = QWidget()
@@ -223,7 +270,7 @@ class WindowManager(ManagerProcessBase):
         ### Window 1 ###
 
         # Add plots to window-1
-        self.central_layouts[1].addWidget(self.plots.get_ui())
+        self.central_layouts[1].addWidget(self.plots_widget)
 
     def create_three_window_widgets(self):
         for i in range(3):
@@ -241,7 +288,7 @@ class WindowManager(ManagerProcessBase):
 
         ### Window 2 ###
         # Add plots to window-2
-        self.central_layouts[2].addWidget(self.plots.get_ui())
+        self.central_layouts[2].addWidget(self.plots_widget)
 
     def update_view_coords(self):
         pass
@@ -410,6 +457,7 @@ class WindowManager(ManagerProcessBase):
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
 
+
 class LoadingWindow(QMainWindow):
 
     def __init__(self):
@@ -473,6 +521,7 @@ class Controls(QWidget):
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
         self.script_panel = ScriptPanel(self.manager)
+        self.plot_settings_panel = PlotSettingsPanel(self.manager)
 
         self.add_panel(self.status_panel, column=0)
         self.add_panel(self.camera_panel, column=0)
@@ -480,6 +529,7 @@ class Controls(QWidget):
         self.add_panel(self.bead_selection_panel, column=1)
         self.add_panel(self.histogram_panel, column=1)
         self.add_panel(self.script_panel, column=1)
+        self.add_panel(self.plot_settings_panel, column=1)
 
         # self.zlut_panel = ZlutPanel(self)
         # self.force_calibration_panel = ForceCalibartionPanel(self)

@@ -1,24 +1,33 @@
 from __future__ import annotations
+import datetime
 import numpy as np
 import os
-from pathlib import Path
 import pyqtgraph as pg
 import time
-import traceback
 from typing import TYPE_CHECKING
-from warnings import warn
-from PyQt6.QtCore import Qt, QObject, QPoint, QRectF, QTimer, QVariant, pyqtSignal, QSettings, QPropertyAnimation
-from PyQt6.QtGui import (QBrush, QColor, QCursor, QDoubleValidator, QGuiApplication,
-                         QImage, QIntValidator, QPixmap, QTextOption)
-from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFrame,
-                             QGraphicsPixmapItem, QGraphicsScene, QGraphicsView,
-                             QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QLineEdit, QMainWindow, QProgressDialog, QPushButton,
-                             QRadioButton, QTextEdit, QVBoxLayout, QWidget, QComboBox, QProgressBar,
-                             QGraphicsOpacityEffect, QStackedLayout)
+from PyQt6.QtCore import Qt, QVariant, pyqtSignal, QSettings
+from PyQt6.QtGui import QFont, QTextOption
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+    QComboBox,
+    QProgressBar,
+    QStackedLayout
+)
 
-from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEditWithValue,
-                          LabeledStepperLineEdit, LabeledLineEdit)
+from magscope.gui import (
+    CollapsibleGroupBox,
+    LabeledCheckbox,
+    LabeledLineEditWithValue,
+    LabeledStepperLineEdit,
+    LabeledLineEdit)
 from magscope.gui.widgets import FlashLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, ScriptManager
@@ -446,6 +455,101 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {string}')
 
 
+class PlotSettingsPanel(ControlPanelBase):
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__(manager=manager, title='Plot Settings')
+
+        # Selected Bead
+        self.selected_bead = LabeledLineEdit(
+            label_text='Selected Bead',
+            default='0',
+            callback=self.selected_bead_callback,
+        )
+        self.layout().addWidget(self.selected_bead)
+
+        # Selected Reference Bead
+        self.reference_bead = LabeledLineEdit(
+            label_text='Reference Bead',
+            callback=self.reference_bead_callback,
+        )
+        self.layout().addWidget(self.reference_bead)
+
+        # =============== Limits ===============
+        self.limits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
+
+        # Limits Grid
+        self.grid_layout = QGridLayout()
+        self.layout().addLayout(self.grid_layout)
+
+        # First row of labels
+        r = 0
+        limit_label_font = QFont()
+        limit_label_font.setBold(True)
+        limit_label = QLabel('Limits')
+        limit_label.setFont(limit_label_font)
+        self.grid_layout.addWidget(limit_label, r, 0)
+        self.grid_layout.addWidget(QLabel('Min'), r, 1)
+        self.grid_layout.addWidget(QLabel('Max'), r, 2)
+
+        # One row for each y-axis
+        for i, plot in enumerate(self.manager.plot_worker.plots):
+            r += 1
+            ylabel = plot.ylabel
+            self.limits[ylabel] = (QLineEdit(), QLineEdit())
+            self.limits[ylabel][0].textChanged.connect(self.limits_callback)
+            self.limits[ylabel][1].textChanged.connect(self.limits_callback)
+            self.limits[ylabel][0].setPlaceholderText('auto')
+            self.limits[ylabel][1].setPlaceholderText('auto')
+            self.grid_layout.addWidget(QLabel(ylabel), r, 0)
+            self.grid_layout.addWidget(self.limits[ylabel][0], r, 1)
+            self.grid_layout.addWidget(self.limits[ylabel][1], r, 2)
+
+        # Last row for "Time"
+        r += 1
+        self.limits['Time'] = (QLineEdit(), QLineEdit())
+        self.limits['Time'][0].textChanged.connect(self.limits_callback)
+        self.limits['Time'][1].textChanged.connect(self.limits_callback)
+        self.limits['Time'][0].setPlaceholderText('auto')
+        self.limits['Time'][1].setPlaceholderText('auto')
+        self.grid_layout.addWidget(QLabel('Time (H:M:S)'), r, 0)
+        self.grid_layout.addWidget(self.limits['Time'][0], r, 1)
+        self.grid_layout.addWidget(self.limits['Time'][1], r, 2)
+
+    def selected_bead_callback(self, value):
+        try: value = int(value)
+        except: value = -1
+        self.manager.plot_worker.selected_bead_signal.emit(value)
+
+    def reference_bead_callback(self, value):
+        value = self.reference_bead.lineedit.text()
+        try: value = int(value)
+        except: value = -1
+        self.manager.plot_worker.reference_bead_signal.emit(value)
+
+    def limits_callback(self, _):
+        values = {}
+        for name, limit in self.limits.items():
+            min_max = [limit[0].text(), limit[1].text()]
+            for i in range(2):
+                value = min_max[i]
+                if name == 'Time':
+                    today = datetime.date.today()
+                    try:
+                        value = value.replace('.', ':').split(':')
+                        value = datetime.datetime.combine(today, datetime.time(*map(int, value)))
+                        value = value.timestamp()
+                    except:
+                        value = None
+
+                else:
+                    try:
+                        value = float(value)
+                    except:
+                        value = None
+                min_max[i] = value
+            values[name] = tuple(min_max)
+        self.manager.plot_worker.limits_signal.emit(values)
+
 #############################################
 #############################################
 #############################################
@@ -849,58 +953,6 @@ class StatusPanel(ControlPanelBase):
 #         # Enable or disable GUI
 #         self.bead_z_lock_bead.setEnabled(enable)
 #         self.bead_z_lock_rate.setEnabled(enable)
-#
-#
-# class PlotSettingsPanel:
-#
-#     def __init__(self, parent):
-#         super().__init__()
-#         self.manager = parent
-#
-#         # Groupbox
-#         self.groupbox = CollapsibleGroupBox('Plot Settings',
-#                                                          collapsed=False)
-#
-#         # Layout
-#         layout = QVBoxLayout()
-#         self.groupbox.setContentLayout(layout)
-#
-#         # Selected bead label
-#         self.selected_bead = LabeledLineEdit(
-#             label_text='Selected Bead',
-#             validator=QIntValidator(),
-#             default='0',
-#             widths=(150, 0))
-#         layout.addWidget(self.selected_bead)
-#
-#         # Selected bead label
-#         self.reference_bead = LabeledLineEdit(
-#             label_text='Subtract Reference Bead',
-#             validator=QIntValidator(),
-#             widths=(150, 0))
-#         layout.addWidget(self.reference_bead)
-#
-#         # Max duration
-#         self.max_duration = LabeledLineEdit(
-#             label_text='Max Duration (seconds)',
-#             default='60',
-#             validator=QIntValidator(0, 2147483647),  # max QIntValidator
-#             widths=(150, 0))
-#         layout.addWidget(self.max_duration)
-#
-#         # Max datapoints
-#         max_ = magscope.settings.N_MAX_DATAPOINTS_PER_PLOT
-#         self.max_datapoints = LabeledLineEdit(
-#             label_text='Max Points Displayed',
-#             default='10000',
-#             validator=QIntValidator(0, max_),
-#             widths=(150, 0))
-#         layout.addWidget(self.max_datapoints)
-#
-#         # Show relative time
-#         self.relative_time = LabeledCheckbox(
-#             label_text='Relative Time', widths=(150, 0))
-#         layout.addWidget(self.relative_time)
 #
 #
 # class RotaryMotorPanel:

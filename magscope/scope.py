@@ -9,7 +9,7 @@ import yaml
 from magscope.beads import BeadManager
 from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.gui import WindowManager, ControlPanelBase
+from magscope.gui import ControlPanelBase, WindowManager, TimeSeriesPlotBase
 from magscope.hardware import HardwareManagerBase
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
@@ -48,7 +48,7 @@ class MagScope:
             warn('MagScope is already running')
         self._running = True
 
-        #  --- Collect separate processes in a dictionary ---
+        # ===== Collect separate processes in a dictionary =====
         proc_list: list[ManagerProcessBase] = [
             self.bead_manager,
             self.camera_manager,
@@ -60,26 +60,26 @@ class MagScope:
         for proc in proc_list:
             self.processes[proc.name] = proc
 
-        # --- Setup and share resources ---
+        # ===== Setup and share resources =====
         freeze_support()  # To prevent recursion in windows executable
         self._load_settings()
         self._setup_shared_resources()
         self._register_script_methods()
 
-        # --- Start the managers ---
+        # ===== Start the managers =====
         for proc in self.processes.values():
             proc.start() # calls 'run()'
 
-        # --- Wait in loop for inter-process messages ---
-        print('MagScope main loop starting ...')
+        # ===== Wait in loop for inter-process messages =====
+        print('MagScope main loop starting ...', flush=True)
         while self._running:
             self._check_pipes()
-        print('MagScope main loop ended.')
+        print('MagScope main loop ended.', flush=True)
 
-        # --- End program by joining each process ---
+        # ===== End program by joining each process =====
         for name, proc in self.processes.items():
             proc.join()
-            print(name, 'ended.')
+            print(name, 'ended.', flush=True)
 
     def _check_pipes(self):
         for pipe in self.pipes.values():
@@ -216,5 +216,8 @@ class MagScope:
     def add_hardware(self, hardware: HardwareManagerBase):
         self._hardware[hardware.name] = hardware
 
-    def add_control(self, control: ControlPanelBase, column: int):
-        self.window_manager.controls_to_add.append((control, column))
+    def add_control(self, control_type: type(ControlPanelBase), column: int):
+        self.window_manager.controls_to_add.append((control_type, column))
+
+    def add_timeplot(self, plot: TimeSeriesPlotBase):
+        self.window_manager.plots_to_add.append(plot)

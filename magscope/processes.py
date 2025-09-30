@@ -73,6 +73,9 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         if self._running:
             warn(f'{self.name} is already running')
             return
+        print(f'{self.name} is running', flush=True)
+        self._running = True
+
         if self._pipe is None:
             raise RuntimeError(f'{self.name} has no pipe')
         if self._locks is None:
@@ -89,9 +92,6 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             name='TracksBuffer')
 
         self.setup()
-
-        print(f'{self.name} is running')
-        self._running = True
 
         while self._running:
             self.do_main_loop()
@@ -119,7 +119,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                     self._pipe.recv()
             self._pipe.close()
             self._pipe = None
-        print(f'{self.name} quit')
+        print(f'{self.name} quit', flush=True)
 
     def send(self, message: Message):
         if self._pipe and not self._magscope_quitting.is_set():

@@ -1,76 +1,181 @@
 from __future__ import annotations
-
-from abc import abstractmethod
-from datetime import datetime, timedelta
-import time
+from abc import abstractmethod, ABCMeta
+from datetime import datetime
+import matplotlib
+from PyQt6.QtCore import QObject, pyqtSignal, QMutex
+from PyQt6.QtGui import QImage
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.dates as mdates
+from matplotlib.figure import Figure
+import matplotlib.style as mplstyle
 import numpy as np
-from PyQt6.QtWidgets import *
-import pyqtgraph as pg
+from time import time, sleep
 from typing import TYPE_CHECKING
 
 from magscope.datatypes import MatrixBuffer
 
 if TYPE_CHECKING:
-    from magscope import WindowManager
+    from multiprocessing.synchronize import Lock as LockType
 
-pg.setConfigOption('background', '#1e1e1e')
+matplotlib.use('QtAgg')
+mplstyle.use('dark_background')
+mplstyle.use('fast')
 
-class Plots:
-    def __init__(self, manager):
+
+class PlotWorker(QObject):
+    image_signal = pyqtSignal(QImage)
+    limits_signal = pyqtSignal(object)
+    selected_bead_signal = pyqtSignal(int)
+    reference_bead_signal = pyqtSignal(int)
+    stop_signal = pyqtSignal()
+    figure_size_signal = pyqtSignal(int, int)
+
+    def __init__(self):
         """ Called before the parent process is started """
         super().__init__()
-        self.manager: WindowManager = manager
-        self.layout: pg.GraphicsLayoutWidget
-        self.plots: list[TimeSeriesPlotBase] = []
+        self.axes: matplotlib.axes.Axes
+        self.locks: dict[str, LockType]
+        self.figure: Figure | None = None
+        self.canvas: FigureCanvas
+        self._is_running: bool = False
+        self.plots = []
+        self.limits: dict[str, tuple[float, float]] = {}
+        self.selected_bead: int | None = 0
+        self.reference_bead: int | None = None
+        self.n_plots: int
+
+        self.update_on: bool = True
+        self._update_last_time: float
+
+        self.fig_width = 5
+        self.fig_height = 4
+        self.dpi = 100
+
+        # Connect internal signal to slot
+        self.limits_signal.connect(self._set_limits)
+        self.selected_bead_signal.connect(self._set_selected_bead)
+        self.reference_bead_signal.connect(self._set_reference_bead)
+        self.stop_signal.connect(self._stop)
+        self.figure_size_signal.connect(self._update_figure_size)
+
+        # Thread safety
+        self.mutex: QMutex
+        self.figure_size_changed = True
 
         # Add plots for bead tracks
-        self.plots.append(TracksTimeSeriesPlot('X'))
-        self.plots.append(TracksTimeSeriesPlot('Y'))
-        self.plots.append(TracksTimeSeriesPlot('Z'))
+        self.add_plot(TracksTimeSeriesPlot('X'))
+        self.add_plot(TracksTimeSeriesPlot('Y'))
+        self.add_plot(TracksTimeSeriesPlot('Z'))
 
     def setup(self):
-        """ Called after the parent process is started """
-        # Layout
-        self.layout = pg.GraphicsLayoutWidget()
-        self.layout.setEnabled(False)
+        self.n_plots = len(self.plots)
+        self.mutex = QMutex()
 
-        # Add plots to layout
+        # Create figure and axes
+        self.figure = Figure(figsize=(self.fig_width, self.fig_height), dpi=self.dpi, facecolor='#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.axes = self.figure.subplots(nrows=self.n_plots, ncols=1, sharex=True, sharey=False)
+
+        # Formating to make it look good
+        self.figure.tight_layout()
+        self.figure.subplots_adjust(hspace=0.08)
+        for ax in self.axes:
+            ax.set_facecolor('#1e1e1e')  # Set background color
+            ax.margins(x=0)  # Set margins
+        self.axes[-1].set_xlabel('T (h:m:s)')
+        self.axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+
+        # Pass complex objects to each plot (self, axes, ect)
+        for plot, ax in zip(self.plots, self.axes):
+            plot.set_axes(ax)
+
         for plot in self.plots:
-            plot_item = self.layout.addPlot()
-            self.layout.nextRow()
-            plot._set_plot_item(plot_item)
+            plot.set_parent(self)
 
-        # Set manager for each plot
-        for plot in self.plots:
-            plot._set_manager(self.manager)
-
-        # Setup each plot
         for plot in self.plots:
             plot.setup()
 
-    def get_ui(self):
-        """ Returns the central widget for the GUI"""
-        return self.layout
+    def run(self):
+        self._is_running = True
+        self._update_last_time = time()
+        while self._is_running:
+            self.do_main_loop()
 
-    def add_plot(self, plot: TimeSeriesPlotBase):
-        """ Used to add plots before the process has started """
-        if self.manager._running:
-            raise Exception('Cannot add plots after the program has started')
-        self.plots.append(plot)
+    def do_main_loop(self):
+        # Is plotting enabled?
+        if not self.update_on:
+            return
 
-    def update(self):
-        """ Called by the parent process on a regular timer """
+        # Wait for timer
+        duration = time() - self._update_last_time
+        sleep(duration)
+        self._update_last_time = time()
+
+        # Check if we need to recreate the figure
+        self._recreate_figure_if_needed()
+
+        # Update plots
         for plot in self.plots:
             plot.update()
 
+        # Render figure to buffer
+        self.canvas.draw()
+        w, h = self.canvas.get_width_height()
+        buf = np.frombuffer(self.canvas.buffer_rgba(), dtype=np.uint8).reshape((h, w, 4))
 
-class TimeSeriesPlotBase:
-    def __init__(self, buffer_name: str):
-        self.plot_item: pg.PlotItem
-        self.plot_data_item: pg.PlotDataItem
+        # Convert numpy RGBA -> QImage
+        img = QImage(buf.data, w, h, QImage.Format.Format_RGBA8888)
+
+        # Emit figure as a buffer to the main GUI
+        self.image_signal.emit(img.copy())
+
+    def add_plot(self, plot: TimeSeriesPlotBase):
+        """ Used to add plots before the process has started """
+        self.plots.append(plot)
+
+    def _set_limits(self, limits: dict[str, list[float, float]]):
+        self.limits = limits
+
+    def _set_selected_bead(self, bead: int):
+        self.selected_bead = bead
+
+    def _set_reference_bead(self, bead: int | None):
+        self.reference_bead = bead
+
+    def set_locks(self, locks: dict[str, LockType]):
+        self.locks = locks
+
+    def _stop(self):
+        self._is_running = False
+
+    def _update_figure_size(self, width: int, height: int):
+        """Slot: update figure size based on QLabel dimensions."""
+        if width > 0 and height > 0:
+            self.mutex.lock()
+            try:
+                # Convert pixels to inches
+                self.fig_width = max(1, width / self.dpi)
+                self.fig_height = max(1, height / self.dpi)
+                self.figure_size_changed = True
+            finally:
+                self.mutex.unlock()
+
+    def _recreate_figure_if_needed(self):
+        """Recreate figure and canvas if size changed."""
+        self.mutex.lock()
+        if self.figure_size_changed:
+            self.figure.set_size_inches(self.fig_width, self.fig_height)
+            self.figure_size_changed  = False
+        self.mutex.unlock()
+
+
+class TimeSeriesPlotBase(metaclass=ABCMeta):
+    def __init__(self, buffer_name: str, ylabel: str):
         self.buffer: MatrixBuffer
         self.buffer_name = buffer_name
-        self.manager: WindowManager
+        self.parent: PlotWorker
+        self.axes: matplotlib.axes.Axes
+        self.ylabel = ylabel
 
     def setup(self):
         """ Called after the parent process is started """
@@ -78,261 +183,109 @@ class TimeSeriesPlotBase:
         # Buffer
         self.buffer = MatrixBuffer(
             create=False,
-            name='TracksBuffer',
-            locks=self.manager.locks
+            name=self.buffer_name,
+            locks=self.parent.locks
         )
 
-        # Plot
-        self.plot_data_item = self.plot_item.plot()
-        self.plot_data_item.setDownsampling(ds=None, auto=True, method='peak')
+        # Format plot
+        self.axes.set_ylabel(self.ylabel)
 
-    def _set_manager(self, manager: WindowManager):
-        self.manager = manager
+    def set_parent(self, parent: PlotWorker):
+        self.parent = parent
 
-    def _set_plot_item(self, plot_item: pg.PlotItem):
-        self.plot_item = plot_item
+    def set_axes(self, axes: matplotlib.axes.Axes):
+        self.axes = axes
 
     @abstractmethod
-    def update(self):
-        pass
+    def update(self): pass
+
 
 class TracksTimeSeriesPlot(TimeSeriesPlotBase):
-    def __init__(self, axis: str):
-        super().__init__('TracksBuffer')
-        self.axis = axis
-        self.axis_index = ['X', 'Y', 'Z'].index(axis) + 1
+    def __init__(self, axis_name: str):
+        super().__init__('TracksBuffer', ylabel=axis_name+' (nm)')
+        self.axis_name = axis_name
+        self.axis_index = ['X', 'Y', 'Z'].index(axis_name) + 1
+        self.line: matplotlib.lines.Line2D
+
+    def setup(self):
+        super().setup()
+        self.line, = self.axes.plot([], [], 'r')
 
     def update(self):
+        # Get selected and reference bead
+        sel = self.parent.selected_bead
+        ref = self.parent.reference_bead
+        if ref == -1:
+            ref = None
+
         # Get data from buffer
         data = self.buffer.peak_unsorted()
         t = data[:, 0]
+        b = data[:, 4]
         v = data[:, self.axis_index]
+
+        # Get selected bead values
+        selection = b == sel
+        t_sel = t[selection]
+        v_sel = v[selection]
+
+        # Subtract reference bead values
+        if ref is None:
+            t = t_sel
+            v = v_sel
+        else:
+            # Get reference bead values
+            selection = b == ref
+            t_ref = t[selection]
+            v_ref = v[selection]
+
+            # Get values where selected bead and reference bead share the same timepoints
+            t, index_sel, index_ref = np.intersect1d(t_sel, t_ref, assume_unique=True, return_indices=True)
+            v = v_sel[index_sel] - v_ref[index_ref]
+
+            # Correct for ZLUT upsidedown order
+            if self.axis_name == 'Z':
+                v *= -1
 
         # Remove nan/inf
         selection = np.isfinite(t)
         t = t[selection]
         v = v[selection]
 
-        # Update the plot
-        self.plot_data_item.setData(t, v)
+        # Remove value outside of axis limits
+        xmin = self.parent.limits.get('Time', (None, None))[0]
+        xmax = self.parent.limits.get('Time', (None, None))[1]
+        ymin = self.parent.limits.get(self.ylabel, (None, None))[0]
+        ymax = self.parent.limits.get(self.ylabel, (None, None))[1]
+        selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf)) & ((ymin or -np.inf) <= v) & (v <= (ymax or np.inf))
+        t = t[selection]
+        v = v[selection]
 
-class MyMotorTimeSeriesPlot:
-    pass
+        # Convert time to timepoints
+        t = [datetime.fromtimestamp(t_) for t_ in t]
 
+        # Update the plot data
+        self.line.set_xdata(t)
+        self.line.set_ydata(v)
 
-# =========================================== #
-# =========================================== #
-# =========================================== #
+        # Prevent equal limits error
+        if xmin is not None and xmin==xmax:
+            xmax += 1
+        if ymin is not None and ymin==ymax:
+            ymax += 1
 
-class Plots2(QWidget):
+        # Prevent unintended axis inversion
+        if xmin is None or xmax is None:
+            self.axes.xaxis.set_inverted(False)
+        if ymin is None or ymax is None:
+            self.axes.yaxis.set_inverted(False)
 
-    def __init__(self):
-        super().__init__()
+        # Convert the x-limits to timestamps
+        xmin, xmax = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
 
-        # Layout
-        self.setLayout(QGridLayout())
-        self.plot_area = pg.GraphicsLayoutWidget()
-        self.layout().addWidget(self.plot_area, 0, 0, 1, 2)
-
-        # Plots
-        self._plots = {}
-        self._plots['X'] = TimeSeriesPlot(parent=self,
-                                          row=len(self._plots),
-                                          y_label='X (nm)',
-                                          n_lines=1,
-                                          bead=True)
-        self._plots['Y'] = TimeSeriesPlot(parent=self,
-                                          row=len(self._plots),
-                                          y_label='Y (nm)',
-                                          n_lines=1,
-                                          bead=True)
-        self._plots['Z'] = TimeSeriesPlot(parent=self,
-                                          row=len(self._plots),
-                                          y_label='Z (nm)',
-                                          n_lines=1,
-                                          bead=True)
-        self.n_plots = len(self._plots)
-
-        # Find bottom-most plot
-        self.bottom_plot = None
-        for plot in self._plots.values():
-            if plot.row == self.n_plots - 1:
-                self.bottom_plot = plot
-        assert self.bottom_plot
-
-        # Link axes
-        for plot in self._plots.values():
-            if plot.row < self.n_plots - 1:
-                plot.plot.setXLink(self.bottom_plot.plot)
-
-        # Set bottom plot x-label
-        self.bottom_plot.plot.setLabel('bottom', 'Time (H:M:S)')
-        self.bottom_plot.plot.getAxis('bottom').setStyle(showValues=True)
-
-    def update_plots(self):
-        # Beads - Get data
-        new_data = self.app.txyzb_buf.read()
-        self._plots['X'].plot_buf.write(new_data[:, [0, 1, 4]])
-        self._plots['Y'].plot_buf.write(new_data[:, [0, 2, 4]])
-        self._plots['Z'].plot_buf.write(new_data[:, [0, 3, 4]])
-
-        # Motors - Get data
-        for m, b in zip(['Rotary Motor', 'Objective Motor'],
-                        [self.app.rot_mot_buf, self.app.obj_mot_buf]):
-            new_data = b.read()
-            self._plots[m].plot_buf.write(new_data[:, 0:3])
-
-        # Linear Motor and Force - Get data
-        new_data = self.app.lin_mot_buf.read()
-        self._plots['Linear Motor'].plot_buf.write(new_data[:, 0:3])
-        self._plots['Force'].plot_buf.write(new_data[:, 0:3])
-
-        # Update all plots
-        for m in self._plots.keys():
-            self._plots[m].update_plot()
-
-
-class TimeSeriesPlot:
-
-    def __init__(self,
-                 *,
-                 parent,
-                 row,
-                 y_label,
-                 n_lines,
-                 text_decimals=0,
-                 force_converter=None,
-                 bead=False):
-        self._parent = parent
-        self.row = row
-        self.n_lines = n_lines
-        self.text_decimals = text_decimals
-        self._force_converter = force_converter
-        self._bead = bead
-
-        self.plot = self._parent.plot_area.addPlot(
-            row=row,
-            col=0,
-            size=1,
-            width=1,
-            antialias=False,
-            clipToView=True,
-            connect='finite',
-            axisItems={
-                'left':
-                pg.AxisItem('left',
-                            siPrefixEnableRanges=((None, None), (None, None))),
-                'bottom':
-                CustomDateAxisItem()
-            })
-        self.plot.getAxis('bottom').setStyle(showValues=False)
-        self.plot.setLabel('left', y_label)
-
-        if n_lines == 2:
-            self.line_g = self.plot.plot(pen=pg.mkPen(color='g'))
-        self.line_r = self.plot.plot(pen=pg.mkPen(color='r'))
-
-        self.text_item = pg.LabelItem(color='r')
-        self.text_item.setParentItem(self.plot)
-        self.text_item.anchor(itemPos=(1, 0),
-                              parentPos=(1, 0),
-                              offset=(-10, 10))
-
-    def update_plot(self):
-        # Get data
-        n = self._parent.app.control_window.plot_settings_panel.max_datapoints.lineedit.text(
-        )
-        if n == '':
-            n = None
-        else:
-            n = int(n)
-        data = self.plot_buf.read(n)
-
-        # Max duration
-        t = self._parent.app.control_window.plot_settings_panel.max_duration.lineedit.text(
-        )
-        if t != '':
-            t = time.time() - int(t)
-            data = data[data[:, 0] >= t, :]
-
-        # Bead plots
-        if self._bead:
-            b = self._parent.app.control_window.plot_settings_panel.selected_bead.lineedit.text(
-            )
-            r = self._parent.app.control_window.plot_settings_panel.reference_bead.lineedit.text(
-            )
-            b = None if b == '' else int(b)
-            r = None if r == '' else int(r)
-
-            data_b = data[b == data[:, 2], 0:2]
-            if r is None:
-                data = data_b
-            else:
-                data_r = data[r == data[:, 2], 0:2]
-                _, ind_b, ind_r = np.intersect1d(data_b[:, 0],
-                                                 data_r[:, 0],
-                                                 assume_unique=True,
-                                                 return_indices=True)
-                data = np.hstack(
-                    (data_b[ind_b,
-                            0:1], data_b[ind_b, 1:2] - data_r[ind_r, 1:2]))
-
-        # Force plot
-        if self._force_converter is not None:
-            if self._force_converter.is_loaded():
-                for i in range(1, data.shape[1]):
-                    data[:, i] = self._force_converter.motor2force(data[:, i])
-            else:
-                data[:, 1:] = data[:, 1:] * np.nan
-
-        # Convert absolute time to relative time
-        if self._parent.app.control_window.plot_settings_panel.relative_time.checkbox.isChecked(
-        ):
-            t = time.time()
-            data[:, 0] -= t
-
-        # A nan value in the first position causes a memory leak.
-        # So the leading nan values are removed. Other nan values are okay.
-        # Just not in the first position.
-        if self.n_lines == 1:
-            while data.shape[0] > 0 and np.isnan(data[0, 1]):
-                data = data[1:, :]
-        else:
-            while data.shape[0] > 0 and (np.isnan(data[0, 1])
-                                         or np.isnan(data[0, 2])):
-                data = data[1:, :]
-
-        # Update lines
-        self.line_r.setData(data[:, 0], data[:, 1])
-        if self.n_lines == 2:
-            self.line_g.setData(data[:, 0], data[:, 2])
-
-        # Update text
-        if data.shape[0] > 0:
-            last_value = data[-1, 1]
-            if np.isfinite(last_value):
-                if self.text_decimals == 0:
-                    last_value = int(last_value)
-                else:
-                    last_value = round(last_value, self.text_decimals)
-            else:
-                last_value = np.nan
-        else:
-            last_value = np.nan
-        self.text_item.setText(str(last_value))
-
-
-class CustomDateAxisItem(pg.DateAxisItem):
-
-    def tickStrings(self, values, scale, spacing):
-        strings = []
-        for value in values:
-            if value > 0:
-                dt = datetime.fromtimestamp(value)
-                strings.append(dt.strftime('%I:%M:%S'))
-            else:
-                h = int(-value // 3600)
-                m = int((-value % 3600) // 60)
-                s = int(-value % 60)
-                strings.append(f'-{h}:{m:02d}:{s:02d}')
-        return strings
+        # Update the axis limits
+        self.axes.autoscale()
+        self.axes.autoscale_view()
+        self.axes.set_xlim(xmin=xmin, xmax=xmax)
+        self.axes.set_ylim(ymin=ymin, ymax=ymax)
+        self.axes.relim()

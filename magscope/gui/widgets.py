@@ -86,7 +86,7 @@ class LabeledLineEdit(QWidget):
         if validator:
             self.lineedit.setValidator(validator)
         if callback:
-            self.lineedit.editingFinished.connect(callback)  # type: ignore
+            self.lineedit.textChanged.connect(callback)  # type: ignore
         if widths[1] > 0:
             self.lineedit.setFixedWidth(widths[1])
         self.layout.addWidget(self.lineedit)
@@ -560,3 +560,17 @@ class FlashLabel(QLabel):
             self._timer.start(15)
         else:
             super().setText(text)
+
+
+class ResizableLabel(QLabel):
+    """Custom QLabel that emits a signal when it's resized."""
+    resized = pyqtSignal(int, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def resizeEvent(self, event):
+        """Override resize event to emit signal with new dimensions."""
+        super().resizeEvent(event)
+        size = event.size()
+        self.resized.emit(size.width(), size.height())

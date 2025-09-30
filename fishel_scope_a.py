@@ -1,14 +1,13 @@
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton
-
-import magscope
+import matplotlib
 import numpy as np
 from time import time
-from math import copysign, isclose
+from math import copysign
 from warnings import warn
+from datetime import datetime
 
-from magscope import Message
-from magscope.datatypes import MatrixBuffer
+import magscope
 
 
 class FakeLinearMotor(magscope.HardwareManagerBase):
@@ -18,6 +17,8 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
         super().__init__()
 
         self.buffer_shape = (100000, 4)
+        self.last_fetch = 0
+        self.fetch_interval = 0.01
 
         self._fake_position = 0.0
         self._fake_speed = 1.0
@@ -34,9 +35,10 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
     def fetch(self):
         self._do_fake_move() # Only needed to simulate motor movement
 
-        t = time()
-        row = np.array([[t, self._fake_position, self._fake_target, self._fake_speed]])
-        self._buffer.write(row)
+        if (now := time()) - self.last_fetch > self.fetch_interval:
+            self.last_fetch = now
+            row = np.array([[now, self._fake_position, self._fake_target, self._fake_speed]])
+            self._buffer.write(row)
 
     def move(self, target=None, speed=None):
         if target is not None:
@@ -77,7 +79,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
         super().__init__(title='Fake Linear Motor', manager=manager)
 
         # Buffer
-        self._buffer = MatrixBuffer(
+        self._buffer = magscope.MatrixBuffer(
             create=False,
             locks=self.manager.locks,
             name='FakeLinearMotor'
@@ -129,7 +131,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
         row_2.addWidget(move_button)
 
     def update_values(self):
-        _, position, target, speed = self._buffer.peak_sorted()[0, :]
+        _, position, target, speed = self._buffer.peak_sorted()[-1, :]
         self.position_label.setText(f'Position: {position:.2f}')
         self.target_label.setText(f'Target: {target:.2f}')
         self.speed_label.setText(f'Speed: {speed:.2f}')
@@ -156,13 +158,84 @@ class LinearMotorControls(magscope.ControlPanelBase):
                 return
 
         # Send inter-process message to motor
-        message = Message(
+        message = magscope.Message(
             to=FakeLinearMotor,
             meth=FakeLinearMotor.move,
             target=target,
             speed=speed,
         )
         self.manager.send(message)
+
+
+class LinearMotorPlot(magscope.TimeSeriesPlotBase):
+    def __init__(self, buffer_name: str, ylabel: str):
+        super().__init__(buffer_name, ylabel)
+        self.line_position: matplotlib.lines.Line2D
+        self.line_target: matplotlib.lines.Line2D
+
+    def setup(self):
+        super().setup()
+        self.line_position, self.line_target = self.axes.plot([], [], 'r', [], [], 'g')
+
+    def update(self):
+        # Get data from buffer
+        data = self.buffer.peak_unsorted()
+        t = data[:, 0]
+        position = data[:, 1]
+        target = data[:, 2]
+
+        # Remove nan/inf
+        selection = np.isfinite(t)
+        t = t[selection]
+        position = position[selection]
+        target = target[selection]
+
+        # Sort by time
+        sort_index = np.argsort(t)
+        t = t[sort_index]
+        position = position[sort_index]
+        target = target[sort_index]
+
+        # Remove value outside of axis limits
+        xmin = self.parent.limits.get('Time', (None, None))[0]
+        xmax = self.parent.limits.get('Time', (None, None))[1]
+        ymin = self.parent.limits.get(self.ylabel, (None, None))[0]
+        ymax = self.parent.limits.get(self.ylabel, (None, None))[1]
+        selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf))
+        t = t[selection]
+        position = position[selection]
+        target = target[selection]
+
+        # Prevent unintended axis inversion
+        if xmin is None or xmax is None:
+            self.axes.xaxis.set_inverted(False)
+        if ymin is None or ymax is None:
+            self.axes.yaxis.set_inverted(False)
+
+        # Convert time to timepoints
+        t = [datetime.fromtimestamp(t_) for t_ in t]
+
+        # Update the plot
+        self.line_target.set_xdata(t)
+        self.line_target.set_ydata(target)
+        self.line_position.set_xdata(t)
+        self.line_position.set_ydata(position)
+
+        # Prevent equal limits error
+        if xmin is not None and xmin==xmax:
+            xmax += 1
+        if ymin is not None and ymin==ymax:
+            ymax += 1
+
+        # Convert the x-limits to timestamps
+        xmin, xmax = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
+
+        # Update the axis limits
+        self.axes.autoscale()
+        self.axes.autoscale_view()
+        self.axes.set_xlim(xmin=xmin, xmax=xmax)
+        self.axes.set_ylim(ymin=ymin, ymax=ymax)
+        self.axes.relim()
 
 
 if __name__ == "__main__":
@@ -173,6 +246,9 @@ if __name__ == "__main__":
 
     # Add a GUI to control the Motor
     scope.add_control(LinearMotorControls, column=0)
+
+    # Add a plot of the motor's position
+    scope.add_timeplot(LinearMotorPlot('FakeLinearMotor', ylabel='Linear Motor'))
 
     # Launch the scope
     scope.start()
