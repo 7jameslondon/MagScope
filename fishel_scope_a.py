@@ -140,7 +140,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
         # Try to get target
         try:
             target = float(self.target_textedit.text())
-        except Exception:
+        except ValueError:
             target = None
         if target is not None:
             if target < FakeLinearMotor.position_min_max[0] or target > FakeLinearMotor.position_min_max[1]:
@@ -150,10 +150,10 @@ class LinearMotorControls(magscope.ControlPanelBase):
         # Try to get speed
         try:
             speed = float(self.speed_textedit.text())
-        except Exception:
+        except ValueError:
             speed = None
         if speed is not None:
-            if speed < FakeLinearMotor.speed_min_max[0] or target > FakeLinearMotor.speed_min_max[1]:
+            if speed < FakeLinearMotor.speed_min_max[0] or speed > FakeLinearMotor.speed_min_max[1]:
                 warn(f'Speed {speed} outside of range {FakeLinearMotor.speed_min_max}')
                 return
 

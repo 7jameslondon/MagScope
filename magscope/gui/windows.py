@@ -525,15 +525,11 @@ class Controls(QWidget):
 
         self.add_panel(self.status_panel, column=0)
         self.add_panel(self.camera_panel, column=0)
-        self.add_panel(self.acquisition_panel, column=1)
-        self.add_panel(self.bead_selection_panel, column=1)
-        self.add_panel(self.histogram_panel, column=1)
-        self.add_panel(self.script_panel, column=1)
+        self.add_panel(self.acquisition_panel, column=0)
+        self.add_panel(self.histogram_panel, column=0)
         self.add_panel(self.plot_settings_panel, column=1)
-
-        # self.zlut_panel = ZlutPanel(self)
-        # self.force_calibration_panel = ForceCalibartionPanel(self)
-        # self.plot_settings_panel = PlotSettingsPanel(self)
+        self.add_panel(self.bead_selection_panel, column=1)
+        self.add_panel(self.script_panel, column=1)
 
         for c in self.manager.controls_to_add:
             control = c[0]
