@@ -476,6 +476,21 @@ class WindowManager(ManagerProcessBase):
     def update_xy_lock_max(self, value: float):
         self.controls.xy_lock_panel.update_max(value)
 
+    def update_z_lock_enabled(self, value: bool):
+        self.controls.z_lock_panel.update_enabled(value)
+
+    def update_z_lock_bead(self, value: int):
+        self.controls.z_lock_panel.update_bead(value)
+
+    def update_z_lock_target(self, value: float):
+        self.controls.z_lock_panel.update_target(value)
+
+    def update_z_lock_interval(self, value: float):
+        self.controls.z_lock_panel.update_interval(value)
+
+    def update_z_lock_max(self, value: float):
+        self.controls.z_lock_panel.update_max(value)
+
 
 class LoadingWindow(QMainWindow):
 

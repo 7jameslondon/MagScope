@@ -90,6 +90,8 @@ class MagScope:
             # Get the message
             message = pipe.recv()
 
+            print(message)
+
             if type(message) is not Message:
                 warn(f'Message is not a Message object: {message}')
                 continue
@@ -171,8 +173,6 @@ class MagScope:
         self.script_manager.script_registry.register_class_methods(ManagerProcessBase)
         for proc in self.processes.values():
             self.script_manager.script_registry.register_class_methods(proc)
-        for i in self.script_manager.script_registry._methods.items():
-            print(i)
 
     def _get_default_settings(self):
         with open(self._default_settings_path, 'r') as f:

@@ -757,36 +757,153 @@ class ZLockPanel(ControlPanelBase):
         # Interval
         self.interval = LabeledLineEditWithValue(
             label_text='Interval (sec)',
-            default='0.1',
+            default=str(self.manager.settings['z-lock default interval']),
             callback=self.interval_callback,
             widths=(75, 100, 0),
         )
         self.layout().addWidget(self.interval)
 
-    def enabled_callback(self, value):
+        # Max
+        self.max = LabeledLineEditWithValue(
+            label_text='Max (nm)',
+            default=str(self.manager.settings['z-lock default max']),
+            callback=self.max_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.max)
+
+    def enabled_callback(self):
+        value = self.enabled.checkbox.isChecked()
+
+        # Change panel background color
         if value:
             self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
         else:
             self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
-        print(f'Z-Lock Enabled: {value}')
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_z_lock_on,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
 
     def bead_callback(self):
+        # Get value
         value = self.bead.lineedit.text()
         self.bead.lineedit.setText('')
-        print(f'Bead: {value}')
-        self.bead.value_label.setText(value)
+
+        # Check value
+        try:
+            value = float(value)
+        except ValueError:
+            return
+        if value < 0: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_z_lock_bead,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
 
     def target_callback(self):
+        # Get value
         value = self.target.lineedit.text()
         self.target.lineedit.setText('')
-        print(f'Target: {value}')
-        self.target.value_label.setText(value)
+
+        # Check value
+        try:
+            value = float(value)
+        except ValueError:
+            return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_z_lock_target,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
 
     def interval_callback(self):
+        # Get value
         value = self.interval.lineedit.text()
         self.interval.lineedit.setText('')
-        print(f'Interval: {value}')
-        self.interval.value_label.setText(value)
+
+        # Check value
+        try:
+            value = float(value)
+        except ValueError:
+            return
+        if value < 0: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_z_lock_interval,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
+    def max_callback(self):
+        # Get value
+        value = self.max.lineedit.text()
+        self.max.lineedit.setText('')
+
+        # Check value
+        try:
+            value = float(value)
+        except ValueError:
+            return
+        if value <= 1: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_z_lock_max,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
+    def update_enabled(self, value: bool):
+        # Set checkbox
+        self.enabled.checkbox.blockSignals(True)
+        self.enabled.checkbox.setChecked(value)
+        self.enabled.checkbox.blockSignals(False)
+
+        # Change panel background color
+        if value:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
+        else:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+
+    def update_bead(self, value: int):
+        if value is None:
+            value = ''
+        self.bead.value_label.setText(f'{value}')
+
+    def update_target(self, value: float):
+        if value is None:
+            value = ''
+        self.target.value_label.setText(f'{value}')
+
+    def update_interval(self, value: float):
+        if value is None:
+            value = ''
+        self.interval.value_label.setText(f'{value}')
+
+    def update_max(self, value: float):
+        if value is None:
+            value = ''
+        self.max.value_label.setText(f'{value}')
 
 
 #############################################

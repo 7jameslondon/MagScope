@@ -22,12 +22,15 @@ class BeadLockManager(ManagerProcessBase):
         self.z_lock_on: bool = False
         self.z_lock_bead: int = 0
         self.z_lock_target: float | None = None
-        self.z_lock_interval: float = 0.1
+        self.z_lock_interval: float
+        self.z_lock_max: float
         self._z_lock_last_time: float = 0.
 
     def setup(self):
         self.xy_lock_interval = self.settings['xy-lock default interval']
         self.xy_lock_max = self.settings['xy-lock default max']
+        self.z_lock_interval = self.settings['z-lock default interval']
+        self.z_lock_max = self.settings['z-lock default max']
 
     def do_main_loop(self):
         # XY-Lock Enabled
@@ -167,13 +170,61 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(message)
 
     @registerwithscript('set_z_lock_on')
-    def set_z_lock_on(self, value: bool): self.z_lock_on = value
+    def set_z_lock_on(self, value: bool):
+        self.z_lock_on = value
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_z_lock_enabled,
+            args=(value,)
+        )
+        self.send_ipc(message)
 
     @registerwithscript('set_z_lock_bead')
-    def set_z_lock_bead(self, value: int): self.z_lock_bead = value
+    def set_z_lock_bead(self, value: int):
+        self.z_lock_bead = value
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_z_lock_bead,
+            args=(value,)
+        )
+        self.send_ipc(message)
 
     @registerwithscript('set_z_lock_target')
-    def set_z_lock_target(self, value: float): self.z_lock_target = value
+    def set_z_lock_target(self, value: float):
+        self.z_lock_target = value
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_z_lock_target,
+            args=(value,)
+        )
+        self.send_ipc(message)
 
     @registerwithscript('set_z_lock_interval')
-    def set_z_lock_interval(self, value: float): self.z_lock_interval = value
+    def set_z_lock_interval(self, value: float):
+        self.z_lock_interval = value
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_z_lock_interval,
+            args=(value,)
+        )
+        self.send_ipc(message)
+
+    @registerwithscript('set_z_lock_max')
+    def set_z_lock_max(self, value: float):
+        self.z_lock_max = value
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_z_lock_max,
+            args=(value,)
+        )
+        self.send_ipc(message)
