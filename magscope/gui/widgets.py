@@ -41,7 +41,7 @@ class LabeledLineEditWithValue(QWidget):
         self.layout.addWidget(self.label)
 
         # Lineedit
-        self.lineedit = QLineEdit(default)
+        self.lineedit = QLineEdit()
         if validator:
             self.lineedit.setValidator(validator)
         if callback:
@@ -51,7 +51,7 @@ class LabeledLineEditWithValue(QWidget):
         self.layout.addWidget(self.lineedit)
 
         # Value Label
-        self.value_label = QLabel()
+        self.value_label = QLabel(default)
         if widths[2] > 0:
             self.value_label.setFixedWidth(widths[2])
         self.layout.addWidget(self.value_label)

@@ -7,3 +7,6 @@ video buffer n stacks: 5
 video buffer n images: 40
 
 tracks max datapoints: 1000000
+
+xy-lock default interval: 10
+xy-lock default max: 10

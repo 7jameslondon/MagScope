@@ -16,7 +16,7 @@ class CameraManager(ManagerProcessBase):
     def setup(self):
         # Attempt to connect to the camera
         try:
-            self.camera.connect(self._video_buffer)
+            self.camera.connect(self.video_buffer)
         except Exception as e:
             warn(f"Could not connect to camera: {e}")
 
@@ -39,49 +39,49 @@ class CameraManager(ManagerProcessBase):
                 self._video_process_flag.value = PoolVideoFlag.READY
 
         # Check if the video buffer is about to overflow
-        fraction_available = (1 - self._video_buffer.get_level())
-        frames_available = fraction_available * self._video_buffer.n_total_images
+        fraction_available = (1 - self.video_buffer.get_level())
+        frames_available = fraction_available * self.video_buffer.n_total_images
         if frames_available <= 1:
             self._purge_buffers()
             # local import to avoid circular imports
             from magscope.gui import WindowManager
             message = Message(WindowManager, WindowManager.update_video_buffer_purge, time())
-            self.send(message)
+            self.send_ipc(message)
 
         # Check for new images from the camera
         if self.camera.is_connected:
             self.camera.fetch()
 
     def _release_unattached_buffers(self):
-        if self._video_buffer is None:
+        if self.video_buffer is None:
             return
 
         try:
-            self._video_buffer.read_stack_no_return()
-            for _ in range(self._video_buffer.n_images):
+            self.video_buffer.read_stack_no_return()
+            for _ in range(self.video_buffer.n_images):
                 self.camera.release()
         except BufferUnderflow:
             pass
 
     def _purge_buffers(self):
-        if self._video_buffer is None:
+        if self.video_buffer is None:
             return
 
         while True:
             try:
-                self._video_buffer.read_stack_no_return()
-                for _ in range(self._video_buffer.n_images):
+                self.video_buffer.read_stack_no_return()
+                for _ in range(self.video_buffer.n_images):
                     self.camera.release()
             except BufferUnderflow:
                 break
-            if self._video_buffer.get_level() <= 0.3:
+            if self.video_buffer.get_level() <= 0.3:
                 break
 
     def _release_pool_buffers(self):
-        if self._video_buffer is None:
+        if self.video_buffer is None:
             return
 
-        for i in range(self._video_buffer.stack_shape[2]):
+        for i in range(self.video_buffer.stack_shape[2]):
             self.camera.release()
 
     def get_camera_setting(self, name: str):
@@ -91,7 +91,7 @@ class CameraManager(ManagerProcessBase):
         message = Message(to=WindowManager,
                           meth=WindowManager.update_camera_setting,
                           args=(name, value))
-        self.send(message)
+        self.send_ipc(message)
 
     def set_camera_setting(self, name: str, value: str):
         try:

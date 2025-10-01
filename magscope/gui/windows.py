@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLayout
 )
-from PyQt6.QtCore import QPoint, QTimer, pyqtSignal, Qt, QThread
+from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
 import sys
 from time import time
@@ -33,7 +33,7 @@ from magscope.gui import (
     ControlPanelBase,
     ResizableLabel,
 )
-from magscope.gui.controls import PlotSettingsPanel
+from magscope.gui.controls import PlotSettingsPanel, ZLockPanel, XYLockPanel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import Message, numpy_type_to_qt_image_type
@@ -58,7 +58,6 @@ class WindowManager(ManagerProcessBase):
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
         self._timer: QTimer | None = None
-        self._video_buffer: VideoBuffer | None = None
         self._video_buffer_last_index: int = 0
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
@@ -96,7 +95,7 @@ class WindowManager(ManagerProcessBase):
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
-        self.plots_thread.started.connect(self.plot_worker.run)
+        self.plots_thread.started.connect(self.plot_worker.run) # noqa
         self.plot_worker.image_signal.connect(lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img)))
         self.plots_widget.resized.connect(self.update_plot_figure_size)
         self.plots_thread.start()
@@ -122,14 +121,12 @@ class WindowManager(ManagerProcessBase):
 
         # Timer
         self._timer = QTimer()
-        self._timer.timeout.connect(self.do_main_loop)
+        self._timer.timeout.connect(self.do_main_loop) # noqa
         self._timer.setInterval(0)
         self._timer.start()
 
-        print(f'{self.name} is running')
-        self._running = True
-
         # Start app
+        self._running = True
         self.qt_app.exec()
 
     def update_plot_figure_size(self, w, h):
@@ -150,11 +147,12 @@ class WindowManager(ManagerProcessBase):
         # Because the WindowManager is a special case with a GUI
         # the main loop is actually called by a timer, not the
         # run method of it's super()
+
         if self._running:
             self._update_view_and_hist()
             self._update_display_rate()
             self.update_video_buffer_status()
-            self.check_pipe()
+            self.receive_ipc()
 
     @property
     def n_windows(self):
@@ -295,22 +293,22 @@ class WindowManager(ManagerProcessBase):
 
     def _update_view_and_hist(self):
         # Get image and _write position
-        index, image_bytes = self._video_buffer.peak_image()
+        index, image_bytes = self.video_buffer.peak_image()
 
         # Check if _write has changed (a new image is ready)
         if self._video_buffer_last_index != index:
             # Update the stored index
             self._video_buffer_last_index = index
 
-            cam_bits = self._camera_type.bits
-            dtype_bits = np.iinfo(self._video_buffer.dtype).bits
+            cam_bits = self.camera_type.bits
+            dtype_bits = np.iinfo(self.video_buffer.dtype).bits
             scale = (2 ** (dtype_bits - cam_bits))
 
             # Update the view
             qt_img = QImage(
-                np.frombuffer(image_bytes, self._video_buffer.dtype).copy() *
-                scale, *self._video_buffer.image_shape,
-                numpy_type_to_qt_image_type(self._video_buffer.dtype))
+                np.frombuffer(image_bytes, self.video_buffer.dtype).copy() *
+                scale, *self.video_buffer.image_shape,
+                numpy_type_to_qt_image_type(self.video_buffer.dtype))
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
 
             # Update the histogram
@@ -338,18 +336,30 @@ class WindowManager(ManagerProcessBase):
             bead_rois[id] = (x0, x1, y0, y1)
         self._bead_rois = bead_rois
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, bead_rois)
-        self.send(message)
+        self.send_ipc(message)
 
-    def move_bead(self, id: int, x, y):
-        graphic = self._bead_graphics[id]
-        graphic.moveBy(x, y)
+    def move_bead(self, id: int, dx, dy):
+        # Move the bead
+        self._bead_graphics[id].moveBy(dx, dy)
+
+        # Update the ROIs
+        self.update_bead_rois()
+
+        # Confirm with the xy-lock
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.remove_bead_from_xy_lock_pending_moves,
+            args=(id,),
+        )
+        self.send_ipc(message)
 
     def add_bead(self, pos: QPoint):
         # Add a bead graphic
         id = self._bead_next_id
         x = pos.x()
         y = pos.y()
-        w = self._settings['bead roi width']
+        w = self.settings['bead roi width']
         view_scene = self.video_viewer.scene
         graphic = BeadGraphic(self, id, x, y, w, view_scene)
         self._bead_graphics[id] = graphic
@@ -367,7 +377,7 @@ class WindowManager(ManagerProcessBase):
         rois = self._bead_rois
         rois.pop(id)
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, rois)
-        self.send(message)
+        self.send_ipc(message)
 
     def clear_beads(self):
         # Update graphics
@@ -378,7 +388,7 @@ class WindowManager(ManagerProcessBase):
 
         # Update bead ROIs
         message = Message(ManagerProcessBase, ManagerProcessBase.set_bead_rois, {})
-        self.send(message)
+        self.send_ipc(message)
 
     def lock_beads(self, locked: bool):
         for graphic in self._bead_graphics.values():
@@ -388,8 +398,8 @@ class WindowManager(ManagerProcessBase):
         self.controls.status_panel.update_video_processors_status(text)
 
     def update_video_buffer_status(self):
-        level = self._video_buffer.get_level()
-        size = self._video_buffer.n_total_images
+        level = self.video_buffer.get_level()
+        size = self.video_buffer.n_total_images
         text = f'{level:.0%} full, {size} max images'
         self.controls.status_panel.update_video_buffer_status(text)
 
@@ -457,6 +467,15 @@ class WindowManager(ManagerProcessBase):
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
 
+    def update_xy_lock_enabled(self, value: bool):
+        self.controls.xy_lock_panel.update_enabled(value)
+
+    def update_xy_lock_interval(self, value: float):
+        self.controls.xy_lock_panel.update_interval(value)
+
+    def update_xy_lock_max(self, value: float):
+        self.controls.xy_lock_panel.update_max(value)
+
 
 class LoadingWindow(QMainWindow):
 
@@ -522,6 +541,8 @@ class Controls(QWidget):
         self.histogram_panel = HistogramPanel(self.manager)
         self.script_panel = ScriptPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
+        self.z_lock_panel = ZLockPanel(self.manager)
+        self.xy_lock_panel = XYLockPanel(self.manager)
 
         self.add_panel(self.status_panel, column=0)
         self.add_panel(self.camera_panel, column=0)
@@ -530,6 +551,8 @@ class Controls(QWidget):
         self.add_panel(self.plot_settings_panel, column=1)
         self.add_panel(self.bead_selection_panel, column=1)
         self.add_panel(self.script_panel, column=1)
+        self.add_panel(self.xy_lock_panel, column=1)
+        self.add_panel(self.z_lock_panel, column=1)
 
         for c in self.manager.controls_to_add:
             control = c[0]
@@ -542,7 +565,7 @@ class Controls(QWidget):
 
     @property
     def settings(self):
-        return self.manager._settings
+        return self.manager.settings
 
     @settings.setter
     def settings(self, value):

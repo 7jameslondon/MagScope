@@ -208,7 +208,7 @@ class ScriptManager(ManagerProcessBase):
             self._script_waiting = True
 
         message = Message(cls_name, meth_name, *step_args, **step_kwargs)
-        self.send(message)
+        self.send_ipc(message)
 
     def update_waiting(self):
         """ Lets the script resume after waiting for a previous step to finish."""
@@ -234,4 +234,4 @@ class ScriptManager(ManagerProcessBase):
             meth=WindowManager.update_script_status,
             args=(status,)
         )
-        self.send(message)
+        self.send_ipc(message)

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from warnings import warn
 import yaml
 
-from magscope.beads import BeadManager
+from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, WindowManager, TimeSeriesPlotBase
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 class MagScope:
     def __init__(self):
-        self.bead_manager = BeadManager()
+        self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
         self._hardware: dict[str, HardwareManagerBase] = {}
@@ -50,9 +50,9 @@ class MagScope:
 
         # ===== Collect separate processes in a dictionary =====
         proc_list: list[ManagerProcessBase] = [
-            self.bead_manager,
+            self.script_manager, # ScriptManager must be first in this list for @registerwithscript to work
             self.camera_manager,
-            self.script_manager,
+            self.beadlock_manager,
             self.video_processor_manager,
             self.window_manager
         ]
@@ -73,7 +73,7 @@ class MagScope:
         # ===== Wait in loop for inter-process messages =====
         print('MagScope main loop starting ...', flush=True)
         while self._running:
-            self._check_pipes()
+            self.receive_ipc()
         print('MagScope main loop ended.', flush=True)
 
         # ===== End program by joining each process =====
@@ -81,7 +81,7 @@ class MagScope:
             proc.join()
             print(name, 'ended.', flush=True)
 
-    def _check_pipes(self):
+    def receive_ipc(self):
         for pipe in self.pipes.values():
             # Check if this pipe has a message
             if not pipe.poll():
@@ -121,10 +121,10 @@ class MagScope:
         hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
         video_process_flag = Value(c_uint8, 0)
         for name, proc in self.processes.items():
-            proc._camera_type = camera_type
+            proc.camera_type = camera_type
             proc._hardware_types = hardware_types
             proc._magscope_quitting = self._quitting
-            proc._settings = self._settings
+            proc.settings = self._settings
             proc._video_process_flag = video_process_flag
             self.quitting_events[name] = proc._quitting
         self._setup_pipes()
@@ -159,7 +159,7 @@ class MagScope:
         for name in self.lock_names:
             self.locks[name] = Lock()
         for proc in self.processes.values():
-            proc._set_locks(self.locks)
+            proc.locks = self.locks
 
     def _setup_pipes(self):
         for name, proc in self.processes.items():
@@ -171,6 +171,8 @@ class MagScope:
         self.script_manager.script_registry.register_class_methods(ManagerProcessBase)
         for proc in self.processes.values():
             self.script_manager.script_registry.register_class_methods(proc)
+        for i in self.script_manager.script_registry._methods.items():
+            print(i)
 
     def _get_default_settings(self):
         with open(self._default_settings_path, 'r') as f:

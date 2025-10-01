@@ -36,7 +36,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut = None
 
     def setup(self):
-        self._n_workers = self._settings['video processors n']
+        self._n_workers = self.settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
 
         # Create the workers
@@ -57,7 +57,7 @@ class VideoProcessorManager(ManagerProcessBase):
         # Check if images are ready for image processing
         if self._acquisition_on:
             if self._video_process_flag.value == PoolVideoFlag.READY:
-                if self._video_buffer.check_read_stack():
+                if self.video_buffer.check_read_stack():
                     self._video_process_flag.value = PoolVideoFlag.RUNNING
                     self._add_task()
 
@@ -67,7 +67,7 @@ class VideoProcessorManager(ManagerProcessBase):
             # Update the GUI's status info
             pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
             message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
-            self.send(message)
+            self.send_ipc(message)
 
     def quit(self):
         super().quit()
@@ -94,9 +94,9 @@ class VideoProcessorManager(ManagerProcessBase):
             'acquisition_dir': self._acquisition_dir,
             'acquisition_dir_on': self._acquisition_dir_on,
             'acquisition_mode': self._acquisition_mode,
-            'bead_rois': self._bead_rois,
-            'magnification': self._settings['magnification'],
-            'nm_per_px': self._camera_type.nm_per_px,
+            'bead_rois': self.bead_rois,
+            'magnification': self.settings['magnification'],
+            'nm_per_px': self.camera_type.nm_per_px,
             'save_profiles': self._save_profiles,
             'zlut': self._zlut
         }
@@ -105,12 +105,12 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def script_wait_unitl_acquisition_on(self, value: bool):
         while self._acquisition_on != value:
-            self._do_main_loop()
+            self.do_main_loop()
         message = Message(
             to=ScriptManager,
             meth=ScriptManager.update_waiting
         )
-        self.send(message)
+        self.send_ipc(message)
 
 class VideoWorker(Process):
     def __init__(self,

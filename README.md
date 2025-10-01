@@ -51,6 +51,64 @@ complex objects like timers or connections to hardware. If you do not need to do
 * 'do_main_loop' - this is repeatly called in the process as fast as possible. This is where all the stuff your process
 does by itself should happen. If you do not need to do anything here the just `pass`.
 
+## Adding a Control Panel
+Extend a `ControlPanelBase` and implment a `__init__` method to create the controls with PyQt6.
+The `__init__` must take a manager argument to be passed to its super. This can be accessed
+as `self.manager` later to call `WindowManger` functions. The `ControlPanelBase` is a QWidget which
+by defualt contains a `QVBoxLayout`. This can layout can be changed using `setLayout` in the `__init__`.
+Elements can be added to the layout with `self.layout().addWidget()` or `self.layout().addLayout()`.
+
+Example
+```
+import magscope
+
+class MyNewControlPanel(magscope.ControlPanelBase):
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__(manager=manager, title='New Panel')
+        self.layout().addWidget(QLabel('This is my new panel'))
+        
+        row = QHBoxLayout()
+        self.layout().addLayout(row)
+        
+        row.addWidget(QLabel('A Button'))
+        button = QPushButton('Press Me')
+        button.clicked.connect(self.button_callback)
+        row.addWidget(button)
+        
+    def button_callback(self):
+        print('The button was pressed')
+```
+
+## Sending interprocess calls (IPC)
+First create a `magscope.Message`. The message takes at least two arguments. The first is `to`
+which is the destination process such as `CameraManager` or if you want it to go to all
+processes use the base class `ManagerProcessBase`. The second argument is `meth` the method
+of the destinatino process that should be called such as `CameraManager.set_camera_setting`.
+The method should be the method object it self such as `CameraManager.set_camera_setting`. It
+should not be called in the message such as it should NOT be `CameraManager.set_camera_setting()`.
+If the method will need to recive argument or keyword arguments those can be provided 
+next as regular arguments or keyword arguements. Or they can be explicitly provided as a keyword argument
+`tuple` and `dict` for `args` and `kwargs` respectivly.
+
+Second send the message by calling `send_ipc()`.
+
+Also it is often easiest to avoid circular imports by locally importing the destination process
+class right before it is needed.
+
+Example
+```
+import magscope
+
+class MyProcesses(magscope.ManagerProcessBase):
+    def send_camera_setting(self, setting_name, setting_value):
+        message = magscope.Message(
+            to=magscope.CameraManager,
+            meth=magscope.CameraManager.set_camera_setting,
+            args=(setting_name, setting_value),
+        )
+        self.send_ipc(message)
+```
+
 ## Development
 To format the python files run 
 ``` yapf main.py -i ```, 

@@ -82,7 +82,7 @@ class PlotWorker(QObject):
         for ax in self.axes:
             ax.set_facecolor('#1e1e1e')  # Set background color
             ax.margins(x=0)  # Set margins
-        self.axes[-1].set_xlabel('T (h:m:s)')
+        self.axes[-1].set_xlabel('Time (h:m:s)')
         self.axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
 
         # Pass complex objects to each plot (self, axes, ect)
