@@ -1,4 +1,4 @@
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 
 from magscope.datatypes import MatrixBuffer
 from magscope.processes import ManagerProcessBase, SingletonABCMeta

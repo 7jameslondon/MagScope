@@ -28,8 +28,10 @@ class SingletonMeta(type):
             raise TypeError(f"Cannot create another instance of {cls.__name__}. This is a Singleton class.")
         return cls._instances[cls]
 
+
 class SingletonABCMeta(ABCMeta, SingletonMeta):
     pass
+
 
 class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     """ Abstract base class for processes in the MagScope
@@ -46,19 +48,19 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._acquisition_dir: str | None = None
         self._acquisition_dir_on: bool = False
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
-        self._bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
-        self._camera_type: type[CameraBase] | None = None
+        self.bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
+        self.camera_type: type[CameraBase] | None = None
         self._hardware_types: dict[str, type[HardwareManagerBase]] = {}
-        self._locks: dict[str, LockType] | None = None
+        self.locks: dict[str, LockType] | None = None
         self._magscope_quitting: EventType | None = None
-        self._name: str = type(self).__name__ # Read-only
+        self.name: str = type(self).__name__ # Read-only
         self._pipe: Connection | None = None # Pipe back to the 'MagScope' for inter-process communication
         self._quitting: EventType = Event()
         self._quit_requested: bool = False # A flag to prevent repeated calls to 'quit()' after one process asks the others to quit
         self._running: bool = False
-        self._settings = None
-        self._tracks_buffer: MatrixBuffer | None = None
-        self._video_buffer: VideoBuffer | None = None
+        self.settings = None
+        self.tracks_buffer: MatrixBuffer | None = None
+        self.video_buffer: VideoBuffer | None = None
         self._video_process_flag: ValueTypeUI8 | None = None
 
     def run(self):
@@ -73,29 +75,29 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         if self._running:
             warn(f'{self.name} is already running')
             return
-        print(f'{self.name} is running', flush=True)
+        print(f'{self.name} is starting', flush=True)
         self._running = True
 
         if self._pipe is None:
             raise RuntimeError(f'{self.name} has no pipe')
-        if self._locks is None:
+        if self.locks is None:
             raise RuntimeError(f'{self.name} has no locks')
         if self._magscope_quitting is None:
             raise RuntimeError(f'{self.name} has no magscope_quitting event')
 
-        self._video_buffer = VideoBuffer(
+        self.video_buffer = VideoBuffer(
             create=False,
-            locks=self._locks)
-        self._tracks_buffer = MatrixBuffer(
+            locks=self.locks)
+        self.tracks_buffer = MatrixBuffer(
             create=False,
-            locks=self._locks,
+            locks=self.locks,
             name='TracksBuffer')
 
         self.setup()
 
         while self._running:
             self.do_main_loop()
-            self.check_pipe()
+            self.receive_ipc()
 
     @abstractmethod
     def setup(self):
@@ -112,7 +114,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._running = False
         if not self._quit_requested:
             message = Message(ManagerProcessBase, ManagerProcessBase.quit)
-            self.send(message)
+            self.send_ipc(message)
         if self._pipe:
             while not self._magscope_quitting.is_set():
                 if self._pipe.poll():
@@ -121,11 +123,11 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             self._pipe = None
         print(f'{self.name} quit', flush=True)
 
-    def send(self, message: Message):
+    def send_ipc(self, message: Message):
         if self._pipe and not self._magscope_quitting.is_set():
             self._pipe.send(message)
 
-    def check_pipe(self):
+    def receive_ipc(self):
         # Check pipe for new messages
         if self._pipe is None or not self._pipe.poll():
             return
@@ -144,25 +146,6 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         else:
             warn(f"Function '{message.meth}' not found in {self.name}")
 
-    @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, value):
-        raise AttributeError("This property is read-only.")
-
-    @property
-    def locks(self):
-        return self._locks
-
-    @locks.setter
-    def locks(self, value):
-        raise AttributeError("This property is read-only.")
-
-    def _set_locks(self, locks: dict[str, LockType]):
-        self._locks = locks
-
     @registerwithscript('set_acquisition_dir')
     def set_acquisition_dir(self, value: str):
         self._acquisition_dir = value
@@ -180,7 +163,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._acquisition_on = value
 
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
-        self._bead_rois = value
+        self.bead_rois = value
 
     def set_settings(self, settings: dict):
-        self._settings = settings
+        self.settings = settings

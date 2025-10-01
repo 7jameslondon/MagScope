@@ -164,7 +164,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
             target=target,
             speed=speed,
         )
-        self.manager.send(message)
+        self.manager.send_ipc(message)
 
 
 class LinearMotorPlot(magscope.TimeSeriesPlotBase):

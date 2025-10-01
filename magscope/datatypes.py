@@ -7,8 +7,8 @@ class VideoBuffer:
     """ Shared memory ring buffer for video data
 
     The buffer should first be created by a process with create=True.
-    When createing, n_stacks, width, height, n_images and bits must be provided.
-    After which the buffer can be accesed in a diffrenprocess with create=False.
+    When creating, n_stacks, width, height, n_images and bits must be provided.
+    After which the buffer can be accessed in a diffrent process with create=False.
 
     """
 

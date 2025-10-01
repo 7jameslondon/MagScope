@@ -119,15 +119,15 @@ class AcquisitionPanel(ControlPanelBase):
 
     def callback_acquisition_on(self):
         value: bool = self.acquisition_on_checkbox.checkbox.isChecked()
-        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
+        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
 
     def callback_acquisition_dir_on(self):
         value: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
-        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
+        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
 
     def callback_acquisition_mode(self):
         value: AcquisitionMode = self.acquisition_mode_combobox.currentText()
-        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
+        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
@@ -145,7 +145,7 @@ class AcquisitionPanel(ControlPanelBase):
         else:
             value = None
             self.acquisition_dir_textedit.setText(self.no_file_str)
-        self.manager.send(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
+        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -221,7 +221,7 @@ class CameraPanel(ControlPanelBase):
 
         # Individual controls
         self.settings = {}
-        for name in self.manager._camera_type.settings:
+        for name in self.manager.camera_type.settings:
             self.settings[name] = LabeledLineEditWithValue(
                 label_text=name,
                 widths=(0, 100, 50),
@@ -236,12 +236,12 @@ class CameraPanel(ControlPanelBase):
         self.layout().addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignRight) # type: ignore
             
     def callback_refresh(self):
-        for name in self.manager._camera_type.settings:
+        for name in self.manager.camera_type.settings:
             from magscope import CameraManager
             message = Message(to=CameraManager,
                               meth=CameraManager.get_camera_setting,
                               args=(name,))
-            self.manager.send(message)
+            self.manager.send_ipc(message)
 
     def callback_set_camera_setting(self, name):
         value = self.settings[name].lineedit.text()
@@ -253,7 +253,7 @@ class CameraPanel(ControlPanelBase):
         message = Message(to=CameraManager,
                           meth=CameraManager.set_camera_setting,
                           args=(name, value))
-        self.manager.send(message)
+        self.manager.send_ipc(message)
         
     def update_camera_setting(self, name: str, value: str):
         self.settings[name].value_label.setText(value)
@@ -322,9 +322,9 @@ class HistogramPanel(ControlPanelBase):
             return
         self._update_last_time = now
 
-        dtype = self.manager._camera_type.dtype
-        max_int = 2**self.manager._camera_type.bits
-        shape = self.manager._video_buffer.image_shape
+        dtype = self.manager.camera_type.dtype
+        max_int = 2**self.manager.camera_type.bits
+        shape = self.manager.video_buffer.image_shape
         image = np.frombuffer(data, dtype).reshape(shape)
 
         if self.only_beads.checkbox.isChecked():
@@ -419,7 +419,7 @@ class ScriptPanel(ControlPanelBase):
                                               'Script (*.py)')
 
         message = Message(ScriptManager, ScriptManager.load_script, path)
-        self.manager.send(message)
+        self.manager.send_ipc(message)
 
         if not path:  # user selected cancel
             path = self.no_file_str
@@ -430,15 +430,15 @@ class ScriptPanel(ControlPanelBase):
 
     def callback_start(self):
         message = Message(ScriptManager, ScriptManager.start_script)
-        self.manager.send(message)
+        self.manager.send_ipc(message)
 
     def callback_pause(self):
         if self.pause_button.text() == 'Pause':
             message = Message(ScriptManager, ScriptManager.pause_script)
-            self.manager.send(message)
+            self.manager.send_ipc(message)
         else:
             message = Message(ScriptManager, ScriptManager.resume_script)
-            self.manager.send(message)
+            self.manager.send_ipc(message)
 
 
 class StatusPanel(ControlPanelBase):
@@ -579,6 +579,215 @@ class PlotSettingsPanel(ControlPanelBase):
                 min_max[i] = value
             values[name] = tuple(min_max)
         self.manager.plot_worker.limits_signal.emit(values)
+
+
+class XYLockPanel(ControlPanelBase):
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__(manager=manager, title='XY-Lock')
+
+        # Note
+        note_text = '''
+        Periodically moves the bead-boxes to the center the bead.
+        '''.replace('\n', ' ').replace('  ', '').strip()
+        note = QLabel(note_text)
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
+
+        # Row 1
+        row_1 = QHBoxLayout()
+        self.layout().addLayout(row_1)
+
+        # Enabled
+        self.enabled = LabeledCheckbox(
+            label_text='Enabled',
+            callback=self.enabled_callback,
+        )
+        row_1.addWidget(self.enabled)
+
+        # Once
+        once = QPushButton('Once')
+        once.clicked.connect(self.once_callback)
+        row_1.addWidget(once)
+
+        # Interval
+        self.interval = LabeledLineEditWithValue(
+            label_text='Interval (sec)',
+            default=str(self.manager.settings['xy-lock default interval']),
+            callback=self.interval_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.interval)
+
+        # Max
+        self.max = LabeledLineEditWithValue(
+            label_text='Max (pixels)',
+            default=str(self.manager.settings['xy-lock default max']),
+            callback=self.max_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.max)
+
+    def enabled_callback(self):
+        value = self.enabled.checkbox.isChecked()
+
+        # Change panel background color
+        if value:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
+        else:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_xy_lock_on,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
+    def once_callback(self):
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.do_xy_lock,
+        )
+        self.manager.send_ipc(message)
+
+    def interval_callback(self):
+        # Get value
+        value = self.interval.lineedit.text()
+        self.interval.lineedit.setText('')
+
+        # Check value
+        try: value = float(value)
+        except ValueError: return
+        if value < 0: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_xy_lock_interval,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
+    def max_callback(self):
+        # Get value
+        value = self.max.lineedit.text()
+        self.max.lineedit.setText('')
+
+        # Check value
+        try: value = float(value)
+        except ValueError: return
+        if value <= 1: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_xy_lock_max,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
+    def update_enabled(self, value: bool):
+        # Set checkbox
+        self.enabled.checkbox.blockSignals(True)
+        self.enabled.checkbox.setChecked(value)
+        self.enabled.checkbox.blockSignals(False)
+
+        # Change panel background color
+        if value:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
+        else:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+
+    def update_interval(self, value: float):
+        if value is None:
+            value = ''
+        self.interval.value_label.setText(f'{value}')
+
+    def update_max(self, value: float):
+        if value is None:
+            value = ''
+        self.max.value_label.setText(f'{value}')
+
+
+class ZLockPanel(ControlPanelBase):
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__(manager=manager, title='Z-Lock')
+
+        # Note
+        note_text = '''
+        When enabled the Z-Lock overrides the "Z motor" target
+        and adjusts the motor target to maintain the chosen
+        bead at a fixed Z value. The adjustment is completed on
+        a timer with the chosen interval between updates.
+        '''.replace('\n', ' ').replace('  ', '').strip()
+        note = QLabel(note_text)
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
+
+        # Enabled
+        self.enabled = LabeledCheckbox(
+            label_text='Enabled',
+            callback=self.enabled_callback,
+        )
+        self.layout().addWidget(self.enabled)
+
+        # Bead
+        self.bead = LabeledLineEditWithValue(
+            label_text='Bead',
+            default='0',
+            callback=self.bead_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.bead)
+
+        # Target
+        self.target = LabeledLineEditWithValue(
+            label_text='Target (nm)',
+            default='',
+            callback=self.target_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.target)
+
+        # Interval
+        self.interval = LabeledLineEditWithValue(
+            label_text='Interval (sec)',
+            default='0.1',
+            callback=self.interval_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.interval)
+
+    def enabled_callback(self, value):
+        if value:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
+        else:
+            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        print(f'Z-Lock Enabled: {value}')
+
+    def bead_callback(self):
+        value = self.bead.lineedit.text()
+        self.bead.lineedit.setText('')
+        print(f'Bead: {value}')
+        self.bead.value_label.setText(value)
+
+    def target_callback(self):
+        value = self.target.lineedit.text()
+        self.target.lineedit.setText('')
+        print(f'Target: {value}')
+        self.target.value_label.setText(value)
+
+    def interval_callback(self):
+        value = self.interval.lineedit.text()
+        self.interval.lineedit.setText('')
+        print(f'Interval: {value}')
+        self.interval.value_label.setText(value)
+
 
 #############################################
 #############################################
