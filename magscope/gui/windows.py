@@ -110,6 +110,8 @@ class WindowManager(ManagerProcessBase):
             screen = QApplication.screens()[i % len(QApplication.screens())]
             geometry = screen.geometry()
             window.setGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height())
+            window.setMinimumWidth(300)
+            window.setMinimumHeight(300)
             window.closeEvent = lambda _, w=window: self.quit()
             window.showMaximized()
             window.setCentralWidget(self.central_widgets[i])
