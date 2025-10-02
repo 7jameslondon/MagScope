@@ -183,6 +183,7 @@ class BeadLockManager(ManagerProcessBase):
 
     @registerwithscript('set_z_lock_bead')
     def set_z_lock_bead(self, value: int):
+        value = int(value)
         self.z_lock_bead = value
 
         from magscope.gui import WindowManager

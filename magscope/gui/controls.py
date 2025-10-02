@@ -612,7 +612,7 @@ class XYLockPanel(ControlPanelBase):
         # Interval
         self.interval = LabeledLineEditWithValue(
             label_text='Interval (sec)',
-            default=str(self.manager.settings['xy-lock default interval']),
+            default=str(self.manager.settings['xy-lock default interval']) + ' sec',
             callback=self.interval_callback,
             widths=(75, 100, 0),
         )
@@ -621,7 +621,7 @@ class XYLockPanel(ControlPanelBase):
         # Max
         self.max = LabeledLineEditWithValue(
             label_text='Max (pixels)',
-            default=str(self.manager.settings['xy-lock default max']),
+            default=str(self.manager.settings['xy-lock default max']) + ' pixels',
             callback=self.max_callback,
             widths=(75, 100, 0),
         )
@@ -706,12 +706,12 @@ class XYLockPanel(ControlPanelBase):
     def update_interval(self, value: float):
         if value is None:
             value = ''
-        self.interval.value_label.setText(f'{value}')
+        self.interval.value_label.setText(f'{value} sec')
 
     def update_max(self, value: float):
         if value is None:
             value = ''
-        self.max.value_label.setText(f'{value}')
+        self.max.value_label.setText(f'{value} pixels')
 
 
 class ZLockPanel(ControlPanelBase):
@@ -757,7 +757,7 @@ class ZLockPanel(ControlPanelBase):
         # Interval
         self.interval = LabeledLineEditWithValue(
             label_text='Interval (sec)',
-            default=str(self.manager.settings['z-lock default interval']),
+            default=str(self.manager.settings['z-lock default interval']) + ' sec',
             callback=self.interval_callback,
             widths=(75, 100, 0),
         )
@@ -766,7 +766,7 @@ class ZLockPanel(ControlPanelBase):
         # Max
         self.max = LabeledLineEditWithValue(
             label_text='Max (nm)',
-            default=str(self.manager.settings['z-lock default max']),
+            default=str(self.manager.settings['z-lock default max']) + ' nm',
             callback=self.max_callback,
             widths=(75, 100, 0),
         )
@@ -797,7 +797,7 @@ class ZLockPanel(ControlPanelBase):
 
         # Check value
         try:
-            value = float(value)
+            value = int(value)
         except ValueError:
             return
         if value < 0: return
@@ -893,17 +893,17 @@ class ZLockPanel(ControlPanelBase):
     def update_target(self, value: float):
         if value is None:
             value = ''
-        self.target.value_label.setText(f'{value}')
+        self.target.value_label.setText(f'{value} nm')
 
     def update_interval(self, value: float):
         if value is None:
             value = ''
-        self.interval.value_label.setText(f'{value}')
+        self.interval.value_label.setText(f'{value} sec')
 
     def update_max(self, value: float):
         if value is None:
             value = ''
-        self.max.value_label.setText(f'{value}')
+        self.max.value_label.setText(f'{value} nm')
 
 
 #############################################
