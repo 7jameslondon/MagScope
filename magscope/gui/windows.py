@@ -106,7 +106,7 @@ class WindowManager(ManagerProcessBase):
         # Create the windows
         for i in range(self._n_windows):
             window = QMainWindow()
-            window.setWindowTitle(f"MagScope: Window {i}")
+            window.setWindowTitle("MagScope")
             screen = QApplication.screens()[i % len(QApplication.screens())]
             geometry = screen.geometry()
             window.setGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height())
