@@ -1,11 +1,11 @@
 from __future__ import annotations
-
-from abc import abstractmethod, ABC, ABCMeta
-from multiprocessing import Process, Event
+from abc import ABC, ABCMeta, abstractmethod
+from ctypes import c_uint8
+from multiprocessing import Event, Process, Value
 from typing import TYPE_CHECKING
 from warnings import warn
 
-from magscope.datatypes import VideoBuffer, MatrixBuffer
+from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.utils import AcquisitionMode, Message, registerwithscript
 
 if TYPE_CHECKING:
@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraBase
     from magscope.hardware import HardwareManagerBase
+
+
+class InterprocessValues:
+    def __init__(self):
+        self.video_process_busy_count: ValueTypeUI8 = Value(c_uint8, 0)
+        self.video_process_flag: ValueTypeUI8 = Value(c_uint8, 0)
 
 
 class SingletonMeta(type):
@@ -50,7 +56,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
         self.bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
         self.camera_type: type[CameraBase] | None = None
-        self._hardware_types: dict[str, type[HardwareManagerBase]] = {}
+        self.hardware_types: dict[str, type[HardwareManagerBase]] = {}
         self.locks: dict[str, LockType] | None = None
         self._magscope_quitting: EventType | None = None
         self.name: str = type(self).__name__ # Read-only
@@ -61,7 +67,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.settings = None
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
-        self._video_process_flag: ValueTypeUI8 | None = None
+        self.shared_values: InterprocessValues | None = None
 
     def run(self):
         """ Start the process when 'start()' is called

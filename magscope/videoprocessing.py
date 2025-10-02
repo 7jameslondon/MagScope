@@ -1,15 +1,13 @@
 from __future__ import annotations
-from ctypes import c_uint8
 import cupy as cp
 import traceback
-from multiprocessing import Process, Queue, Value, Lock
+from multiprocessing import Process, Queue, Lock
 import numpy as np
 import os
 import tifffile
 from typing import TYPE_CHECKING
 
 from magscope.datatypes import VideoBuffer, MatrixBuffer
-from magscope.gui import WindowManager
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
@@ -27,9 +25,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tasks: QueueType | None = None
         self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
-        self._busy_count: ValueTypeUI8 = Value(c_uint8, 0)
         self._gpu_lock: LockType = Lock()
-        self._loop:int = 0
+        self._loop: int = 0
 
         # TODO: Check implementation
         self._save_profiles = False
@@ -43,8 +40,8 @@ class VideoProcessorManager(ManagerProcessBase):
         for _ in range(self._n_workers):
             worker = VideoWorker(tasks=self._tasks,
                                  locks=self.locks,
-                                 video_flag=self._video_process_flag,
-                                 busy_count=self._busy_count,
+                                 video_flag=self.shared_values.video_process_flag,
+                                 busy_count=self.shared_values.video_process_busy_count,
                                  gpu_lock=self._gpu_lock)
             self._workers.append(worker)
 
@@ -53,21 +50,12 @@ class VideoProcessorManager(ManagerProcessBase):
             worker.start()
 
     def do_main_loop(self):
-
         # Check if images are ready for image processing
         if self._acquisition_on:
-            if self._video_process_flag.value == PoolVideoFlag.READY:
+            if self.shared_values.video_process_flag.value == PoolVideoFlag.READY:
                 if self.video_buffer.check_read_stack():
-                    self._video_process_flag.value = PoolVideoFlag.RUNNING
+                    self.shared_values.video_process_flag.value = PoolVideoFlag.RUNNING
                     self._add_task()
-
-        self._loop += 1
-        self._loop %= 100
-        if self._loop == 0:
-            # Update the GUI's status info
-            pool_text = f'{self._busy_count.value}/{self._n_workers} busy'
-            message = Message(WindowManager, WindowManager.update_video_processors_status, pool_text)
-            self.send_ipc(message)
 
     def quit(self):
         super().quit()
@@ -136,10 +124,6 @@ class VideoWorker(Process):
             create=False,
             name='TracksBuffer',
             locks=self._locks)
-
-        # TODO Remove or parameterize with a setting
-        #with cp.cuda.Device(0):
-        #    cp.get_default_memory_pool().set_limit(size=7 * 1024 ** 3)  # 7 GB GPU dedicated memory
 
         while True:
             task = self._tasks.get()

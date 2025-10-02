@@ -108,7 +108,7 @@ class PlotWorker(QObject):
 
         # Wait for timer
         duration = time() - self._update_last_time
-        sleep(duration)
+        sleep(10*duration)
         self._update_last_time = time()
 
         # Check if we need to recreate the figure

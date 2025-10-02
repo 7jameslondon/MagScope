@@ -28,15 +28,15 @@ class CameraManager(ManagerProcessBase):
     def do_main_loop(self):
         # Check if images are done processing
         if self._acquisition_on:
-            if self._video_process_flag.value == PoolVideoFlag.FINISHED:
+            if self.shared_values.video_process_flag.value == PoolVideoFlag.FINISHED:
                 self._release_pool_buffers()
-                self._video_process_flag.value = PoolVideoFlag.READY
+                self.shared_values.video_process_flag.value = PoolVideoFlag.READY
         else:
-            if self._video_process_flag.value == PoolVideoFlag.READY:
+            if self.shared_values.video_process_flag.value == PoolVideoFlag.READY:
                 self._release_unattached_buffers()
-            elif self._video_process_flag.value == PoolVideoFlag.FINISHED:
+            elif self.shared_values.video_process_flag.value == PoolVideoFlag.FINISHED:
                 self._release_pool_buffers()
-                self._video_process_flag.value = PoolVideoFlag.READY
+                self.shared_values.video_process_flag.value = PoolVideoFlag.READY
 
         # Check if the video buffer is about to overflow
         fraction_available = (1 - self.video_buffer.get_level())

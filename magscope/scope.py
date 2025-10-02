@@ -11,7 +11,7 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, WindowManager, TimeSeriesPlotBase
 from magscope.hardware import HardwareManagerBase
-from magscope.processes import ManagerProcessBase
+from magscope.processes import InterprocessValues, ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
@@ -28,6 +28,7 @@ class MagScope:
         self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
         self._hardware: dict[str, HardwareManagerBase] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
+        self.shared_values: InterprocessValues = InterprocessValues()
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['VideoBuffer', 'TracksBuffer']
         self.pipes: dict[str, Connection] = {}
@@ -121,13 +122,12 @@ class MagScope:
         # Create and share: locks, pipes, flags, types, ect
         camera_type = type(self.camera_manager.camera)
         hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
-        video_process_flag = Value(c_uint8, 0)
         for name, proc in self.processes.items():
             proc.camera_type = camera_type
-            proc._hardware_types = hardware_types
+            proc.hardware_types = hardware_types
             proc._magscope_quitting = self._quitting
             proc.settings = self._settings
-            proc._video_process_flag = video_process_flag
+            proc.shared_values = self.shared_values
             self.quitting_events[name] = proc._quitting
         self._setup_pipes()
         self._setup_locks()

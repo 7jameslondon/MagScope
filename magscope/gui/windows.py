@@ -98,7 +98,7 @@ class WindowManager(ManagerProcessBase):
         self.plots_thread.started.connect(self.plot_worker.run) # noqa
         self.plot_worker.image_signal.connect(lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img)))
         self.plots_widget.resized.connect(self.update_plot_figure_size)
-        self.plots_thread.start()
+        self.plots_thread.start(QThread.Priority.LowPriority)
 
         # Create the layouts for each window
         self.create_central_widgets()
@@ -125,6 +125,12 @@ class WindowManager(ManagerProcessBase):
         self._timer.setInterval(0)
         self._timer.start()
 
+        # Timer - Video Display
+        timer_video_view = QTimer()
+        timer_video_view.timeout.connect(self._update_view_and_hist)
+        timer_video_view.setInterval(25)
+        timer_video_view.start()
+
         # Start app
         self._running = True
         self.qt_app.exec()
@@ -149,9 +155,9 @@ class WindowManager(ManagerProcessBase):
         # run method of it's super()
 
         if self._running:
-            self._update_view_and_hist()
             self._update_display_rate()
             self.update_video_buffer_status()
+            self.update_video_processors_status()
             self.receive_ipc()
 
     @property
@@ -394,7 +400,10 @@ class WindowManager(ManagerProcessBase):
         for graphic in self._bead_graphics.values():
             graphic.locked = locked
 
-    def update_video_processors_status(self, text):
+    def update_video_processors_status(self):
+        busy = self.shared_values.video_process_busy_count.value
+        total = self.settings['video processors n']
+        text = f'{busy}/{total} busy'
         self.controls.status_panel.update_video_processors_status(text)
 
     def update_video_buffer_status(self):
@@ -405,10 +414,10 @@ class WindowManager(ManagerProcessBase):
 
     def _update_display_rate(self):
         # If it has been more than a second, re-calculate the display rate
-        if (t := time()) - self._display_rate_last_time > 1:
-            dt = t - self._display_rate_last_time
+        if (now := time()) - self._display_rate_last_time > 1:
+            dt = now - self._display_rate_last_time
             rate = self._display_rate_counter / dt
-            self._display_rate_last_time = t
+            self._display_rate_last_time = now
             self._display_rate_counter = 0
             self._display_rate_last_rate = rate
             self.controls.status_panel.update_display_rate(f'{rate:.0f} updates/sec')
