@@ -346,7 +346,7 @@ class WindowManager(ManagerProcessBase):
 
     def move_bead(self, id: int, dx, dy):
         # Move the bead
-        self._bead_graphics[id].moveBy(dx, dy)
+        self._bead_graphics[id].move(dx, dy)
 
         # Update the ROIs
         self.update_bead_rois()
