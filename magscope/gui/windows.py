@@ -1,3 +1,5 @@
+import traceback
+
 import numpy as np
 import os
 from PyQt6.QtWidgets import (
@@ -33,7 +35,7 @@ from magscope.gui import (
     ControlPanelBase,
     ResizableLabel,
 )
-from magscope.gui.controls import PlotSettingsPanel, ZLockPanel, XYLockPanel
+from magscope.gui.controls import PlotSettingsPanel, ZLockPanel, XYLockPanel, ZLUTGenerationPanel, ProfilePanel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import Message, numpy_type_to_qt_image_type
@@ -44,6 +46,9 @@ class WindowManager(ManagerProcessBase):
         super().__init__()
         self._bead_graphics: dict[int, BeadGraphic] = {}
         self._bead_next_id: int = 0
+        self.beads_in_view_on = False
+        self.beads_in_view_count = 1
+        self.beads_in_view_marker_size = 100
         self.central_widgets: list[QWidget] = []
         self.central_layouts: list[QLayout] = []
         self.controls: Controls | None = None
@@ -160,6 +165,7 @@ class WindowManager(ManagerProcessBase):
             self._update_display_rate()
             self.update_video_buffer_status()
             self.update_video_processors_status()
+            self.controls.profile_panel.update_plot()
             self.receive_ipc()
 
     @property
@@ -319,6 +325,9 @@ class WindowManager(ManagerProcessBase):
                 numpy_type_to_qt_image_type(self.video_buffer.dtype))
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
 
+            # Update the bead position overlay
+            self._update_beads_in_view()
+
             # Update the histogram
             self.controls.histogram_panel.update_plot(image_bytes)
 
@@ -426,6 +435,36 @@ class WindowManager(ManagerProcessBase):
         else:
             # This is used to force the "..." to update
             self.controls.status_panel.update_display_rate(f'{self._display_rate_last_rate:.0f} updates/sec')
+
+    def _update_beads_in_view(self):
+        # Enabled?
+        if not self.beads_in_view_on or self.beads_in_view_count is None:
+            self.video_viewer.clear_crosshairs()
+            return
+        n = self.beads_in_view_count
+
+        # Get latest n timepoints
+        tracks = self.tracks_buffer.peak_unsorted()
+        t = tracks[:, 0]
+        unique_t = np.unique(t)
+        top_n_t = unique_t[np.isfinite(unique_t)][-n:]
+
+        # Get corresponding values
+        try:
+            mask = np.isin(t, top_n_t, assume_unique=False, kind='sort')
+            x = tracks[mask, 1]
+            y = tracks[mask, 2]
+
+            # Calculate relative x & y
+            nm_per_px = self.camera_type.nm_per_px / self.settings['magnification']
+            x /= nm_per_px
+            y /= nm_per_px
+
+            # Plot points
+            self.video_viewer.plot(x, y, self.beads_in_view_marker_size)
+        except Exception as e:
+            print(traceback.format_exc())
+
 
     def update_camera_setting(self, name: str, value: str):
         self.controls.camera_panel.update_camera_setting(name, value)
@@ -560,22 +599,27 @@ class Controls(QWidget):
         layout.addStretch(1)
 
         # Add control panels
-        self.status_panel = StatusPanel(self.manager)
-        self.camera_panel = CameraPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
+        self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
-        self.script_panel = ScriptPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
-        self.z_lock_panel = ZLockPanel(self.manager)
+        self.profile_panel = ProfilePanel(self.manager)
+        self.script_panel = ScriptPanel(self.manager)
+        self.status_panel = StatusPanel(self.manager)
         self.xy_lock_panel = XYLockPanel(self.manager)
-
+        self.z_lock_panel = ZLockPanel(self.manager)
+        self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
+        # Column - 0
         self.add_panel(self.status_panel, column=0)
         self.add_panel(self.camera_panel, column=0)
         self.add_panel(self.acquisition_panel, column=0)
         self.add_panel(self.histogram_panel, column=0)
+        self.add_panel(self.bead_selection_panel, column=0)
+        self.add_panel(self.profile_panel, column=0)
+        # Column - 1
         self.add_panel(self.plot_settings_panel, column=1)
-        self.add_panel(self.bead_selection_panel, column=1)
+        self.add_panel(self.z_lut_generation_panel, column=1)
         self.add_panel(self.script_panel, column=1)
         self.add_panel(self.xy_lock_panel, column=1)
         self.add_panel(self.z_lock_panel, column=1)

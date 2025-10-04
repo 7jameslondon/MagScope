@@ -587,7 +587,7 @@ if __name__ == "__main__":
     # Add a GUI to control the Motor
     scope.add_control(LinearMotorControls, column=0)
 
-    # Add a plot of the motor's position
+    # Add a plot of the motor's position/force
     scope.add_timeplot(LinearMotorPlot('FakeLinearMotor'))
     scope.add_timeplot(ForcePlot('FakeLinearMotor'))
 

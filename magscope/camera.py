@@ -195,10 +195,86 @@ class CameraBase(metaclass=ABCMeta):
 
 
 class DummyCamera(CameraBase):
-    width = 2560
-    height = 2560
-    bits = 12
-    dtype = np.uint16
+    width = 1280
+    height = 560
+    bits = 8
+    dtype = np.uint8
+    nm_per_px = 5000.
+    settings = ['framerate', 'exposure', 'gain']
+
+    def __init__(self):
+        super().__init__()
+        self.fake_settings = {'framerate': 1000.0, 'exposure': 250.0, 'gain': 0.0}
+        self.est_fps = self.fake_settings['framerate']
+        self.est_fps_count = 0
+        self.est_fps_time = time()
+        self.last_time = 0
+
+    def connect(self, video_buffer):
+        super().connect(video_buffer)
+        self.is_connected = True
+
+    def fetch(self):
+        if (timestamp := time()) - self.last_time < 1. / self.fake_settings['framerate']:
+            return
+
+        self.est_fps_count += 1
+        if timestamp - self.est_fps_time > 1:
+            self.est_fps = self.est_fps_count / (timestamp - self.est_fps_time)
+            self.est_fps_count = 0
+            self.est_fps_time = timestamp
+
+        image = self._fake_image()
+
+        self.last_time = timestamp
+
+        self.video_buffer.write_image_and_timestamp(image, timestamp)
+
+    def _fake_image(self):
+        max_int = np.iinfo(self.dtype).max
+        images = np.random.rand(self.height, self.width)
+        images += self.fake_settings['gain']
+        images *= self.fake_settings['exposure']
+        images **= (1 + self.fake_settings['gain'])
+        np.maximum(images, 0, out=images)
+        np.minimum(images, max_int, out=images)
+        return images.astype(self.dtype).tobytes()
+
+    def release(self):
+        pass
+
+    def get_setting(self, name: str) -> str:
+        super().get_setting(name)
+        if name != 'framerate':
+            value = self.fake_settings[name]
+        else:
+            value = self.est_fps
+        value = str(round(value))
+        return value
+
+    def set_setting(self, name: str, value: str):
+        super().set_setting(name, value)
+        match name:
+            case 'framerate':
+                value = float(value)
+                if value < 1 or value > 10000:
+                    raise ValueError
+            case 'exposure':
+                value = float(value)
+                if value < 0 or value > 10000000:
+                    raise ValueError
+            case 'gain':
+                value = int(value)
+                if value < 0 or value > 10:
+                    raise ValueError
+
+        self.fake_settings[name] = value
+
+class DummyCameraFast(CameraBase):
+    width = 1280
+    height = 560
+    bits = 8
+    dtype = np.uint8
     nm_per_px = 5000.
     settings = ['framerate', 'exposure', 'gain']
 

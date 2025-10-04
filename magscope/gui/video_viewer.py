@@ -1,6 +1,6 @@
 import numpy as np
 from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor
+from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QFont
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem
 import time
 
@@ -29,6 +29,42 @@ class VideoViewer(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.set_image_to_default()
+
+        self.crosshairs = []
+
+    def plot(self, x, y, size):
+        """
+        Plot crosshairs using numpy arrays of x and y positions.
+        Removes old crosshairs and plots new ones.
+
+        Args:
+            x: numpy array or list of x positions
+            y: numpy array or list of y positions
+            size: font size of the crosshairs
+        """
+        # Remove old crosshairs
+        self.clear_crosshairs()
+
+        # Add new crosshairs
+        font = QFont('Arial', size)
+        font.setWeight(QFont.Weight.Thin)
+        qcolor = QColor('red')
+        for xi, yi in zip(x, y):
+            text = self.scene.addText('⊕')
+            text.setFont(font)
+            text.setDefaultTextColor(qcolor)
+
+            # Center the '+'
+            rect = text.boundingRect()
+            text.setPos(xi - rect.width() / 2, yi - rect.height() / 2)
+
+            self.crosshairs.append(text)
+
+    def clear_crosshairs(self):
+        """Remove all crosshairs"""
+        for ch in self.crosshairs:
+            self.scene.removeItem(ch)
+        self.crosshairs.clear()
 
     def set_image_to_default(self):
         width = 128

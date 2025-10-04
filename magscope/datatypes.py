@@ -3,6 +3,7 @@ from multiprocessing.synchronize import Lock
 import numpy as np
 import struct
 
+
 class VideoBuffer:
     """ Shared memory ring buffer for video data
 
@@ -237,6 +238,7 @@ class VideoBuffer:
             self._set_write_index(write + 1)
             self._set_count_index(count + 1)
 
+
 class MatrixBuffer:
     """
     A shared memory ring buffer for 2d-array(matrix) data
@@ -408,11 +410,14 @@ class MatrixBuffer:
                                        buffer=left)
             return np.vstack((np_array_right, np_array_left))
 
+
 class BufferUnderflow(Exception):
     pass
 
+
 class BufferOverflow(Exception):
     pass
+
 
 bit_to_dtype = {
     8:  np.uint8,

@@ -30,9 +30,10 @@ class MagScope:
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
         self.shared_values: InterprocessValues = InterprocessValues()
         self.locks: dict[str, LockType] = {}
-        self.lock_names: list[str] = ['VideoBuffer', 'TracksBuffer']
+        self.lock_names: list[str] = ['ProfilesBuffer', 'TracksBuffer', 'VideoBuffer']
         self.pipes: dict[str, Connection] = {}
         self.processes: dict[str, ManagerProcessBase] = {}
+        self.profiles_buffer: MatrixBuffer | None = None
         self._quitting: Event = Event()
         self.quitting_events: dict[str, EventType] = {}
         self._running: bool = False
@@ -133,6 +134,18 @@ class MagScope:
         self._setup_locks()
 
         # Create the shared buffers
+        self.profiles_buffer = MatrixBuffer(
+            create=True,
+            locks=self.locks,
+            name='ProfilesBuffer',
+            shape=(1000, self.settings['bead roi width'])
+        )
+        self.tracks_buffer = MatrixBuffer(
+            create=True,
+            locks=self.locks,
+            name='TracksBuffer',
+            shape=(self._settings['tracks max datapoints'], 7)
+        )
         self.video_buffer = VideoBuffer(
             create=True,
             locks=self.locks,
@@ -141,12 +154,6 @@ class MagScope:
             width=self.camera_manager.camera.width,
             height=self.camera_manager.camera.height,
             bits=np.iinfo(self.camera_manager.camera.dtype).bits
-        )
-        self.tracks_buffer = MatrixBuffer(
-            create=True,
-            locks=self.locks,
-            name='TracksBuffer',
-            shape=(self._settings['tracks max datapoints'], 7)
         )
         for name, hardware in self._hardware.items():
             self._hardware_buffers[name] = MatrixBuffer(
