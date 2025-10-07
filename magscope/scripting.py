@@ -1,3 +1,17 @@
+"""Utilities for registering and executing scripted automation flows.
+
+This module provides the runtime that powers MagScope's lightweight
+automation system. Users describe a sequence of actions in a script file
+by instantiating :class:`Script` and calling registered methods on it. The
+resulting steps are validated against :class:`ScriptRegistry` to ensure
+that each call is valid before being executed by :class:`ScriptManager`.
+
+Only methods decorated with :func:`registerwithscript` are exposed to the
+script environment. Script execution runs in its own manager process and
+communicates with other parts of the application through the standard IPC
+mechanism.
+"""
+
 from enum import StrEnum
 import inspect
 from time import time
@@ -10,24 +24,41 @@ from magscope.utils import Message, registerwithscript
 
 
 class Script:
+    """Container that records the steps of a user-authored script."""
+
     def __init__(self):
+        # Each step is stored as ``(method_name, args, kwargs)`` so that the
+        # manager can replay the actions later.
         self.steps: list[tuple[str, tuple, dict]] = []
 
     def __call__(self, meth: str, *args, **kwargs):
+        """Append a method invocation to the script."""
         self.steps.append((meth, args, kwargs))
 
 
 class ScriptRegistry:
+    """Tracks scriptable methods that managers expose to the scripting API."""
+
     avoided_names = ['sentinel', 'send_ipc']
+
     def __init__(self):
+        # Mapping of script-name -> (class name, attribute name, bound/unbound callable)
         self._methods: dict[str, tuple[str, str, Callable]] = {}
 
     def __call__(self, meth_str: str) -> tuple[str, str, Callable]:
+        """Return the registered callable for ``meth_str``.
+
+        Raises:
+            ValueError: If ``meth_str`` has not been registered.
+        """
+
         if meth_str not in self._methods:
             raise ValueError(f"Script method {meth_str} is not registered.")
         return self._methods[meth_str]
 
     def register_class_methods(self, cls):
+        """Inspect ``cls`` for scriptable methods and add them to the registry."""
+
         cls_name = self.get_class_name(cls)
         meth_names = dir(cls)
         for meth_name in meth_names:
@@ -54,6 +85,13 @@ class ScriptRegistry:
             self._methods[meth._script_str] = (cls_name, meth_name, meth)
 
     def check_script(self, script: list[tuple[str, tuple, dict]]):
+        """Validate a compiled script before it is executed.
+
+        Checks include verifying that the method exists, arguments bind against
+        the callable signature, and that reserved keywords such as ``wait`` have
+        the correct types.
+        """
+
         for step in script:
             step_meth: str = step[0]
             step_args: tuple = step[1]
@@ -79,6 +117,8 @@ class ScriptRegistry:
 
     @staticmethod
     def get_class_name(cls):
+        """Return the class name for a class or instance."""
+
         if isinstance(cls, type):
             return cls.__name__
         else:
@@ -86,6 +126,8 @@ class ScriptRegistry:
 
 
 class ScriptStatus(StrEnum):
+    """Lifecycle stages of a script managed by :class:`ScriptManager`."""
+
     EMPTY = 'Empty'
     LOADED = 'Loaded'
     RUNNING = 'Running'
@@ -95,6 +137,7 @@ class ScriptStatus(StrEnum):
 
 
 class ScriptManager(ManagerProcessBase):
+    """Process that coordinates script execution and forwards IPC messages."""
 
     def __init__(self):
         super().__init__()
@@ -108,9 +151,17 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_start: float = 0
 
     def setup(self):
+        """Initialise process state.
+
+        Currently no special setup is required, but the hook is retained for
+        symmetry with other :class:`ManagerProcessBase` implementations.
+        """
+
         pass
 
     def do_main_loop(self):
+        """Main loop executed by the process infrastructure."""
+
         if self._script_status == ScriptStatus.RUNNING:
             # Check if were waiting on a previous step to finish
             if self._script_waiting:
@@ -129,6 +180,8 @@ class ScriptManager(ManagerProcessBase):
                 self._set_script_status(ScriptStatus.FINISHED)
 
     def start_script(self):
+        """Start the currently loaded script from the beginning."""
+
         if self._script_status == ScriptStatus.EMPTY:
             warn('Cannot start script. A script is not loaded.')
             return
@@ -140,18 +193,29 @@ class ScriptManager(ManagerProcessBase):
         self._set_script_status(ScriptStatus.RUNNING)
 
     def pause_script(self):
+        """Pause the running script."""
+
         if self._script_status != ScriptStatus.RUNNING:
             warn('Cannot pause script. A script is not running.')
             return
         self._set_script_status(ScriptStatus.PAUSED)
 
     def resume_script(self):
+        """Resume a script that was previously paused."""
+
         if self._script_status != ScriptStatus.PAUSED:
             warn('Cannot resume script. The script is not paused.')
             return
         self._set_script_status(ScriptStatus.RUNNING)
 
     def load_script(self, path):
+        """Load and validate a script from ``path``.
+
+        The script file is executed in an isolated namespace. Exactly one
+        :class:`Script` instance must be created in that file; its recorded
+        steps are copied locally after validation.
+        """
+
         if self._script_status == ScriptStatus.RUNNING:
             warn('Cannot load script while a script is running.')
             return
@@ -172,8 +236,8 @@ class ScriptManager(ManagerProcessBase):
                 script = None
                 for item in namespace.values():
                     if isinstance(item, Script):
-                        script = item.steps # noqa
-                        n_scripts_found +=1
+                        script = item.steps  # noqa: retain type narrow
+                        n_scripts_found += 1
                 if n_scripts_found == 0:
                     warn("No Script instance found in script file.")
                 elif n_scripts_found > 1:
@@ -194,6 +258,8 @@ class ScriptManager(ManagerProcessBase):
         self._set_script_status(status)
 
     def _execute_script_step(self, step: tuple[str, tuple, dict]):
+        """Dispatch a single script step to its owning manager."""
+
         step_name: str = step[0]
         step_args: tuple = step[1]
         step_kwargs: dict = step[2]
@@ -211,21 +277,23 @@ class ScriptManager(ManagerProcessBase):
         self.send_ipc(message)
 
     def update_waiting(self):
-        """ Lets the script resume after waiting for a previous step to finish."""
+        """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False
 
     @registerwithscript('sleep')
     def start_sleep(self, duration: float):
-        """ Pauses the script for a given duration (in seconds) """
+        """Pause the script for ``duration`` seconds."""
         self._script_sleep_duration = duration
         self._script_sleep_start = time()
 
     def _do_sleep(self):
+        """Check whether the scripted sleep period has elapsed."""
         if time() - self._script_sleep_start >= self._script_sleep_duration:
             self._script_sleep_duration = None
             self.update_waiting()
 
     def _set_script_status(self, status):
+        """Notify the GUI that the script status has changed."""
         # local import to avoid circular imports
         from magscope.gui import WindowManager
         self._script_status = status
