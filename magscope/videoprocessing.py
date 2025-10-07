@@ -117,13 +117,20 @@ class VideoWorker(Process):
         self._tracks_buffer: MatrixBuffer | None = None
 
     def run(self):
-        self._video_buffer = VideoBuffer(
+        self._profiles_buffer = MatrixBuffer(
             create=False,
-            locks=self._locks)
+            name='ProfilesBuffer',
+            locks=self._locks,
+        )
         self._tracks_buffer = MatrixBuffer(
             create=False,
             name='TracksBuffer',
-            locks=self._locks)
+            locks=self._locks,
+        )
+        self._video_buffer = VideoBuffer(
+            create=False,
+            locks=self._locks,
+        )
 
         while True:
             task = self._tasks.get()
@@ -239,6 +246,30 @@ class VideoWorker(Process):
 
             tracks = np.column_stack((t, x, y, z, b, roi_x, roi_y))
 
+            # ------- Save Profiles (with padding) to RAM ------- #
+
+            # The buffer has two extra columns for the timestamp and bead-ID
+            expected_profiles_width = self._profiles_buffer.shape[1] - 2
+            pad_profiles = profiles
+
+            # If the profiles are shorter than the buffer, pad them with "nan"
+            if pad_profiles.shape[0] < expected_profiles_width:
+                pad_profiles = np.pad(
+                    pad_profiles,
+                    ((0, expected_profiles_width - pad_profiles.shape[0]), (0, 0)),
+                    mode='constant',
+                    constant_values=np.nan
+                )
+            # If the profiles are longer than the buffer, truncate them
+            elif pad_profiles.shape[0] > expected_profiles_width:
+                pad_profiles = pad_profiles[:expected_profiles_width, :]
+
+            # Join the time and bead-id to the profiles
+            pad_profiles = np.vstack((t, b, pad_profiles))
+
+            # Write the profile data(transposed) to the buffer
+            self._profiles_buffer.write(pad_profiles.T)
+
             return tracks, profiles
 
         def process_mode_tracks():
@@ -261,7 +292,7 @@ class VideoWorker(Process):
                 # Calculate tracks
                 tracks_data, profiles = calculate_tracks(n_images, stack_rois, timestamps)
 
-                # Delete the stack from memory ASAP to make memory available
+                # Store tracks in RAM
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk

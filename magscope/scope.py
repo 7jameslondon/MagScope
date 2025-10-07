@@ -138,7 +138,7 @@ class MagScope:
             create=True,
             locks=self.locks,
             name='ProfilesBuffer',
-            shape=(1000, self.settings['bead roi width'])
+            shape=(1000, 2+self.settings['bead roi width'])
         )
         self.tracks_buffer = MatrixBuffer(
             create=True,

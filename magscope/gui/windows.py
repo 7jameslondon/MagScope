@@ -62,6 +62,7 @@ class WindowManager(ManagerProcessBase):
         self.plots_widget: QLabel
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
+        self.selected_bead = 0
         self._timer: QTimer | None = None
         self._video_buffer_last_index: int = 0
         self.video_viewer: VideoViewer | None = None

@@ -61,6 +61,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._magscope_quitting: EventType | None = None
         self.name: str = type(self).__name__ # Read-only
         self._pipe: Connection | None = None # Pipe back to the 'MagScope' for inter-process communication
+        self.profiles_buffer: MatrixBuffer | None = None
         self._quitting: EventType = Event()
         self._quit_requested: bool = False # A flag to prevent repeated calls to 'quit()' after one process asks the others to quit
         self._running: bool = False
@@ -91,13 +92,20 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         if self._magscope_quitting is None:
             raise RuntimeError(f'{self.name} has no magscope_quitting event')
 
-        self.video_buffer = VideoBuffer(
+        self.profiles_buffer = MatrixBuffer(
             create=False,
-            locks=self.locks)
+            locks=self.locks,
+            name='ProfilesBuffer',
+        )
         self.tracks_buffer = MatrixBuffer(
             create=False,
             locks=self.locks,
-            name='TracksBuffer')
+            name='TracksBuffer',
+        )
+        self.video_buffer = VideoBuffer(
+            create=False,
+            locks=self.locks,
+        )
 
         self.setup()
 

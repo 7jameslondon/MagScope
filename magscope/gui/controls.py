@@ -1,5 +1,8 @@
 from __future__ import annotations
 import datetime
+import traceback
+
+from cupy import isfinite
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
@@ -432,6 +435,7 @@ class PlotSettingsPanel(ControlPanelBase):
         try: value = int(value)
         except: value = -1
         self.manager.plot_worker.selected_bead_signal.emit(value)
+        self.manager.selected_bead = value
 
     def reference_bead_callback(self, value):
         value = self.reference_bead.lineedit.text()
@@ -491,6 +495,13 @@ class ProfilePanel(ControlPanelBase):
         )
         self.layout().addWidget(self.enable)
 
+        # Selected bead
+        row = QHBoxLayout()
+        self.layout().addLayout(row)
+        row.addWidget(QLabel('Selected bead:'))
+        self.selected_bead_label = QLabel('')
+        row.addWidget(self.selected_bead_label)
+
         # Figure
         self.figure = Figure(dpi=100, facecolor='#1e1e1e')
         self.canvas = FigureCanvas(self.figure)
@@ -514,20 +525,53 @@ class ProfilePanel(ControlPanelBase):
         if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
             return
 
-        tracks = self.manager.tracks_buffer.peak_unsorted()
+        # Get the selected bead
+        selected_bead = self.manager.selected_bead
+        if selected_bead == -1:
+            self.selected_bead_label.setText('')
+        else:
+            self.selected_bead_label.setText(str(selected_bead))
 
-        # Get data
-        x = np.random.rand(100)
-        y = np.random.rand(100)
+        # Get timestamps, bead-IDs and profiles from buffer data
+        data = self.manager.profiles_buffer.peak_unsorted()
+        t = data[:, 0]
+        b = data[:, 1]
+        p = data[:, 2:]
 
-        # Update the plot
-        self.line.set_xdata(x)
-        self.line.set_ydata(y)
-        self.axes.set_xlim(0, max(x))
-        self.axes.set_ylim(0, max(y))
+        # Get data from the selected bead
+        sel = b == selected_bead
+        t = t[sel]
+        p = p[sel]
+
+        # Check there is data
+        if len(t) > 0:
+
+            # Find the most recent timepoints
+            p = p[np.argmax(t), :]
+
+            # Remove non-finite values from the profile (such as "nan")
+            p = p[np.isfinite(p)]
+
+            # Create array of radial distances
+            r = np.arange(len(p))
+
+            # Update the plot data
+            self.line.set_xdata(r)
+            self.line.set_ydata(p)
+
+            # Update the plot axis limits (if the plot has data)
+            if len(p) > 0:
+                self.axes.set_xlim(0, max(r))
+                self.axes.set_ylim(0, max(p))
+        else:
+            self.line.set_xdata([])
+            self.line.set_ydata([])
+
+        # Re-draw the plot
         self.canvas.draw()
 
     def clear(self):
+        self.selected_bead_label.setText('')
         self.line.set_xdata([])
         self.line.set_ydata([])
         self.canvas.draw()
