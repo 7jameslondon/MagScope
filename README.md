@@ -8,6 +8,22 @@ Test your camera by running the test_camera.py test in the \test directory.
 To setup a camera you must create a new subclass of CameraABC (see camera.py) and implement the required attributes and methods.
 You must then set the variable ImplmentedCamera in camera.py to the name of your camera.
 
+## Shared memory data buffers
+The ``magscope.datatypes`` module contains the shared-memory backed buffers that
+processes use to exchange data efficiently.
+
+* ``VideoBuffer`` stores image stacks and their capture timestamps. Create it in
+  the producer process with the desired shape information and share the
+  resulting metadata with consumer processes that instantiate the class with
+  ``create=False``.
+* ``MatrixBuffer`` stores 2D numeric data such as bead positions or motor
+  telemetry. The number of columns is fixed when the buffer is created, while
+  the number of rows written at a time can vary up to the buffer capacity.
+
+Both buffers expect locks from ``multiprocessing`` to be passed in so reads
+and writes can be coordinated safely. See ``magscope/datatypes.py`` for detailed
+docstrings covering their parameters and usage patterns.
+
 ## Force Calibrants (optional)
 The force calibrant should be a text file (example "force cal.txt"). The header line can be commented out with a '#'.
 Otherwise, the file should contain a list relating the motor position in mm and the force in pN.
