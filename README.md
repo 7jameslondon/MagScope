@@ -46,18 +46,39 @@ For example this might be a motor that stores the 3 values at each time point su
 * Implement `fetch` which add an entry to the buffer when automatically called by the program.
 
 ## Scripting
-Valid functions:
-* 'print' - Print a message to the GUI
-* 'sleep' - Do nothing for a fixed amount of seconds
-* 'set_acquisition_on' - Whether frames are sent for processing
-* 'set_acquisition_dir' - The directory to save data to
-* 'set_acquisition_dir_on' - Whether to save data
-* 'set_acquisition_mode' - Set the mode such as tracking or video recording
+MagScope ships with a lightweight scripting runtime that allows you to queue
+up GUI interactions and hardware commands for repeatable experiments. A script
+is simply an instance of `magscope.Script` where each call records a step to be
+executed by the `ScriptManager` process:
 
-An example script is included exxample_script.py
+```python
+import magscope
 
-You can add your own methods to the scripting system with a decorator.
-`@registerwithscript(func_str)` where `func_str` is the first argument when calling a function in a script.
+script = magscope.Script()
+script('set_acquisition_mode', magscope.AcquisitionMode.CROP_VIDEO)
+script('sleep', 2.0)  # wait for 2 seconds before running the next command
+script('print', 'Ready for capture!')
+```
+
+Save the script to a `.py` file and load it from the GUI to run it. The manager
+validates each step to ensure the referenced method exists and that the
+provided arguments match the registered callable.
+
+Built-in scriptable functions include:
+
+* `print` – display a message in the GUI log
+* `sleep` – pause script execution for a fixed number of seconds
+* `set_acquisition_on` – toggle processing of incoming frames
+* `set_acquisition_dir` – choose the directory used to save acquisitions
+* `set_acquisition_dir_on` – enable or disable saving data to disk
+* `set_acquisition_mode` – switch between modes such as tracking or video recording
+
+See `example_script.py` for a minimal working example.
+
+You can expose additional methods to scripts by decorating a manager method
+with `@registerwithscript('my_method_name')`. The string you provide becomes
+the first argument used when adding the step to a script, e.g.
+`script('my_method_name', ...)`.
 
 ## Adding your own process
 You can extened the `ManagerProcessBase` to create a seperate process to manage something more
