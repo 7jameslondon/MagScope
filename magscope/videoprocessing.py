@@ -235,7 +235,7 @@ class VideoWorker(Process):
             for bead_key, bead_value in bead_rois.items():
                 sel = b == bead_key
                 x[sel] = x[sel] + bead_value[0]
-                y[sel] = y[sel] + bead_value[3]
+                y[sel] = y[sel] + bead_value[2]
 
             # Convert x & y to nanometers
             x *= nm_per_px / magnification
