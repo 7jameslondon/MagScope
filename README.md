@@ -32,6 +32,46 @@ message-passing API and shared memory, while the GUI presents controls built on
 from `HardwareManagerBase`, letting custom devices participate in the same
 event loop and scripting hooks.
 
+```mermaid
+flowchart TD
+    subgraph Core Orchestrator
+        A[MagScope Main Process]
+    end
+
+    subgraph Shared Memory Buffers
+        VB[VideoBuffer]
+        MB[MatrixBuffer]
+    end
+
+    subgraph Manager Processes
+        CM[CameraManager]
+        BLM[BeadLockManager]
+        VPM[VideoProcessorManager]
+        SM[ScriptManager]
+        WM[WindowManager]
+    end
+
+    A -- spawn & configure --> CM
+    A -- spawn & configure --> BLM
+    A -- spawn & configure --> VPM
+    A -- spawn & configure --> SM
+    A -- spawn & configure --> WM
+
+    CM -- frames --> VB
+    VPM -- processed frames --> VB
+    BLM -- bead positions --> MB
+    SM -- experiment data --> MB
+
+    VB -. read/update .-> VPM
+    VB -. display frames .-> WM
+    MB -. analysis results .-> WM
+
+    WM -- GUI commands --> SM
+    SM -- IPC messages --> CM
+    SM -- IPC messages --> BLM
+    SM -- IPC messages --> VPM
+```
+
 ## Settings
 The settings.py module is a quick an easy place to store important user settings.
 Of notes is the OBJECTIVE_MAG setting which will evvect the coversion of pixels to nanometers.
