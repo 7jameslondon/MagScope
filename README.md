@@ -155,6 +155,46 @@ required Qt libraries were installed during the dependency step. When you are
 ready to connect real instruments you can instead run `python main.py` and
 configure the hardware classes described later in this document.
 
+```mermaid
+flowchart TD
+    subgraph Core Orchestrator
+        A[MagScope Main Process]
+    end
+
+    subgraph Shared Memory Buffers
+        VB[VideoBuffer]
+        MB[MatrixBuffer]
+    end
+
+    subgraph Manager Processes
+        CM[CameraManager]
+        BLM[BeadLockManager]
+        VPM[VideoProcessorManager]
+        SM[ScriptManager]
+        WM[WindowManager]
+    end
+
+    A -- spawn & configure --> CM
+    A -- spawn & configure --> BLM
+    A -- spawn & configure --> VPM
+    A -- spawn & configure --> SM
+    A -- spawn & configure --> WM
+
+    CM -- frames --> VB
+    VPM -- processed frames --> VB
+    BLM -- bead positions --> MB
+    SM -- experiment data --> MB
+
+    VB -. read/update .-> VPM
+    VB -. display frames .-> WM
+    MB -. analysis results .-> WM
+
+    WM -- GUI commands --> SM
+    SM -- IPC messages --> CM
+    SM -- IPC messages --> BLM
+    SM -- IPC messages --> VPM
+```
+
 ## Settings
 The settings.py module is a quick an easy place to store important user settings.
 Of notes is the OBJECTIVE_MAG setting which will evvect the coversion of pixels to nanometers.
