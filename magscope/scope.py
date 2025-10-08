@@ -1,3 +1,47 @@
+"""Core orchestration for the MagScope application.
+
+This module provides the :class:`MagScope` class, the top-level coordinator that
+bootstraps every subsystem required to run the magnetic tweezer and microscopy
+stack.  ``MagScope`` is responsible for:
+
+* Instantiating each manager process (camera, bead lock, GUI, scripting, video
+  processing, and optional hardware integrations).
+* Loading configuration from YAML, sharing it across processes, and creating
+  the inter-process communication (IPC) primitives required for collaboration.
+* Owning the main event loop that relays :class:`~magscope.utils.Message`
+  objects between processes and supervises orderly shutdown.
+
+The class operates as a façade around a fleet of ``multiprocessing``
+``Process`` subclasses.  ``MagScope.start`` prepares shared memory buffers,
+registers available scripting hooks, and then enters a loop forwarding IPC
+messages until a quit command is received.
+
+Example
+-------
+Run the simulated scope with its default managers::
+
+    >>> from magscope.scope import MagScope
+    >>> scope = MagScope()
+    >>> scope.start()
+
+For headless automation you can add hardware adapters and GUI panels before
+invoking :meth:`MagScope.start`::
+
+    >>> scope.add_hardware(custom_hardware_manager)
+    >>> scope.add_control(CustomPanel, column=0)
+    >>> scope.start()
+
+``MagScope`` constructs the following high-level pipeline:
+
+``CameraManager`` → ``VideoBuffer`` → ``VideoProcessorManager`` → ``WindowManager``
+and
+``BeadLockManager`` → ``MatrixBuffer`` → ``WindowManager``
+
+Every manager receives shared locks, pipes, and configuration from the main
+process so that real-time video frames, bead tracking data, and scripted events
+remain synchronized.
+"""
+
 from ctypes import c_uint8
 from multiprocessing import Event, freeze_support, Pipe, Lock, Value
 import numpy as np
@@ -22,6 +66,15 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
 
 class MagScope:
+    """Main entry point for coordinating all MagScope subsystems.
+
+    The class holds references to every manager process, shared buffer, and IPC
+    primitive used by the application.  ``MagScope`` can be instantiated on its
+    own and started immediately, or it can be configured by adding hardware
+    managers, GUI controls, or time-series plots before calling
+    :meth:`start`.
+    """
+
     def __init__(self):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
@@ -46,6 +99,20 @@ class MagScope:
         self.window_manager = WindowManager()
 
     def start(self):
+        """Launch all managers and enter the main IPC loop.
+
+        The startup sequence performs the following steps:
+
+        1. Collect every manager (built-in and user-supplied hardware) and
+           assign them a shared :attr:`processes` mapping for bookkeeping.
+        2. Load configuration values, prepare shared memory buffers, locks,
+           pipes, and register scriptable methods.
+        3. Spawn each manager process and then forward IPC messages until a
+           quit signal is observed.
+
+        When a quit message is received the method joins every process before
+        returning control to the caller.
+        """
         if self._running:
             warn('MagScope is already running')
         self._running = True
@@ -84,6 +151,7 @@ class MagScope:
             print(name, 'ended.', flush=True)
 
     def receive_ipc(self):
+        """Poll every IPC pipe and relay messages between processes."""
         for pipe in self.pipes.values():
             # Check if this pipe has a message
             if not pipe.poll():
@@ -120,7 +188,8 @@ class MagScope:
                 warn(f'Unknown pipe {message.to} with {message}')
 
     def _setup_shared_resources(self):
-        # Create and share: locks, pipes, flags, types, ect
+        """Create and distribute shared locks, pipes, buffers, and metadata."""
+        # Create and share: locks, pipes, flags, types, etc.
         camera_type = type(self.camera_manager.camera)
         hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
         for name, proc in self.processes.items():
@@ -164,6 +233,7 @@ class MagScope:
             )
 
     def _setup_locks(self):
+        """Instantiate per-buffer locks and make them available to processes."""
         self.lock_names.extend(self._hardware.keys())
         for name in self.lock_names:
             self.locks[name] = Lock()
@@ -171,22 +241,26 @@ class MagScope:
             proc.locks = self.locks
 
     def _setup_pipes(self):
+        """Create duplex pipes that allow processes to exchange messages."""
         for name, proc in self.processes.items():
             pipe = Pipe()
             self.pipes[name] = pipe[0]
             proc._pipe = pipe[1]
 
     def _register_script_methods(self):
+        """Expose manager methods to the scripting subsystem."""
         self.script_manager.script_registry.register_class_methods(ManagerProcessBase)
         for proc in self.processes.values():
             self.script_manager.script_registry.register_class_methods(proc)
 
     def _get_default_settings(self):
+        """Load the project's default YAML configuration shipped with MagScope."""
         with open(self._default_settings_path, 'r') as f:
             settings = yaml.safe_load(f)
         return settings
 
     def _load_settings(self):
+        """Merge user overrides from :attr:`settings_path` into active settings."""
         if not self._settings_path.endswith('.yaml'):
             warn("Settings path must be a .yaml file")
         elif not os.path.exists(self._settings_path):
@@ -223,10 +297,13 @@ class MagScope:
                 pipe.send(Message(ManagerProcessBase, ManagerProcessBase.set_settings, value))
 
     def add_hardware(self, hardware: HardwareManagerBase):
+        """Register a hardware manager so its process launches with MagScope."""
         self._hardware[hardware.name] = hardware
 
     def add_control(self, control_type: type(ControlPanelBase), column: int):
+        """Schedule a GUI control panel to be added when the window manager starts."""
         self.window_manager.controls_to_add.append((control_type, column))
 
     def add_timeplot(self, plot: TimeSeriesPlotBase):
+        """Schedule a time-series plot for inclusion in the GUI at startup."""
         self.window_manager.plots_to_add.append(plot)
