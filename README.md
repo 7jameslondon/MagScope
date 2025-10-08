@@ -32,6 +32,15 @@ message-passing API and shared memory, while the GUI presents controls built on
 from `HardwareManagerBase`, letting custom devices participate in the same
 event loop and scripting hooks.
 
+## Documentation
+
+In-depth guides, diagrams, and usage examples now live in the
+[`docs/`](docs/) directory. Start with the
+[MagScope orchestrator overview](docs/scope.md) to learn how `MagScope.start()`
+wires together managers, shared memory, and inter-process communication. The
+documentation site is powered by MkDocs; see [`docs/index.md`](docs/index.md)
+for instructions on building the site locally and contributing new pages.
+
 ## Quick Start Guide
 
 Use the following condensed checklist when you simply want to get the simulated

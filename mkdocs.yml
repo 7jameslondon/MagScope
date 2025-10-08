@@ -1,0 +1,25 @@
+site_name: MagScope Documentation
+site_description: Developer documentation for the MagScope experiment control platform.
+site_url: https://example.com/magscope
+repo_url: https://github.com/your-org/MagScope
+repo_name: your-org/MagScope
+docs_dir: docs
+nav:
+  - Home: index.md
+  - MagScope Orchestrator: scope.md
+theme:
+  name: material
+  palette:
+    scheme: slate
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.details
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-org/MagScope
