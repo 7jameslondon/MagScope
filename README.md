@@ -1,3 +1,37 @@
+## Project Overview
+
+MagScope is a modular control and analysis environment for magnetic tweezer
+and microscopy experiments. It coordinates camera acquisition, bead tracking,
+and hardware automation so researchers can run reproducible experiments from a
+single desktop application. The toolkit is built to be extended – new cameras,
+actuators, and analysis routines can plug into the same orchestration layer
+without rewriting the core system.
+
+**Key features**
+
+* Multi-process managers for the camera, bead locking, video processing, GUI,
+  and scripting keep latency low while sharing data through high-performance
+  buffers.
+* Shared-memory `VideoBuffer` and `MatrixBuffer` structures make it easy to
+  stream image stacks and time-series telemetry between producers and
+  consumers.
+* A lightweight scripting runtime allows repeatable experiment protocols and
+  automated GUI interactions.
+* Extensible hardware and control panel base classes simplify adding custom
+  instruments or user interface panels.
+
+**High-level architecture**
+
+At runtime `MagScope` instantiates manager processes for each subsystem,
+including the `CameraManager`, `BeadLockManager`, `VideoProcessorManager`,
+`ScriptManager`, and `WindowManager`. The core `MagScope` orchestrator loads
+settings, allocates shared locks and buffers, and wires up inter-process pipes
+before launching the managers. Managers exchange work and status updates via a
+message-passing API and shared memory, while the GUI presents controls built on
+`ControlPanelBase` widgets and time-series plots. Hardware integrations derive
+from `HardwareManagerBase`, letting custom devices participate in the same
+event loop and scripting hooks.
+
 ## Settings
 The settings.py module is a quick an easy place to store important user settings.
 Of notes is the OBJECTIVE_MAG setting which will evvect the coversion of pixels to nanometers.
