@@ -1,7 +1,7 @@
 import numpy as np
-from PyQt6.QtCore import Qt, QPoint, QRectF, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QFont
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, pyqtSignal
+from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QFont, QPen
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem, QGraphicsItem
 import time
 
 class VideoViewer(QGraphicsView):
@@ -34,31 +34,19 @@ class VideoViewer(QGraphicsView):
 
     def plot(self, x, y, size):
         """
-        Plot crosshairs using numpy arrays of x and y positions.
-        Removes old crosshairs and plots new ones.
-
-        Args:
-            x: numpy array or list of x positions
-            y: numpy array or list of y positions
-            size: font size of the crosshairs
+        Plot precise, lightweight cross+circle markers at each (x, y).
         """
-        # Remove old crosshairs
         self.clear_crosshairs()
 
-        # Add new crosshairs
-        font = QFont('Arial', size)
-        font.setWeight(QFont.Weight.Thin)
-        qcolor = QColor('red')
+        color = QColor("red")
+        radius = size / 2
+        thickness = max(1.0, size / 10)
+        offset = 0.5
+
         for xi, yi in zip(x, y):
-            text = self.scene.addText('⊕')
-            text.setFont(font)
-            text.setDefaultTextColor(qcolor)
-
-            # Center the '+'
-            rect = text.boundingRect()
-            text.setPos(xi - rect.width() / 2, yi - rect.height() / 2)
-
-            self.crosshairs.append(text)
+            marker = CrossCircleItem(xi+offset, yi+offset, radius=radius, color=color, thickness=thickness)
+            self.scene.addItem(marker)
+            self.crosshairs.append(marker)
 
     def clear_crosshairs(self):
         """Remove all crosshairs"""
@@ -173,3 +161,32 @@ class VideoViewer(QGraphicsView):
                         event.position().toPoint()).toPoint()
                     self.clicked.emit(point)
         super().mouseReleaseEvent(event)
+
+class CrossCircleItem(QGraphicsItem):
+    """A lightweight, centered ⊕-style marker drawn with simple geometry."""
+    def __init__(self, x, y, radius=6.0, color=QColor("red"), thickness=1.0, fixed_size=True):
+        super().__init__()
+        self.radius = radius
+        self.color = color
+        self.thickness = thickness
+        self.setPos(x, y)
+
+        # Keeps marker size constant when zooming, optional
+        if fixed_size:
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+
+    def boundingRect(self):
+        r = self.radius + self.thickness
+        return QRectF(-r, -r, 2 * r, 2 * r)
+
+    def paint(self, painter, option, widget):
+        pen = QPen(self.color, self.thickness)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        r = int(self.radius)
+        # Circle outline
+        painter.drawEllipse(QPointF(0, 0), r, r)
+        # Crosshair lines
+        painter.drawLine(-r, 0, r, 0)
+        painter.drawLine(0, -r, 0, r)
