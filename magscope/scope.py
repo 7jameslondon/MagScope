@@ -46,6 +46,7 @@ from ctypes import c_uint8
 from multiprocessing import Event, freeze_support, Pipe, Lock, Value
 import numpy as np
 import os
+import sys
 from typing import TYPE_CHECKING
 from warnings import warn
 import yaml
@@ -167,7 +168,9 @@ class MagScope:
                 continue
 
             # Process the message
-            if message.to == ManagerProcessBase.__name__: # the message is to all processes
+            if message.to == 'MagScope':
+                self._handle_mag_scope_message(message)
+            elif message.to == ManagerProcessBase.__name__: # the message is to all processes
                 if message.meth == 'quit':
                     print('MagScope quitting ...')
                     self._quitting.set()
@@ -186,6 +189,20 @@ class MagScope:
                     self.pipes[message.to].send(message)
             else:
                 warn(f'Unknown pipe {message.to} with {message}')
+
+    def _handle_mag_scope_message(self, message: Message) -> None:
+        if message.meth == 'log_exception':
+            if len(message.args) >= 2:
+                proc_name, details = message.args[:2]
+            else:
+                proc_name, details = ('<unknown>', '')
+            print(
+                f'[{proc_name}] Unhandled exception in child process:\n{details}',
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            warn(f'Unknown MagScope message {message.meth} with {message.args}')
 
     def _setup_shared_resources(self):
         """Create and distribute shared locks, pipes, buffers, and metadata."""
