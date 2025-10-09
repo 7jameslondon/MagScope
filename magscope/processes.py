@@ -1,5 +1,7 @@
 from __future__ import annotations
 from abc import ABC, ABCMeta, abstractmethod
+import sys
+import traceback
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
 from typing import TYPE_CHECKING
@@ -85,33 +87,38 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         print(f'{self.name} is starting', flush=True)
         self._running = True
 
-        if self._pipe is None:
-            raise RuntimeError(f'{self.name} has no pipe')
-        if self.locks is None:
-            raise RuntimeError(f'{self.name} has no locks')
-        if self._magscope_quitting is None:
-            raise RuntimeError(f'{self.name} has no magscope_quitting event')
+        try:
+            if self._pipe is None:
+                raise RuntimeError(f'{self.name} has no pipe')
+            if self.locks is None:
+                raise RuntimeError(f'{self.name} has no locks')
+            if self._magscope_quitting is None:
+                raise RuntimeError(f'{self.name} has no magscope_quitting event')
 
-        self.profiles_buffer = MatrixBuffer(
-            create=False,
-            locks=self.locks,
-            name='ProfilesBuffer',
-        )
-        self.tracks_buffer = MatrixBuffer(
-            create=False,
-            locks=self.locks,
-            name='TracksBuffer',
-        )
-        self.video_buffer = VideoBuffer(
-            create=False,
-            locks=self.locks,
-        )
+            self.profiles_buffer = MatrixBuffer(
+                create=False,
+                locks=self.locks,
+                name='ProfilesBuffer',
+            )
+            self.tracks_buffer = MatrixBuffer(
+                create=False,
+                locks=self.locks,
+                name='TracksBuffer',
+            )
+            self.video_buffer = VideoBuffer(
+                create=False,
+                locks=self.locks,
+            )
 
-        self.setup()
+            self.setup()
 
-        while self._running:
-            self.do_main_loop()
-            self.receive_ipc()
+            while self._running:
+                self.do_main_loop()
+                self.receive_ipc()
+        except Exception as exc:
+            self._running = False
+            self._report_exception(exc)
+            raise
 
     @abstractmethod
     def setup(self):
@@ -180,3 +187,13 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
 
     def set_settings(self, settings: dict):
         self.settings = settings
+
+    def _report_exception(self, exc: BaseException) -> None:
+        error_details = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        error_message = f"{self.name} encountered an unhandled exception:\n{error_details}"
+        print(error_message, file=sys.stderr, flush=True)
+        try:
+            self.send_ipc(Message('MagScope', 'log_exception', self.name, error_details))
+        except Exception:
+            # The IPC pipe may already be unavailable; ensure we still surface the error locally.
+            pass
