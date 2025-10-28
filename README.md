@@ -1,3 +1,72 @@
+<h1 align="center">
+  MagScope
+<img src="https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/logo.png" width="300">
+</h1><br>
+
+[![PyPi](https://img.shields.io/pypi/v/magscope.svg)](https://pypi.org/project/magscope/)
+[![Docs](https://img.shields.io/readthedocs/magscope/latest.svg)](https://magscope.readthedocs.io/en/latest/)
+[![Paper](https://img.shields.io/badge/DOI-INSERTDOI-blue)](
+https://doi.org/DOI-INSERTDOI)
+[![Python package](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml/badge.svg)](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml)
+
+MagScope is a Python framework for live data acquisition and analysis in magnetic tweezers microscopy.
+
+* GUI (Graphical User Interface)
+* No setup required to give it a try
+* Easily extended to your setup
+* Fast, high-throughput, and high-resolution
+* Create simple scripts to automate data-collection and motor movment for long/complex experiments
+* CPU or GPU tracking of beads via [MagTrack](https://github.com/7jameslondon/MagTrack)
+
+## ⏳ Install
+### Pre-requisites
+* Python >=3.9
+* PyQt6
+* matplotlib
+* tifffile
+* PyYAML
+* NumPy >=1.26
+* SciPy >=1.11.1
+* MagTrack
+* (Optional, but needed for GPU acceleration) CuPy-CUDA12x >=13.0
+
+### Instructions
+```
+pip install magscope[gpu]
+```
+Or without CuPy
+```
+pip install magscope
+```
+Optional: For GPU acceleration on a computer with an NVIDIA CUDA GPU, you may need to install the CUDA Toolkit for CuPy. See details at https://docs.cupy.dev/en/stable/install.html
+
+## ⚒ Usage
+Start with the demo verions which include a simulated camera.
+```
+import magscope
+
+scope = magscope.MagScope()
+scope.start()
+```
+### More Examples
+Coming soon
+
+## 📖 Documentation
+View the full documentation at [magscope.readthedocs.io](https://magscope.readthedocs.io/en/latest/)
+
+## 💬 Support
+Report issues, make requests, and ask questions on the [GitHub issue tracker](https://github.com/7jameslondon/MagScope/issues)
+
+
+
+
+
+
+
+# OLD
+
+
+
 ## Project Overview
 
 MagScope is a modular control and analysis environment for magnetic tweezer
