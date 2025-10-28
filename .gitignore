@@ -1,5 +1,12 @@
-.idea/
-dev/
 *.log
-*.whl
 /magscope/settings.yaml
+.idea/
+build/
+dev/
+dev*
+dist/
+*.egg-info/
+*.whl
+__pycache__
+.vscode/
+*.ipynb*
