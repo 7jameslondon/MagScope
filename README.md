@@ -1,5 +1,4 @@
 <h1 align="center">
-  MagScope
 <img src="https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/logo.png" width="300">
 </h1><br>
 
