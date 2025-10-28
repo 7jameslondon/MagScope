@@ -10,10 +10,10 @@ readme = "README.md"
 authors = [
     {name = "James London", email = "7jameslondon@gmail.com" }
 ]
-requires-python = "=3.11"
+requires-python = "==3.11"
 classifiers = [
     "Programming Language :: Python :: 3.11",
-    "Operating System :: Windows",
+    "Operating System :: Microsoft :: Windows",
 ]
 license = "GPL-3.0"
 license-files = ["license"]
