@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magscope"
+description = "Live data acquisition and analysis for magnetic tweezers microscopy with only Python"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "James London", email = "7jameslondon@gmail.com" }
+]
+requires-python = "=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: Windows",
+]
+license = "GPL-3.0"
+license-files = ["license"]
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "tifffile",
+    "PyYAML",
+    "magtrack",
+    "PyQt6",
+]
+
+[project.optional-dependencies]
+cpu = []
+gpu = ["cupy-cuda12x>=13.0; sys_platform != 'darwin'"]
+
+[project.urls]
+Homepage = "https://github.com/7jameslondon/MagScope"
+Issues = "https://github.com/7jameslondon/MagScope/issues"
+
+[tool.setuptools]
+packages = ["magscope"]
