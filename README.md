@@ -53,7 +53,7 @@ Coming soon
 View the full documentation at [magscope.readthedocs.io](https://magscope.readthedocs.io/en/latest/)
 
 ## 💬 Support
-Report issues, make requests, and ask questions on the [GitHub issue tracker](https://github.com/7jameslondon/MagScope/issues)
+Report issues, make requests, and ask questions on the [GitHub issue tracker](https://github.com/7jameslondon/MagScope/issues)<br>
 Or email us at magtrackandmagscope@gmail.com
 
 
