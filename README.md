@@ -9,25 +9,25 @@
 
 MagScope is a Python framework for live data acquisition and analysis in magnetic tweezers microscopy.
 
-* GUI (Graphical User Interface)
-* No setup required to give it a try
-* Easily extended to your setup
 * Fast, high-throughput, and high-resolution
-* Create simple scripts to automate data-collection and motor movment for long/complex experiments
+* GUI (Graphical User Interface) - include a clean simple GUI
+* Demo - starts in demo mode so you can try it without microscope hardware connected
+* Automation - Create simple Python scripts to automate data-collection and motor movement for long/complex experiments.
+* Easily extended to your setup
 * CPU or GPU tracking of beads via [MagTrack](https://github.com/7jameslondon/MagTrack)
 
 ## ⏳ Install
 ### Pre-requisites
 * Python >=3.11
 * [MagTrack](https://github.com/7jameslondon/MagTrack)
-* NumPy >=1.26
-* SciPy >=1.11.1
-* matplotlib
-* tifffile
-* PyYAML
-* PyQt6
-* (Optional, but needed for GPU acceleration) CuPy-CUDA12x >=13.0
-* Windows or Linux or MacOS (MacOS does not support NVIDIA GPU acceleration)
+* [NumPy](https://numpy.org/) >=1.26
+* [SciPy](https://scipy.org/) >=1.11.1
+* [matplotlib](https://matplotlib.org/)
+* [tifffile](https://github.com/cgohlke/tifffile/)
+* [PyYAML](https://pyyaml.org/)
+* [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
+* (Optional, but needed for GPU acceleration) [CuPy-CUDA12x](https://cupy.dev/) >=13.0
+* Windows Only (Magscope has not been thoroughly tested on MacOS or Linux, it may or may not work)
 * MagTrack can run on a CPU or GPU. But GPU execution requires a CUDA-compliant GPU with the CUDA Toolkit installed. This is free and easy to install for most NVIDIA GPUs.
 
 ### Instructions
