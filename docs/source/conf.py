@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 project = 'MagScope'
 copyright = '2025, James London'
 author = 'James London'
-release = '0.1.1'
+release = '0.1.2'
 
 extensions = [
     "sphinx.ext.autodoc",
