@@ -1,4 +1,3 @@
-import uuid
 import unittest
 
 import numpy as np
@@ -142,7 +141,7 @@ class TestVideoBuffer(VideoBufferTestCase):
 
 class MatrixBufferTestCase(unittest.TestCase):
     def setUp(self):
-        self.name = f"MatrixBuffer-{uuid.uuid4()}"
+        self.name = "MatrixBuffer-Test"
         self.locks = {self.name: Lock()}
         self.buffer = MatrixBuffer(
             create=True,
