@@ -4,22 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "magscope"
-description = "Live data acquisition and analysis for magnetic tweezers microscopy with only Python"
+description = "Python framewordk for live data acquisition and analysis in magnetic tweezers microscopy"
 version = "0.1.0"
 readme = "README.md"
 authors = [
     {name = "James London", email = "7jameslondon@gmail.com" }
 ]
-requires-python = "==3.11"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: Microsoft :: Windows",
 ]
 license = "GPL-3.0"
 license-files = ["license"]
 dependencies = [
-    "numpy",
-    "scipy",
+    "numpy>=1.26",
+    "scipy>=1.11.1",
     "matplotlib",
     "tifffile",
     "PyYAML",
