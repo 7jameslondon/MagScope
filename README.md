@@ -3,7 +3,7 @@
 </h1><br>
 
 [![PyPi](https://img.shields.io/pypi/v/magscope.svg)](https://pypi.org/project/magscope/)
-[![Docs](https://img.shields.io/readthedocs/magscope/latest.svg)](https://magscope.readthedocs.io/en/latest/)
+[![Docs](https://img.shields.io/readthedocs/magscope/latest.svg)](https://magscope.readthedocs.io)
 [![Paper](https://img.shields.io/badge/DOI-10.1101/2025.10.31.685671-blue)](https://doi.org/10.1101/2025.10.31.685671)
 [![Python package](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml/badge.svg)](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml)
 
@@ -52,7 +52,7 @@ scope.start()
 Coming soon
 
 ## 📖 Documentation
-View the full documentation at [magscope.readthedocs.io](https://magscope.readthedocs.io/en/latest/)
+View the full documentation at [magscope.readthedocs.io](https://magscope.readthedocs.io)
 
 ## 💬 Support
 Report issues, make requests, and ask questions on the [GitHub issue tracker](https://github.com/7jameslondon/MagScope/issues)<br>

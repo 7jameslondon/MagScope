@@ -7,8 +7,8 @@ MagScope Documentation
    :target: https://pypi.org/project/magscope/
    :alt: PyPI
 
-.. |docs| image:: https://img.shields.io/readthedocs/magscope/stable.svg
-   :target: https://magscope.readthedocs.io/en/stable/
+.. |docs| image:: https://img.shields.io/readthedocs/magscope/latest.svg
+   :target: https://magscope.readthedocs.io
    :alt: Docs
 
 .. |doi| image:: https://img.shields.io/badge/DOI-10.1101/2025.10.31.685671-blue
