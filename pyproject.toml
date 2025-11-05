@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "magscope"
-description = "Python framewordk for live data acquisition and analysis in magnetic tweezers microscopy"
+description = "Python framework for live data acquisition and analysis in magnetic tweezers microscopy"
 version = "0.1.0"
 readme = "README.md"
 authors = [
