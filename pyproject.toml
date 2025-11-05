@@ -51,4 +51,4 @@ Homepage = "https://github.com/7jameslondon/MagScope"
 Issues = "https://github.com/7jameslondon/MagScope/issues"
 
 [tool.setuptools]
-packages = ["magscope"]
+packages = ["magscope", "magscope.*"]
