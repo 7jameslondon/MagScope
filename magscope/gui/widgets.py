@@ -122,6 +122,7 @@ class LabeledCheckbox(QWidget):
             self.checkbox.toggled.connect(callback) # type: ignore
         if widths[1] > 0:
             self.checkbox.setFixedWidth(widths[1])
+        self.checkbox.setMinimumWidth(20)
         self.layout.addWidget(self.checkbox, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.layout.addStretch(1)

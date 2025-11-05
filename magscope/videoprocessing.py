@@ -1,5 +1,4 @@
 from __future__ import annotations
-import cupy as cp
 import traceback
 from multiprocessing import Process, Queue, Lock
 import numpy as np
@@ -7,11 +6,14 @@ import os
 import tifffile
 from typing import TYPE_CHECKING
 
+from magtrack import auto_conv_multiline_sub_pixel
+
 from magscope.datatypes import VideoBuffer, MatrixBuffer
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
 import magtrack
+from magtrack._cupy import cp, is_cupy_available
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
@@ -206,10 +208,10 @@ class VideoWorker(Process):
             stack_rois_reshaped = stack_rois.reshape(roi_width, roi_width, n_rois * n_images)
 
             with self._gpu_lock:
-                y, x, z, profiles = magtrack.stack_to_xyzp(
+                y, x, z, profiles = magtrack.stack_to_xyzp_advanced(
                     stack_rois_reshaped,
                     zlut,
-                    auto_conv_multiline_para_fit={
+                    auto_conv_multiline_sub_pixel={
                         'n_local': 7,
                         'line_ratio': 0.1
                     },
@@ -218,11 +220,12 @@ class VideoWorker(Process):
                         'rmax': 0.25,
                         'gaus_factor': 4.
                     },
-                    lookup_z_para_fit={
+                    lookup_z={
                         'n_local': 7
                     })
                 # TODO: Might be too slow
-                cp.get_default_memory_pool().free_all_blocks()
+                if is_cupy_available():
+                    cp.get_default_memory_pool().free_all_blocks()
 
             # Calculate bead indexes (b)
             b = np.tile(np.array(list(bead_rois.keys())).astype(np.float64), n_images)

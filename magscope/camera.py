@@ -275,6 +275,7 @@ class DummyCamera(CameraBase):
 
         self.fake_settings[name] = value
 
+
 class DummyCameraFast(CameraBase):
     width = 1280
     height = 560

@@ -2,7 +2,6 @@ from __future__ import annotations
 import datetime
 import traceback
 
-from cupy import isfinite
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
