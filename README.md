@@ -27,7 +27,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 * [PyYAML](https://pyyaml.org/)
 * [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
 * (Optional, but needed for GPU acceleration) [CuPy-CUDA12x](https://cupy.dev/) >=13.0
-* Windows Only (Magscope has not been thoroughly tested on MacOS or Linux, it may or may not work)
+* Windows is preferred (Magscope can run on MacOS or Linux, but it has not been tested thoroughly)
 * MagTrack can run on a CPU or GPU. But GPU execution requires a CUDA-compliant GPU with the CUDA Toolkit installed. This is free and easy to install for most NVIDIA GPUs.
 
 ### Instructions
