@@ -51,4 +51,5 @@ Homepage = "https://github.com/7jameslondon/MagScope"
 Issues = "https://github.com/7jameslondon/MagScope/issues"
 
 [tool.setuptools]
-packages = ["magscope", "magscope.*"]
+packages = { find = { include = ["magscope", "magscope.*"] } }
+include-package-data = true
