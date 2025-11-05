@@ -1,5 +1,5 @@
 <h1 align="center">
-<img src="https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/logo.png" width="300">
+<img src="https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/logo.png" width="300">
 </h1><br>
 
 [![PyPi](https://img.shields.io/pypi/v/magscope.svg)](https://pypi.org/project/magscope/)
