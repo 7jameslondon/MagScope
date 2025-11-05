@@ -1,8 +1,0 @@
-cupy
-matplotlib
-numpy
-PyQt6
-scipy
-tifffile
-PyYAML
-magtrack
