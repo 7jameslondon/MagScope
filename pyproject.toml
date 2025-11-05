@@ -30,6 +30,9 @@ dependencies = [
 [project.optional-dependencies]
 cpu = []
 gpu = ["cupy-cuda12x>=13.0; sys_platform != 'darwin'"]
+zaber = ["zaber_motion"]
+pi = ["PIPython"]
+harvesters = ["harvesters"]
 
 [project.urls]
 Homepage = "https://github.com/7jameslondon/MagScope"
