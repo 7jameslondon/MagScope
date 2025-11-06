@@ -1,3 +1,5 @@
+# python -m sphinx -b html docs/source docs/_build/html
+
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 

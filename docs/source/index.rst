@@ -32,7 +32,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       :octicon:`rocket;3rem;sd-text-info`
 
-      How to install.
+      How to install and get the demo running.
 
    .. grid-item-card:: User Guide
       :link: user_guide
@@ -42,17 +42,17 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       :octicon:`book;3rem;sd-text-success`
 
-      Examples and tips to setup MagScope with your own microscope.
+      How to use MagScope
 
-   .. grid-item-card:: API Reference
-      :link: api/index
+   .. grid-item-card:: Customization Guide
+      :link: custom_guide
       :link-type: doc
       :text-align: center
       :shadow: md
 
-      :octicon:`code;3rem;sd-text-primary`
+      :octicon:`gear;3rem;sd-text-secondary`
 
-      Full module documentation.
+      How to hookup your microscope with MagScope
 
    .. grid-item-card:: GitHub
       :link: https://github.com/7jameslondon/MagScope
@@ -63,3 +63,24 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :octicon:`mark-github;3rem;sd-text-dark`
 
       Source code, issues, and releases.
+
+   .. grid-item-card:: (Advanced) Development guide
+      :link: dev_guide
+      :link-type: doc
+      :text-align: center
+      :shadow: md
+
+      :octicon:`tools;3rem;sd-text-dark`
+
+      How to MagScope works behind the scenes and how to make advanced customizations
+
+   .. grid-item-card:: (Advanced) API Reference
+      :link: api/index
+      :link-type: doc
+      :text-align: center
+      :shadow: md
+
+      :octicon:`code;3rem;sd-text-dark`
+
+      Full module documentation.
+

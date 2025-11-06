@@ -1,7 +1,7 @@
 *.log
 /magscope/settings.yaml
 .idea/
-build/
+*build/
 dev/
 dev*
 dist/
