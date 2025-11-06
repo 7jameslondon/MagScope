@@ -1,6 +1,6 @@
-bead roi width: 128
+bead roi width: 50
 
-magnification: 100
+magnification: 1
 
 video processors n: 3
 video buffer n stacks: 5
