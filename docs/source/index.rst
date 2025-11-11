@@ -87,5 +87,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 .. toctree::
    :hidden:
 
+   getting_started
    user_guide
-
+   custom_guide
+   dev_guide

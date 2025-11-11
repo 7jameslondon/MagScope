@@ -46,11 +46,11 @@ For a script-driven workflow, the repository includes helpers that mirror the in
 GUI
 ---
 
-.. image:: ../assets/Open-Close Panel v1.gif
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Open-Close_Panel_v1.gif
    :alt: Demonstration of opening and closing a GUI panel in MagScope
    :align: center
 
-The GUI presents panels for camera feeds, plots, and controls. Use the window manager buttons to reveal or hide panels as needed.
+Panels for each set of controls can be hidden or revealed by clicking on the panel's title.
 
 What to Explore Next
 --------------------
