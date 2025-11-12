@@ -34,7 +34,14 @@ from magscope.gui import (
     ControlPanelBase,
     ResizableLabel,
 )
-from magscope.gui.controls import PlotSettingsPanel, ZLockPanel, XYLockPanel, ZLUTGenerationPanel, ProfilePanel
+from magscope.gui.controls import (
+    PlotSettingsPanel,
+    ZLockPanel,
+    XYLockPanel,
+    ZLUTGenerationPanel,
+    ProfilePanel,
+    HelpPanel,
+)
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope._logging import get_logger
@@ -602,6 +609,7 @@ class Controls(QWidget):
         layout.addStretch(1)
 
         # Add control panels
+        self.help_panel = HelpPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
@@ -614,6 +622,7 @@ class Controls(QWidget):
         self.z_lock_panel = ZLockPanel(self.manager)
         self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
         # Column - 0
+        self.add_panel(self.help_panel, column=0)
         self.add_panel(self.status_panel, column=0)
         self.add_panel(self.camera_panel, column=0)
         self.add_panel(self.acquisition_panel, column=0)
