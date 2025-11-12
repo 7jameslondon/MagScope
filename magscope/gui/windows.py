@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QHBoxLayout,
     QLabel,
-    QLayout
+    QLayout,
+    QToolButton,
 )
-from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
-from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
+from PyQt6.QtCore import QPoint, QTimer, Qt, QThread, QUrl, QSize
+from PyQt6.QtGui import QImage, QPixmap, QGuiApplication, QDesktopServices
 import sys
 from time import time
 from warnings import warn
@@ -584,10 +585,32 @@ class Controls(QWidget):
         self.panels: dict[str, ControlPanelBase] = {}
 
         # Columns
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
         layout.setSpacing(6)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 48, 0, 0)
         self.setLayout(layout)
+
+        # Floating help button
+        self.help_button = QToolButton(self)
+        self.help_button.setText("❔")
+        self.help_button.setToolTip("Open MagScope User Guide")
+        self.help_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.help_button.setAutoRaise(True)
+        button_font = self.help_button.font()
+        button_font.setPointSizeF(button_font.pointSizeF() * 1.35)
+        self.help_button.setFont(button_font)
+        self.help_button.setFixedSize(40, 40)
+        self.help_button.setIconSize(QSize(32, 32))
+        self.help_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io/en/stable/user_guide.html"))
+        )
+        self.help_button.move(8, 8)
+        self.help_button.raise_()
+
+        columns_layout = QHBoxLayout()
+        columns_layout.setSpacing(6)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(columns_layout)
         self.columns = [QVBoxLayout(), QVBoxLayout()]
         for column in self.columns:
             column.setSpacing(6)
@@ -596,8 +619,8 @@ class Controls(QWidget):
             column_widget.setContentsMargins(0, 0, 0, 0)
             column_widget.setLayout(column)
             column_widget.setFixedWidth(300)
-            layout.addWidget(column_widget)
-        layout.addStretch(1)
+            columns_layout.addWidget(column_widget)
+        columns_layout.addStretch(1)
 
         # Add control panels
         self.acquisition_panel = AcquisitionPanel(self.manager)
@@ -633,6 +656,12 @@ class Controls(QWidget):
         # Add a stretch to the bottom of each column
         for column in self.columns:
             column.addStretch(1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "help_button") and self.help_button:
+            margin = 8
+            self.help_button.move(margin, margin)
 
     @property
     def settings(self):
