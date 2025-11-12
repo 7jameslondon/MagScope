@@ -1,7 +1,6 @@
-import traceback
-
 import numpy as np
 import os
+import sys
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -14,7 +13,6 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
-import sys
 from time import time
 from warnings import warn
 
@@ -38,7 +36,11 @@ from magscope.gui import (
 from magscope.gui.controls import PlotSettingsPanel, ZLockPanel, XYLockPanel, ZLUTGenerationPanel, ProfilePanel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
+from magscope._logging import get_logger
 from magscope.utils import Message, numpy_type_to_qt_image_type
+
+
+logger = get_logger("gui.windows")
 
 
 class WindowManager(ManagerProcessBase):
@@ -463,8 +465,8 @@ class WindowManager(ManagerProcessBase):
 
             # Plot points
             self.video_viewer.plot(x, y, self.beads_in_view_marker_size)
-        except Exception as e:
-            print(traceback.format_exc())
+        except Exception:
+            logger.exception('Failed to update beads in view')
 
 
     def update_camera_setting(self, name: str, value: str):
@@ -483,10 +485,10 @@ class WindowManager(ManagerProcessBase):
         msg.setWindowTitle("Information")
         msg.setText(text)
         if details:
-            print(f'{text}: {details}')
+            logger.info('%s: %s', text, details)
             msg.setDetailedText(details)
         else:
-            print(f'{text}')
+            logger.info('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 

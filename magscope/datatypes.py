@@ -22,6 +22,11 @@ from multiprocessing.synchronize import Lock
 import numpy as np
 import struct
 
+from ._logging import get_logger
+
+
+logger = get_logger("datatypes")
+
 class VideoBuffer:
     """Shared memory ring buffer for video data
 
@@ -98,7 +103,7 @@ class VideoBuffer:
         self.buffer_size = self.stack_size * self.n_stacks
 
         if create:
-            print(f'Creating VideoBuffer with size {self.buffer_size/1e6} MB')
+            logger.info('Creating VideoBuffer with size %s MB', self.buffer_size / 1e6)
 
         # Setup the buffer and buffer indexes
         self._shm = SharedMemory(

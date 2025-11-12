@@ -1,10 +1,11 @@
 from __future__ import annotations
-import traceback
 from multiprocessing import Process, Queue, Lock
 import numpy as np
 import os
 import tifffile
 from typing import TYPE_CHECKING
+
+from magscope._logging import get_logger
 
 from magtrack import auto_conv_multiline_sub_pixel
 
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
     from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.queues import Queue as QueueType
     ValueTypeUI8 = Synchronized[int]
+
+
+logger = get_logger("videoprocessing")
 
 class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
@@ -143,8 +147,7 @@ class VideoWorker(Process):
             try:
                 self.process(task)
             except Exception as e:
-                print(f'Error in video processing: {e}')
-                print(traceback.format_exc())
+                logger.exception('Error in video processing: %s', e)
             with self._busy_count.get_lock():
                 self._busy_count.value -= 1
 
