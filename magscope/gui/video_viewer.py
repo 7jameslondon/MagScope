@@ -28,11 +28,11 @@ class VideoViewer(QGraphicsView):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.set_image_to_default()
-
         self.crosshairs = []
         self.mini_map = MiniMapOverlay(self)
         self.mini_map.hide()
+
+        self.set_image_to_default()
 
     def plot(self, x, y, size):
         """
