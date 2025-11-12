@@ -44,6 +44,7 @@ remain synchronized.
 
 from ctypes import c_uint8
 from multiprocessing import Event, freeze_support, Pipe, Lock, Value
+import logging
 import numpy as np
 import os
 import sys
@@ -60,6 +61,10 @@ from magscope.processes import InterprocessValues, ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
+from magscope._logging import configure_logging, get_logger
+
+
+logger = get_logger("scope")
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
@@ -76,7 +81,7 @@ class MagScope:
     :meth:`start`.
     """
 
-    def __init__(self):
+    def __init__(self, *, verbose: bool = False):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
@@ -98,6 +103,14 @@ class MagScope:
         self.video_buffer: VideoBuffer | None = None
         self.video_processor_manager = VideoProcessorManager()
         self.window_manager = WindowManager()
+        self._log_level = logging.INFO if verbose else logging.WARNING
+        configure_logging(level=self._log_level)
+
+    def set_verbose_logging(self, enabled: bool = True) -> None:
+        """Toggle informational console output for MagScope internals."""
+
+        self._log_level = logging.INFO if enabled else logging.WARNING
+        configure_logging(level=self._log_level)
 
     def start(self):
         """Launch all managers and enter the main IPC loop.
@@ -114,6 +127,8 @@ class MagScope:
         When a quit message is received the method joins every process before
         returning control to the caller.
         """
+        configure_logging(level=self._log_level)
+
         if self._running:
             warn('MagScope is already running')
         self._running = True
@@ -141,15 +156,15 @@ class MagScope:
             proc.start() # calls 'run()'
 
         # ===== Wait in loop for inter-process messages =====
-        print('MagScope main loop starting ...', flush=True)
+        logger.info('MagScope main loop starting ...')
         while self._running:
             self.receive_ipc()
-        print('MagScope main loop ended.', flush=True)
+        logger.info('MagScope main loop ended.')
 
         # ===== End program by joining each process =====
         for name, proc in self.processes.items():
             proc.join()
-            print(name, 'ended.', flush=True)
+            logger.info('%s ended.', name)
 
     def receive_ipc(self):
         """Poll every IPC pipe and relay messages between processes."""
@@ -161,7 +176,7 @@ class MagScope:
             # Get the message
             message = pipe.recv()
 
-            print(message)
+            logger.info('%s', message)
 
             if type(message) is not Message:
                 warn(f'Message is not a Message object: {message}')
@@ -172,7 +187,7 @@ class MagScope:
                 self._handle_mag_scope_message(message)
             elif message.to == ManagerProcessBase.__name__: # the message is to all processes
                 if message.meth == 'quit':
-                    print('MagScope quitting ...')
+                    logger.info('MagScope quitting ...')
                     self._quitting.set()
                     self._running = False
                 for name, pipe2 in self.pipes.items():

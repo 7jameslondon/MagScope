@@ -1,14 +1,18 @@
 from __future__ import annotations
 from abc import ABC, ABCMeta, abstractmethod
-import sys
-import traceback
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
+import sys
+import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.utils import AcquisitionMode, Message, registerwithscript
+from magscope._logging import get_logger
+
+
+logger = get_logger("processes")
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
@@ -84,7 +88,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         if self._running:
             warn(f'{self.name} is already running')
             return
-        print(f'{self.name} is starting', flush=True)
+        logger.info('%s is starting', self.name)
         self._running = True
 
         try:
@@ -141,7 +145,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                     self._pipe.recv()
             self._pipe.close()
             self._pipe = None
-        print(f'{self.name} quit', flush=True)
+        logger.info('%s quit', self.name)
 
     def send_ipc(self, message: Message):
         if self._pipe and not self._magscope_quitting.is_set():
