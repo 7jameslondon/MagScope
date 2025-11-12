@@ -47,6 +47,7 @@ from multiprocessing import Event, freeze_support, Pipe, Lock, Value
 import logging
 import numpy as np
 import os
+import sys
 from typing import TYPE_CHECKING
 from warnings import warn
 import yaml
@@ -210,7 +211,11 @@ class MagScope:
                 proc_name, details = message.args[:2]
             else:
                 proc_name, details = ('<unknown>', '')
-            logger.error('[%s] Unhandled exception in child process:%s%s', proc_name, os.linesep, details)
+            print(
+                f'[{proc_name}] Unhandled exception in child process:\n{details}',
+                file=sys.stderr,
+                flush=True,
+            )
         else:
             warn(f'Unknown MagScope message {message.meth} with {message.args}')
 

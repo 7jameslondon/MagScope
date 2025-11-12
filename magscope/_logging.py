@@ -1,9 +1,7 @@
 """Internal logging helpers for MagScope.
 
-The project historically relied on ``print`` statements for operational
-messages.  This module centralises logging configuration so that the console
-output can be silenced by default while still allowing a caller to enable a
-verbose mode when desired.
+This module centralizes logging configuration so that the console
+output can be silenced by default.
 
 Only warnings and errors remain active unless :func:`configure_logging` is
 invoked with ``verbose=True`` (or an explicit log level).  The helper returns
@@ -14,6 +12,7 @@ submodules can log without manually wiring handlers.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Optional
 
 _ROOT_LOGGER_NAME = "magscope"
@@ -46,9 +45,9 @@ def configure_logging(*, verbose: bool = False, level: Optional[int] = None) -> 
     logger.setLevel(level)
 
     if not logger.handlers:
-        handler = logging.StreamHandler()
+        handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(logging.NOTSET)
-        formatter = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+        formatter = logging.Formatter("%(message)s")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 

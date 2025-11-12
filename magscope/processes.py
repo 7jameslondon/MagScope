@@ -1,8 +1,9 @@
 from __future__ import annotations
 from abc import ABC, ABCMeta, abstractmethod
-import traceback
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
+import sys
+import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
@@ -194,7 +195,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def _report_exception(self, exc: BaseException) -> None:
         error_details = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         error_message = f"{self.name} encountered an unhandled exception:\n{error_details}"
-        logger.error('%s', error_message.rstrip())
+        print(error_message, file=sys.stderr, flush=True)
         try:
             self.send_ipc(Message('MagScope', 'log_exception', self.name, error_details))
         except Exception:

@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
+import traceback
 from time import time
 from warnings import warn
 
@@ -465,9 +466,8 @@ class WindowManager(ManagerProcessBase):
 
             # Plot points
             self.video_viewer.plot(x, y, self.beads_in_view_marker_size)
-        except Exception:
-            logger.exception('Failed to update beads in view')
-
+        except Exception as e:
+            print(traceback.format_exc())
 
     def update_camera_setting(self, name: str, value: str):
         self.controls.camera_panel.update_camera_setting(name, value)
