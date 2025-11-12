@@ -1,5 +1,5 @@
 import numpy as np
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QPen, QPainter
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem, QGraphicsItem
 import time
@@ -29,8 +29,14 @@ class VideoViewer(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.crosshairs = []
-        self.mini_map = MiniMapOverlay(self)
-        self.mini_map.hide()
+
+        self._mini_map_visible = False
+        self._mini_map_pixmap = QPixmap()
+        self._mini_map_image_rect = QRectF()
+        self._mini_map_viewport_rect = QRectF()
+        self._mini_map_size = QSize(180, 140)
+        self._mini_map_outer_margin = 12
+        self._mini_map_inner_margin = 8
 
         self.set_image_to_default()
 
@@ -67,7 +73,7 @@ class VideoViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self._image.setPixmap(default_pixmap)
         self.reset_view(round(self.scale_factor**self._zoom))
-        self.mini_map.set_pixmap(default_pixmap)
+        self._mini_map_pixmap = default_pixmap
 
     def has_image(self):
         return not self._empty
@@ -95,13 +101,15 @@ class VideoViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._image.setPixmap(QPixmap())
         self.reset_view(round(self.scale_factor**self._zoom))
-        self.mini_map.set_pixmap(QPixmap())
-        self.mini_map.hide()
+        self._mini_map_pixmap = QPixmap()
+        self._hide_mini_map()
 
     def set_pixmap(self, pixmap):
+        if pixmap is None:
+            pixmap = QPixmap()
         self._image.setPixmap(pixmap)
         self._empty = pixmap.isNull()
-        self.mini_map.set_pixmap(pixmap)
+        self._mini_map_pixmap = pixmap
         self._update_mini_map()
 
     def zoom_level(self):
@@ -128,7 +136,6 @@ class VideoViewer(QGraphicsView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.reset_view()
-        self._position_mini_map()
 
     def toggle_drag_mode(self):
         if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -177,26 +184,113 @@ class VideoViewer(QGraphicsView):
         super().scrollContentsBy(dx, dy)
         self._update_mini_map()
 
-    def _position_mini_map(self):
-        margin = 12
-        rect = self.viewport().geometry()
-        x = rect.right() - self.mini_map.width() - margin
-        y = rect.top() + margin
-        self.mini_map.move(x, y)
-
     def _update_mini_map(self):
         if not self.has_image() or self._zoom == 0:
-            self.mini_map.hide()
+            self._hide_mini_map()
             return
 
         image_rect = self._image.mapRectToScene(self._image.boundingRect())
         viewport_polygon = self.mapToScene(self.viewport().rect())
         viewport_rect = viewport_polygon.boundingRect()
 
-        self.mini_map.update_viewport(image_rect, viewport_rect)
-        self._position_mini_map()
-        self.mini_map.show()
-        self.mini_map.raise_()
+        if image_rect.isNull() or viewport_rect.isNull():
+            self._hide_mini_map()
+            return
+
+        self._mini_map_image_rect = image_rect
+        self._mini_map_viewport_rect = viewport_rect
+        if not self._mini_map_visible:
+            self._mini_map_visible = True
+        self.viewport().update()
+
+    def _hide_mini_map(self):
+        was_visible = self._mini_map_visible or not self._mini_map_image_rect.isNull() or not self._mini_map_viewport_rect.isNull()
+        self._mini_map_visible = False
+        self._mini_map_image_rect = QRectF()
+        self._mini_map_viewport_rect = QRectF()
+        viewport = self.viewport()
+        if was_visible and viewport is not None:
+            viewport.update()
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        self._paint_mini_map(painter)
+
+    def _paint_mini_map(self, painter):
+        if not self._mini_map_visible:
+            return
+
+        pixmap = self._mini_map_pixmap
+        if pixmap.isNull() or self._mini_map_image_rect.isNull() or self._mini_map_viewport_rect.isNull():
+            return
+
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        view_rect = self.viewport().rect()
+        width = self._mini_map_size.width()
+        height = self._mini_map_size.height()
+        x = view_rect.width() - width - self._mini_map_outer_margin
+        y = self._mini_map_outer_margin
+        overlay_rect = QRectF(x, y, width, height)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 170))
+        painter.drawRoundedRect(overlay_rect, 8, 8)
+
+        available_rect = overlay_rect.adjusted(
+            self._mini_map_inner_margin,
+            self._mini_map_inner_margin,
+            -self._mini_map_inner_margin,
+            -self._mini_map_inner_margin,
+        )
+
+        available_size = QSize(
+            max(1, int(available_rect.width())),
+            max(1, int(available_rect.height())),
+        )
+        scaled = pixmap.scaled(
+            available_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+        target_rect = QRectF(
+            available_rect.x() + (available_rect.width() - scaled.width()) / 2,
+            available_rect.y() + (available_rect.height() - scaled.height()) / 2,
+            scaled.width(),
+            scaled.height(),
+        )
+        painter.drawPixmap(target_rect, scaled)
+
+        if self._mini_map_image_rect.width() == 0 or self._mini_map_image_rect.height() == 0:
+            painter.restore()
+            return
+
+        visible = self._mini_map_viewport_rect.intersected(self._mini_map_image_rect)
+        if visible.isNull():
+            painter.restore()
+            return
+
+        rel_x = (visible.x() - self._mini_map_image_rect.x()) / self._mini_map_image_rect.width()
+        rel_y = (visible.y() - self._mini_map_image_rect.y()) / self._mini_map_image_rect.height()
+        rel_w = visible.width() / self._mini_map_image_rect.width()
+        rel_h = visible.height() / self._mini_map_image_rect.height()
+
+        highlight_rect = QRectF(
+            target_rect.x() + rel_x * target_rect.width(),
+            target_rect.y() + rel_y * target_rect.height(),
+            rel_w * target_rect.width(),
+            rel_h * target_rect.height(),
+        )
+
+        pen = QPen(QColor(255, 255, 255, 220))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(highlight_rect)
+        painter.restore()
 
 class CrossCircleItem(QGraphicsItem):
     """A lightweight, centered ⊕-style marker drawn with simple geometry."""
@@ -228,71 +322,3 @@ class CrossCircleItem(QGraphicsItem):
         painter.drawLine(0, -r, 0, r)
 
 
-class MiniMapOverlay(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pixmap = QPixmap()
-        self._image_rect = QRectF()
-        self._viewport_rect = QRectF()
-        self.setFixedSize(180, 140)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setStyleSheet("background: transparent;")
-
-    def set_pixmap(self, pixmap):
-        self._pixmap = pixmap
-        self.update()
-
-    def update_viewport(self, image_rect, viewport_rect):
-        self._image_rect = image_rect
-        self._viewport_rect = viewport_rect
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 170))
-        painter.drawRoundedRect(self.rect(), 8, 8)
-
-        if self._pixmap.isNull() or self._image_rect.isNull():
-            return
-
-        margin = 8
-        available = self.rect().adjusted(margin, margin, -margin, -margin)
-        scaled = self._pixmap.scaled(
-            available.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        target_rect = QRectF(
-            available.x() + (available.width() - scaled.width()) / 2,
-            available.y() + (available.height() - scaled.height()) / 2,
-            scaled.width(),
-            scaled.height(),
-        )
-        painter.drawPixmap(target_rect, scaled, scaled.rect())
-
-        if self._viewport_rect.isNull() or self._image_rect.width() == 0 or self._image_rect.height() == 0:
-            return
-
-        visible = self._viewport_rect.intersected(self._image_rect)
-        if visible.isNull():
-            return
-
-        rel_x = (visible.x() - self._image_rect.x()) / self._image_rect.width()
-        rel_y = (visible.y() - self._image_rect.y()) / self._image_rect.height()
-        rel_w = visible.width() / self._image_rect.width()
-        rel_h = visible.height() / self._image_rect.height()
-
-        highlight_rect = QRectF(
-            target_rect.x() + rel_x * target_rect.width(),
-            target_rect.y() + rel_y * target_rect.height(),
-            rel_w * target_rect.width(),
-            rel_h * target_rect.height(),
-        )
-
-        pen = QPen(QColor(255, 255, 255, 220))
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(highlight_rect)
