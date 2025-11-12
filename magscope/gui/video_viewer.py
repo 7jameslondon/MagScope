@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QPen, QPainter
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem, QGraphicsItem
 
@@ -41,6 +41,7 @@ class VideoViewer(QGraphicsView):
         self._mini_map_size = QSize(180, 140)
         self._mini_map_outer_margin = 12
         self._mini_map_inner_margin = 8
+        self._mini_map_repaint_pending = False
 
         self._debug_enabled = self._should_enable_debug_logging()
         self._debug_logger = logging.getLogger("magscope.video_viewer")
@@ -121,7 +122,7 @@ class VideoViewer(QGraphicsView):
         self._image.setPixmap(pixmap)
         self._empty = pixmap.isNull()
         self._mini_map_pixmap = pixmap
-        self._update_mini_map()
+        self._update_mini_map(force_repaint=True)
 
     def zoom_level(self):
         return self._zoom
@@ -198,7 +199,7 @@ class VideoViewer(QGraphicsView):
         super().scrollContentsBy(dx, dy)
         self._update_mini_map()
 
-    def _update_mini_map(self):
+    def _update_mini_map(self, force_repaint=False):
         self._debug(
             "_update_mini_map",
             has_image=self.has_image(),
@@ -217,6 +218,11 @@ class VideoViewer(QGraphicsView):
             self._hide_mini_map()
             return
 
+        geometry_changed = (
+            image_rect != self._mini_map_image_rect
+            or viewport_rect != self._mini_map_viewport_rect
+        )
+
         self._mini_map_image_rect = image_rect
         self._mini_map_viewport_rect = viewport_rect
         self._debug(
@@ -224,9 +230,13 @@ class VideoViewer(QGraphicsView):
             image_rect=self._rect_to_tuple(image_rect),
             viewport_rect=self._rect_to_tuple(viewport_rect),
         )
+        became_visible = False
         if not self._mini_map_visible:
             self._mini_map_visible = True
-        self.viewport().update()
+            became_visible = True
+
+        if geometry_changed or force_repaint or became_visible:
+            self._request_mini_map_repaint()
 
     def _hide_mini_map(self):
         was_visible = self._mini_map_visible or not self._mini_map_image_rect.isNull() or not self._mini_map_viewport_rect.isNull()
@@ -234,9 +244,8 @@ class VideoViewer(QGraphicsView):
         self._mini_map_image_rect = QRectF()
         self._mini_map_viewport_rect = QRectF()
         self._debug("mini map hidden", was_visible=was_visible)
-        viewport = self.viewport()
-        if was_visible and viewport is not None:
-            viewport.update()
+        if was_visible:
+            self._request_mini_map_repaint()
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
@@ -323,6 +332,24 @@ class VideoViewer(QGraphicsView):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(highlight_rect)
         painter.restore()
+
+    def _request_mini_map_repaint(self):
+        if self._mini_map_repaint_pending:
+            return
+
+        viewport = self.viewport()
+        if viewport is None:
+            return
+
+        self._mini_map_repaint_pending = True
+
+        def trigger():
+            self._mini_map_repaint_pending = False
+            vp = self.viewport()
+            if vp is not None:
+                vp.update()
+
+        QTimer.singleShot(0, trigger)
 
     def _should_enable_debug_logging(self):
         value = os.environ.get("MAGSCOPE_VIDEO_VIEWER_DEBUG", "").strip().lower()
