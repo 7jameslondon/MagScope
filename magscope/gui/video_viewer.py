@@ -1,8 +1,12 @@
+import logging
+import os
+import time
+from pathlib import Path
+
 import numpy as np
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QBrush, QColor, QCursor, QPen, QPainter
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFrame, QGraphicsPixmapItem, QGraphicsItem
-import time
 
 class VideoViewer(QGraphicsView):
     coordinatesChanged: 'pyqtSignal' = pyqtSignal(QPoint)
@@ -37,6 +41,12 @@ class VideoViewer(QGraphicsView):
         self._mini_map_size = QSize(180, 140)
         self._mini_map_outer_margin = 12
         self._mini_map_inner_margin = 8
+
+        self._debug_enabled = self._should_enable_debug_logging()
+        self._debug_logger = logging.getLogger("magscope.video_viewer")
+        if self._debug_enabled:
+            self._configure_debug_logger()
+            self._debug("VideoViewer initialized", scale_factor=scale_factor)
 
         self.set_image_to_default()
 
@@ -79,6 +89,7 @@ class VideoViewer(QGraphicsView):
         return not self._empty
 
     def reset_view(self, scale=1):
+        self._debug("reset_view invoked", scale=scale, has_image=self.has_image())
         rect = QRectF(self._image.pixmap().rect())
         if not rect.isNull():
             self.setSceneRect(rect)
@@ -117,6 +128,7 @@ class VideoViewer(QGraphicsView):
 
     def zoom(self, step):
         zoom = max(0, self._zoom + (step := int(step)))
+        self._debug("zoom requested", step=step, new_zoom=zoom, current_zoom=self._zoom)
         if zoom != self._zoom:
             self._zoom = zoom
             if self._zoom > 0:
@@ -131,10 +143,12 @@ class VideoViewer(QGraphicsView):
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
+        self._debug("wheel event", delta=delta)
         self.zoom(delta and delta // abs(delta))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._debug("resizeEvent", size=event.size())
         self.reset_view()
 
     def toggle_drag_mode(self):
@@ -185,6 +199,12 @@ class VideoViewer(QGraphicsView):
         self._update_mini_map()
 
     def _update_mini_map(self):
+        self._debug(
+            "_update_mini_map",
+            has_image=self.has_image(),
+            zoom=self._zoom,
+            image_null=self._image.pixmap().isNull(),
+        )
         if not self.has_image() or self._zoom == 0:
             self._hide_mini_map()
             return
@@ -199,6 +219,11 @@ class VideoViewer(QGraphicsView):
 
         self._mini_map_image_rect = image_rect
         self._mini_map_viewport_rect = viewport_rect
+        self._debug(
+            "mini map geometry",
+            image_rect=self._rect_to_tuple(image_rect),
+            viewport_rect=self._rect_to_tuple(viewport_rect),
+        )
         if not self._mini_map_visible:
             self._mini_map_visible = True
         self.viewport().update()
@@ -208,6 +233,7 @@ class VideoViewer(QGraphicsView):
         self._mini_map_visible = False
         self._mini_map_image_rect = QRectF()
         self._mini_map_viewport_rect = QRectF()
+        self._debug("mini map hidden", was_visible=was_visible)
         viewport = self.viewport()
         if was_visible and viewport is not None:
             viewport.update()
@@ -222,6 +248,12 @@ class VideoViewer(QGraphicsView):
 
         pixmap = self._mini_map_pixmap
         if pixmap.isNull() or self._mini_map_image_rect.isNull() or self._mini_map_viewport_rect.isNull():
+            self._debug(
+                "mini map paint skipped",
+                pixmap_null=pixmap.isNull(),
+                image_rect_null=self._mini_map_image_rect.isNull(),
+                viewport_rect_null=self._mini_map_viewport_rect.isNull(),
+            )
             return
 
         painter.save()
@@ -291,6 +323,40 @@ class VideoViewer(QGraphicsView):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(highlight_rect)
         painter.restore()
+
+    def _should_enable_debug_logging(self):
+        value = os.environ.get("MAGSCOPE_VIDEO_VIEWER_DEBUG", "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    def _configure_debug_logger(self):
+        if getattr(self._debug_logger, "_magscope_configured", False):
+            return
+        self._debug_logger.setLevel(logging.DEBUG)
+        log_path = Path.cwd() / "video_viewer_debug.log"
+        handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        self._debug_logger.addHandler(handler)
+        self._debug_logger._magscope_configured = True
+        self._debug_logger.debug("Debug logging enabled. Writing to %s", log_path)
+
+    def _debug(self, message, **context):
+        if not self._debug_enabled:
+            return
+        if context:
+            formatted_context = ", ".join(
+                f"{key}={value}" for key, value in context.items()
+            )
+            message = f"{message} | {formatted_context}"
+        self._debug_logger.debug(message)
+
+    @staticmethod
+    def _rect_to_tuple(rect):
+        return (
+            round(rect.x(), 2),
+            round(rect.y(), 2),
+            round(rect.width(), 2),
+            round(rect.height(), 2),
+        )
 
 class CrossCircleItem(QGraphicsItem):
     """A lightweight, centered ⊕-style marker drawn with simple geometry."""
