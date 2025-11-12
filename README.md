@@ -4,21 +4,22 @@
 
 [![PyPi](https://img.shields.io/pypi/v/magscope.svg)](https://pypi.org/project/magscope/)
 [![Docs](https://img.shields.io/readthedocs/magscope/latest.svg)](https://magscope.readthedocs.io)
-[![Paper](https://img.shields.io/badge/DOI-10.1101/2025.10.31.685671-blue)](https://doi.org/10.1101/2025.10.31.685671)
 [![Python package](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml/badge.svg)](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml)
+[![Paper](https://img.shields.io/badge/DOI-10.1101/2025.10.31.685671-blue)](https://doi.org/10.1101/2025.10.31.685671)
 
-MagScope is a Python framework for live data acquisition and analysis in magnetic tweezers microscopy.
+[MagScope](https://github.com/7jameslondon/MagScope) is a Python framework for live data acquisition and analysis in [magnetic tweezers microscopy](https://doi.org/10.1007/978-1-0716-3377-9_18).
 
 * Fast, high-throughput, and high-resolution
-* GUI (Graphical User Interface) - include a clean simple GUI
-* Demo - starts in demo mode so you can try it without microscope hardware connected
+* GUI - includes a clean simple GUI (Graphical User Interface)
+* Demo - Launches by default with a simulated camera so you can try it without microscope hardware connected
 * Automation - Create simple Python scripts to automate data-collection and motor movement for long/complex experiments.
-* Easily extended to your setup
+* XYZ-Lock - Enable XY- and/or Z-Lock to keep beads centered and in focus for long experiments
+* Customizable - Easily add your lab's hardware and implement custom features
 * CPU or GPU tracking of beads via [MagTrack](https://github.com/7jameslondon/MagTrack)
 
 ## ⏳ Install
 ### Pre-requisites
-* Operating System: We recommend using **Windows**. While MagScope can run on Linux and MacOS it has not been tested as thoroughly.
+* Operating System: We recommend using **Windows**. While MagScope can run on Linux and MacOS, it has been thoroughly tested on Windows.
 * [Python](https://www.python.org/downloads/) >=3.11
 * [MagTrack](https://github.com/7jameslondon/MagTrack)
 * [NumPy](https://numpy.org) >=1.26
@@ -32,16 +33,16 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
 ### Instructions
 ```
+pip install magscope[cpu]
+```
+Or
+```
 pip install magscope[gpu]
 ```
-Or without CuPy
-```
-pip install magscope
-```
-Optional: For GPU acceleration on a computer with an NVIDIA CUDA GPU, you may need to install the CUDA Toolkit for CuPy. See details at [here](https://developer.nvidia.com/cuda-toolkit).
-
 ## ⚒ Usage
-Try it as is, includes a simulated camera.
+MagScope starts by default with a simulated camera so you can try 
+the full user interface without connecting lab hardware. 
+Launch it with:
 ```
 import magscope
 
@@ -101,23 +102,6 @@ message-passing API and shared memory, while the GUI presents controls built on
 from `HardwareManagerBase`, letting custom devices participate in the same
 event loop and scripting hooks.
 
-### 3. Run the simulated scope end-to-end
-
-When everything looks correct, start the simulated scope. The repository ships
-with a dummy camera so you can exercise the full user interface without
-connecting lab hardware. Launch it with:
-
-```bash
-python simulated_scope.py
-```
-
-This command starts `MagScope`, wires the `DummyBeadCamera` into the
-`CameraManager`, and opens the Qt-based GUI. You should see the interface begin
-streaming mock camera frames within a few seconds. If the window does not
-appear, double-check that the virtual environment is active and that the
-required Qt libraries were installed during the dependency step. When you are
-ready to connect real instruments you can instead run `python main.py` and
-configure the hardware classes described later in this document.
 
 ```mermaid
 flowchart TD
