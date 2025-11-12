@@ -65,7 +65,7 @@ class ControlPanelBase(QWidget):
 class HelpPanel(QFrame):
     """Clickable panel that links to the MagScope documentation."""
 
-    HELP_URL = QUrl("https://magscope.readthedocs.io/en/stable/user_guide.html")
+    HELP_URL = QUrl("https://magscope.readthedocs.io")
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__()
@@ -79,37 +79,21 @@ class HelpPanel(QFrame):
         layout.setSpacing(2)
         self.setLayout(layout)
 
-        self.title_label = QLabel("Help?")
+        self.title_label = QLabel("Need help?")
         font = self.title_label.font()
         font.setPointSize(font.pointSize() + 2)
         font.setBold(True)
         self.title_label.setFont(font)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        self.description_label = QLabel("Open the MagScope user guide")
+        self.description_label = QLabel("Open the MagScope documentation")
         self.description_label.setWordWrap(True)
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.description_label)
 
-        self.setStyleSheet(
-            """
-            #HelpPanelFrame {
-                border: 1px solid #5b5b5b;
-                border-radius: 6px;
-                background-color: rgba(255, 255, 255, 0.05);
-            }
-            #HelpPanelFrame QLabel {
-                color: #f2f2f2;
-            }
-            #HelpPanelFrame:hover {
-                background-color: #ffffff;
-            }
-            #HelpPanelFrame:hover QLabel {
-                color: #202020;
-            }
-            """
-        )
+        self._hovered = False
+        self._apply_styles()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -117,6 +101,26 @@ class HelpPanel(QFrame):
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._apply_styles()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._apply_styles()
+        super().leaveEvent(event)
+
+    def _apply_styles(self):
+        text_color = "black" if self._hovered else "white"
+        self.setStyleSheet(
+            f"""
+            #HelpPanelFrame QLabel {{
+                color: {text_color};
+            }}
+            """
+        )
 
 
 class AcquisitionPanel(ControlPanelBase):
