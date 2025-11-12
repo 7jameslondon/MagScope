@@ -8,8 +8,8 @@ import numpy as np
 import os
 import time
 from typing import TYPE_CHECKING
-from PyQt6.QtCore import Qt, QVariant, pyqtSignal, QSettings
-from PyQt6.QtGui import QFont, QTextOption
+from PyQt6.QtCore import Qt, QVariant, pyqtSignal, QSettings, QUrl
+from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
 from PyQt6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -22,7 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
     QComboBox,
     QProgressBar,
-    QStackedLayout
+    QStackedLayout,
+    QFrame
 )
 
 from magscope.gui import (
@@ -59,6 +60,63 @@ class ControlPanelBase(QWidget):
 
     def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:
         return self.groupbox.content_area.layout()
+
+
+class HelpPanel(QFrame):
+    """Clickable panel that links to the MagScope documentation."""
+
+    HELP_URL = QUrl("https://magscope.readthedocs.io/en/stable/user_guide.html")
+
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__()
+        self.manager = manager
+        self.setObjectName("HelpPanelFrame")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
+        self.setLayout(layout)
+
+        self.title_label = QLabel("Help?")
+        font = self.title_label.font()
+        font.setPointSize(font.pointSize() + 2)
+        font.setBold(True)
+        self.title_label.setFont(font)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.description_label = QLabel("Open the MagScope user guide")
+        self.description_label.setWordWrap(True)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.description_label)
+
+        self.setStyleSheet(
+            """
+            #HelpPanelFrame {
+                border: 1px solid #5b5b5b;
+                border-radius: 6px;
+                background-color: rgba(255, 255, 255, 0.05);
+            }
+            #HelpPanelFrame QLabel {
+                color: #f2f2f2;
+            }
+            #HelpPanelFrame:hover {
+                background-color: #ffffff;
+            }
+            #HelpPanelFrame:hover QLabel {
+                color: #202020;
+            }
+            """
+        )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            QDesktopServices.openUrl(self.HELP_URL)
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class AcquisitionPanel(ControlPanelBase):
