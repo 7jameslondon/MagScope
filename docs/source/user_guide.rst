@@ -59,6 +59,20 @@ Or once it is "Finished" you can run it again by clicking "Start".
 Writing your own script
 """"""""""""""""""""""""
 
+To start a script create a new Python file (example: ``a_script.py``).
+Then import magscope and create script instance.
+The instance can be called anything (it does not need to be called "my_script").
+Example::
+   import magscope
+   my_script = magscope.Script()
+
+To add a step to the script you just need to call it with atleast one argument.
+The first argument should be the name of the scriptable function you want to call.
+Latter arguments should be anything you need to pass to that function.
+For example we can call the ``sleep`` command to pause our script for 5 seconds like this::
+   my_script('sleep', 5)
+
+
 XY-Lock
 -------
 **Once:** Keeping your beads in the center of the ROI improves tracking accuracy.
@@ -101,9 +115,8 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
          :alt: Screenshot of the Z-Lock panel.
          :align: center
 
-What to Explore Next
+Coming Soon
 --------------------
 
-* **Scripting** – Placeholder for documenting how to automate experiments from the GUI.
 * **Hardware integration** – Placeholder for instructions on connecting real microscopes, stages, or cameras.
 * **Data export** – Placeholder for explaining how to save measurements captured through the interface.
