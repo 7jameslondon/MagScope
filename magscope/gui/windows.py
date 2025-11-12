@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QHBoxLayout,
     QLabel,
-    QLayout
+    QLayout,
+    QToolButton,
 )
-from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
-from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
+from PyQt6.QtCore import QPoint, QTimer, Qt, QThread, QUrl
+from PyQt6.QtGui import QImage, QPixmap, QGuiApplication, QDesktopServices
 import sys
 from time import time
 from warnings import warn
@@ -584,10 +585,31 @@ class Controls(QWidget):
         self.panels: dict[str, ControlPanelBase] = {}
 
         # Columns
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
         layout.setSpacing(6)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
+
+        # Help button row
+        help_layout = QHBoxLayout()
+        help_layout.setContentsMargins(0, 0, 0, 0)
+        help_layout.setSpacing(0)
+        self.help_button = QToolButton()
+        self.help_button.setText("❔")
+        self.help_button.setToolTip("Open MagScope User Guide")
+        self.help_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.help_button.setAutoRaise(True)
+        self.help_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io/en/stable/user_guide.html"))
+        )
+        help_layout.addWidget(self.help_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        help_layout.addStretch(1)
+        layout.addLayout(help_layout)
+
+        columns_layout = QHBoxLayout()
+        columns_layout.setSpacing(6)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(columns_layout)
         self.columns = [QVBoxLayout(), QVBoxLayout()]
         for column in self.columns:
             column.setSpacing(6)
@@ -596,8 +618,8 @@ class Controls(QWidget):
             column_widget.setContentsMargins(0, 0, 0, 0)
             column_widget.setLayout(column)
             column_widget.setFixedWidth(300)
-            layout.addWidget(column_widget)
-        layout.addStretch(1)
+            columns_layout.addWidget(column_widget)
+        columns_layout.addStretch(1)
 
         # Add control panels
         self.acquisition_panel = AcquisitionPanel(self.manager)
