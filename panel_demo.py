@@ -231,6 +231,11 @@ class PanelWrapper(QFrame):
     def start_drag(self) -> None:
         if not self.draggable:
             return
+
+        column = self.column
+        if column is None:
+            return
+
         drag = QDrag(self)
         mime = QMimeData()
         mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
@@ -243,7 +248,14 @@ class PanelWrapper(QFrame):
         self.render(pixmap)
         drag.setPixmap(pixmap)
 
-        drag.exec(Qt.DropAction.MoveAction)
+        original_index = column.begin_drag(self)
+
+        result = drag.exec(Qt.DropAction.MoveAction)
+
+        if result != Qt.DropAction.MoveAction:
+            column.cancel_drag(self, original_index)
+
+        column.finish_drag()
 
         for drag_filter in self._drag_filters:
             drag_filter.drag_finished()
@@ -263,6 +275,7 @@ class ReorderableColumn(QWidget):
         self._layout.addStretch(1)
         self._placeholder: QFrame | None = None
         self._pinned_ids = set(pinned_ids or ())
+        self._active_drag_height: int | None = None
 
     def panels(self) -> list[PanelWrapper]:
         widgets: list[PanelWrapper] = []
@@ -302,6 +315,39 @@ class ReorderableColumn(QWidget):
     def remove_panel(self, wrapper: PanelWrapper) -> None:
         self._layout.removeWidget(wrapper)
         wrapper.column = None
+
+    def begin_drag(self, wrapper: PanelWrapper) -> int:
+        index = self._layout.indexOf(wrapper)
+        if index == -1:
+            return -1
+
+        placeholder = self._ensure_placeholder()
+        height = wrapper.height() or wrapper.sizeHint().height()
+        height = max(24, height)
+        self._active_drag_height = height
+        placeholder.setFixedHeight(height)
+
+        self._layout.removeWidget(wrapper)
+        wrapper.hide()
+        target_index = min(index, self._layout.count() - 1)
+        self._layout.insertWidget(target_index, placeholder)
+        placeholder.show()
+        return index
+
+    def cancel_drag(self, wrapper: PanelWrapper, index: int) -> None:
+        placeholder = self._placeholder
+        if placeholder is not None:
+            self._layout.removeWidget(placeholder)
+            placeholder.hide()
+        if index < 0:
+            index = self._layout.count() - 1
+        target_index = min(index, self._layout.count() - 1)
+        self._layout.insertWidget(target_index, wrapper)
+        wrapper.show()
+
+    def finish_drag(self) -> None:
+        self._active_drag_height = None
+        self.clear_placeholder()
 
     def _target_index(self, index: int | None) -> int:
         stretch_index = self._layout.count() - 1
@@ -355,8 +401,11 @@ class ReorderableColumn(QWidget):
             return
 
         placeholder = self._ensure_placeholder()
-        height = wrapper.height() or wrapper.sizeHint().height()
-        placeholder.setFixedHeight(max(24, height))
+        if self._active_drag_height is not None:
+            placeholder.setFixedHeight(self._active_drag_height)
+        else:
+            height = wrapper.height() or wrapper.sizeHint().height()
+            placeholder.setFixedHeight(max(24, height))
         target_index = self._constrained_drop_index(wrapper, cursor_y)
         current_index = self._layout.indexOf(placeholder)
         if current_index == -1:
