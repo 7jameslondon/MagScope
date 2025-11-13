@@ -336,7 +336,7 @@ class NewVideoViewer(QGraphicsView):
             scaled_size, offset_x, offset_y
         )
         if highlight_rect is not None and not highlight_rect.isEmpty():
-            pen = QPen(QColor(255, 255, 255, 200))
+            pen = QPen(QColor(255, 0, 0, 200))
             pen.setWidth(2)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
