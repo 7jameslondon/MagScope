@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import sys
-from collections import OrderedDict
+from typing import Iterable
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QLayout,
     QScrollArea,
     QFrame,
+    QSizePolicy,
 )
 from PyQt6.QtCore import QPoint, QTimer, Qt, QThread, QSettings
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
@@ -45,7 +46,12 @@ from magscope.gui.controls import (
     ProfilePanel,
     HelpPanel,
 )
-from magscope.gui.panel_layout import PanelLayoutManager, ReorderableColumn
+from magscope.gui.panel_layout import (
+    PANEL_MIME_TYPE,
+    PanelLayoutManager,
+    PanelWrapper,
+    ReorderableColumn,
+)
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope._logging import get_logger
@@ -82,6 +88,84 @@ class WindowManager(ManagerProcessBase):
         self._video_viewer_need_reset: bool = True
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
+
+
+class AddColumnDropTarget(QFrame):
+    """Drop target that creates a new column when a panel is dropped."""
+
+    def __init__(self, controls: "Controls") -> None:
+        super().__init__()
+        self._controls = controls
+        self.setObjectName("add_column_drop_target")
+        self.setAcceptDrops(True)
+        self.setMinimumWidth(160)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+        layout.addStretch(1)
+        label = QLabel("Drop here to create a new column")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        layout.addStretch(1)
+
+        self._set_active(False)
+        self.setVisible(False)
+
+    def set_drag_active(self, active: bool) -> None:
+        """Toggle visibility based on whether a panel is being dragged."""
+
+        self.setVisible(active)
+        if not active:
+            self._set_active(False)
+
+    def _set_active(self, active: bool) -> None:
+        color = "palette(highlight)" if active else "palette(mid)"
+        self.setStyleSheet(
+            "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
+        )
+
+    def _wrapper_from_event(self, event) -> PanelWrapper | None:
+        manager = self._controls.layout_manager
+        if manager is None:
+            return None
+        mime_data = event.mimeData()
+        if not mime_data.hasFormat(PANEL_MIME_TYPE):
+            return None
+        panel_id_bytes = mime_data.data(PANEL_MIME_TYPE)
+        if panel_id_bytes.isEmpty():
+            return None
+        panel_id = bytes(panel_id_bytes).decode("utf-8")
+        return manager.wrapper_for_id(panel_id)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if self._wrapper_from_event(event) is not None:
+            self._set_active(True)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._wrapper_from_event(event) is not None:
+            self._set_active(True)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_active(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        wrapper = self._wrapper_from_event(event)
+        self._set_active(False)
+        if wrapper is None:
+            event.ignore()
+            return
+        self._controls.create_new_column_with_panel(wrapper)
+        event.acceptProposedAction()
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -610,31 +694,36 @@ class Controls(QWidget):
         layout = QHBoxLayout(self)
         layout.setSpacing(6)
         layout.setContentsMargins(0, 0, 0, 0)
+        self._columns_layout = layout
 
-        self.columns: "OrderedDict[str, ReorderableColumn]" = OrderedDict(
-            [
-                ("left", ReorderableColumn("left", pinned_ids={"HelpPanel"})),
-                ("right", ReorderableColumn("right")),
-            ]
-        )
-
-        for column in self.columns.values():
-            column.setFixedWidth(300)
-            scroll = QScrollArea(self)
-            scroll.setWidgetResizable(True)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidget(column)
-            scroll.setFixedWidth(320)
-            layout.addWidget(scroll)
-
-        layout.addStretch(1)
+        self._column_scrolls: dict[str, QScrollArea] = {}
+        self._column_prefix = "column"
+        self._column_counter = 1
+        self._base_columns = {"left"}
+        self._suppress_layout_callback = False
 
         self.layout_manager = PanelLayoutManager(
             self._settings,
             self.LAYOUT_SETTINGS_GROUP,
-            self.columns,
+            [],
+            on_layout_changed=self._on_layout_changed,
+            on_drag_active_changed=self._on_drag_active_changed,
         )
+
+        self._add_column_target = AddColumnDropTarget(self)
+        layout.addWidget(self._add_column_target)
+        layout.addStretch(1)
+
+        stored_layout = self.layout_manager.stored_layout()
+        self._update_column_counter(stored_layout.keys())
+
+        self._add_column("left", pinned_ids={"HelpPanel"}, index=0)
+        for name in stored_layout.keys():
+            if name in self.layout_manager.columns:
+                continue
+            self._add_column(name)
+        if "right" not in self.layout_manager.columns and len(self.layout_manager.columns) < 2:
+            self._add_column("right")
 
         # Instantiate standard panels
         self.help_panel = HelpPanel(self.manager)
@@ -665,30 +754,36 @@ class Controls(QWidget):
             ("ZLockPanel", self.z_lock_panel, "right", True),
         ]
 
-        column_names = list(self.columns.keys())
+        column_names = list(self.layout_manager.columns.keys())
+        fallback_column = column_names[0]
 
         for panel_id, widget, column_name, draggable in definitions:
             self.panels[panel_id] = widget
+            target_column = column_name if column_name in self.layout_manager.columns else fallback_column
             self.layout_manager.register_panel(
                 panel_id,
                 widget,
-                column_name,
+                target_column,
                 draggable=draggable,
             )
+
+        column_names = list(self.layout_manager.columns.keys())
 
         for control_factory, column in self.manager.controls_to_add:
             widget = control_factory(self.manager)
             panel_id = widget.__class__.__name__
             if isinstance(column, int):
-                column_name = column_names[min(max(column, 0), len(column_names) - 1)]
+                index = min(max(column, 0), len(column_names) - 1)
+                column_name = column_names[index]
             else:
                 column_name = str(column)
-                if column_name not in self.columns:
+                if column_name not in self.layout_manager.columns:
                     column_name = column_names[0]
             self.panels[panel_id] = widget
             self.layout_manager.register_panel(panel_id, widget, column_name)
 
         self.layout_manager.restore_layout()
+        self._prune_empty_columns()
 
     @property
     def settings(self):
@@ -697,3 +792,104 @@ class Controls(QWidget):
     @settings.setter
     def settings(self, value):
         raise AttributeError("Read-only attribute.")
+
+    def _update_column_counter(self, column_names: Iterable[str]) -> None:
+        prefix = f"{self._column_prefix}_"
+        for name in column_names:
+            if not name.startswith(prefix):
+                continue
+            suffix = name[len(prefix) :]
+            try:
+                value = int(suffix)
+            except ValueError:
+                continue
+            if value >= self._column_counter:
+                self._column_counter = value + 1
+
+    def _layout_insert_index(self, name: str) -> int:
+        drop_index = self._columns_layout.indexOf(self._add_column_target)
+        if drop_index == -1:
+            drop_index = self._columns_layout.count()
+        column_names = list(self.layout_manager.columns.keys())
+        target_index = column_names.index(name)
+        count_before = sum(
+            1 for existing in column_names[:target_index] if existing in self._column_scrolls
+        )
+        return min(drop_index, count_before)
+
+    def _add_column(
+        self,
+        name: str,
+        *,
+        pinned_ids: Iterable[str] | None = None,
+        index: int | None = None,
+    ) -> ReorderableColumn:
+        if name in self.layout_manager.columns:
+            column = self.layout_manager.columns[name]
+        else:
+            column = ReorderableColumn(name, pinned_ids=pinned_ids)
+            column.setFixedWidth(300)
+            self.layout_manager.add_column(name, column, index=index)
+
+        if name not in self._column_scrolls:
+            scroll = QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(column)
+            scroll.setFixedWidth(320)
+            insert_index = self._layout_insert_index(name)
+            self._columns_layout.insertWidget(insert_index, scroll)
+            self._column_scrolls[name] = scroll
+        return column
+
+    def create_new_column_with_panel(self, wrapper: PanelWrapper) -> None:
+        name = self._generate_column_name()
+        column = self._add_column(name)
+        column.add_panel(wrapper)
+        wrapper.mark_drop_accepted()
+        self.layout_manager.layout_changed()
+
+    def _generate_column_name(self) -> str:
+        while True:
+            name = f"{self._column_prefix}_{self._column_counter}"
+            self._column_counter += 1
+            if name not in self.layout_manager.columns:
+                return name
+
+    def _on_layout_changed(self, _layout: dict[str, list[str]]) -> None:
+        if self._suppress_layout_callback:
+            return
+        self._prune_empty_columns()
+
+    def _on_drag_active_changed(self, active: bool) -> None:
+        self._add_column_target.set_drag_active(active)
+
+    def _prune_empty_columns(self) -> None:
+        removable = [
+            name
+            for name, column in list(self.layout_manager.columns.items())
+            if name not in self._base_columns and not column.panels()
+        ]
+        for name in removable:
+            self._remove_column(name)
+
+    def _remove_column(self, name: str) -> None:
+        scroll = self._column_scrolls.pop(name, None)
+        if scroll is not None:
+            self._columns_layout.removeWidget(scroll)
+            scroll.hide()
+            scroll.deleteLater()
+        column = self.layout_manager.columns.get(name)
+        if column is None:
+            return
+        column.clear_placeholder()
+        column.hide()
+        column.setParent(None)
+        column.deleteLater()
+        self._suppress_layout_callback = True
+        try:
+            self.layout_manager.remove_column(name)
+        finally:
+            self._suppress_layout_callback = False
+        self.layout_manager.layout_changed()
