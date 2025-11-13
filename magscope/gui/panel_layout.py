@@ -105,29 +105,34 @@ class PanelWrapper(QFrame):
         if column is None:
             return
 
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.setHotSpot(QPoint(self.width() // 2, 0))
+        manager = self._manager
+        manager.notify_drag_started()
 
-        pixmap = QPixmap(self.size())
-        pixmap.fill(Qt.GlobalColor.transparent)
-        self.render(pixmap)
-        drag.setPixmap(pixmap)
+        try:
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
+            drag.setMimeData(mime)
+            drag.setHotSpot(QPoint(self.width() // 2, 0))
 
-        original_index = column.begin_drag(self)
-        self._drop_accepted = False
+            pixmap = QPixmap(self.size())
+            pixmap.fill(Qt.GlobalColor.transparent)
+            self.render(pixmap)
+            drag.setPixmap(pixmap)
 
-        result = drag.exec(Qt.DropAction.MoveAction)
+            original_index = column.begin_drag(self)
+            self._drop_accepted = False
 
-        if result != Qt.DropAction.MoveAction or not self._drop_accepted:
-            column.cancel_drag(self, original_index)
+            result = drag.exec(Qt.DropAction.MoveAction)
 
-        column.finish_drag()
+            if result != Qt.DropAction.MoveAction or not self._drop_accepted:
+                column.cancel_drag(self, original_index)
+        finally:
+            column.finish_drag()
+            manager.notify_drag_finished()
 
-        for drag_filter in self._drag_filters:
-            drag_filter.drag_finished()
+            for drag_filter in self._drag_filters:
+                drag_filter.drag_finished()
 
     def mark_drop_accepted(self) -> None:
         self._drop_accepted = True
@@ -390,6 +395,7 @@ class PanelLayoutManager:
         columns: dict[str, ReorderableColumn] | Iterable[tuple[str, ReorderableColumn]],
         *,
         on_layout_changed: Callable[[dict[str, list[str]]], None] | None = None,
+        on_drag_active_changed: Callable[[bool], None] | None = None,
     ) -> None:
         self._settings: QSettings | None = settings
         self._settings_group = settings_group
@@ -403,6 +409,8 @@ class PanelLayoutManager:
         self._default_columns: dict[str, str] = {}
         self._default_order: list[str] = []
         self._on_layout_changed = on_layout_changed
+        self._on_drag_active_changed = on_drag_active_changed
+        self._active_drag_count = 0
 
     def wrapper_for_id(self, panel_id: str) -> PanelWrapper | None:
         return self._wrappers.get(panel_id)
@@ -473,6 +481,17 @@ class PanelLayoutManager:
         self.save_layout()
         if self._on_layout_changed is not None:
             self._on_layout_changed(self.current_layout())
+
+    def notify_drag_started(self) -> None:
+        self._active_drag_count += 1
+        if self._active_drag_count == 1 and self._on_drag_active_changed is not None:
+            self._on_drag_active_changed(True)
+
+    def notify_drag_finished(self) -> None:
+        if self._active_drag_count > 0:
+            self._active_drag_count -= 1
+        if self._active_drag_count == 0 and self._on_drag_active_changed is not None:
+            self._on_drag_active_changed(False)
 
     def _normalise_panel_list(self, stored) -> list[str] | None:
         if isinstance(stored, list):

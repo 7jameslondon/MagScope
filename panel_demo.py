@@ -165,6 +165,14 @@ class AddColumnDropTarget(QFrame):
         layout.addStretch(1)
 
         self._set_active(False)
+        self.setVisible(False)
+
+    def set_drag_active(self, active: bool) -> None:
+        """Toggle visibility based on whether a panel is being dragged."""
+
+        self.setVisible(active)
+        if not active:
+            self._set_active(False)
 
     def _set_active(self, active: bool) -> None:
         color = "palette(highlight)" if active else "palette(mid)"
@@ -238,6 +246,7 @@ class PanelDemoWindow(QMainWindow):
             self.SETTINGS_GROUP,
             [],
             on_layout_changed=self._on_layout_changed,
+            on_drag_active_changed=self._on_drag_active_changed,
         )
 
         container = QWidget()
@@ -376,6 +385,9 @@ class PanelDemoWindow(QMainWindow):
         if self._suppress_layout_callback:
             return
         self._prune_empty_columns()
+
+    def _on_drag_active_changed(self, active: bool) -> None:
+        self._add_column_target.set_drag_active(active)
 
     def _prune_empty_columns(self) -> None:
         removable = [
