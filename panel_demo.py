@@ -279,10 +279,15 @@ class ReorderableColumn(QWidget):
     def add_panel(self, wrapper: PanelWrapper, index: int | None = None) -> None:
         if wrapper.column is self:
             current_index = self._layout.indexOf(wrapper)
+            if current_index == -1:
+                return
             target_index = self._constrain_index(wrapper, self._target_index(index))
-            if current_index != target_index:
-                self._layout.removeWidget(wrapper)
-                self._layout.insertWidget(target_index, wrapper)
+            if current_index == target_index:
+                return
+
+            self._layout.removeWidget(wrapper)
+            target_index = self._constrain_index(wrapper, self._target_index(index))
+            self._layout.insertWidget(target_index, wrapper)
             return
 
         if wrapper.column is not None:
