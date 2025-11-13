@@ -7,10 +7,11 @@ import time
 from typing import Final
 
 import numpy as np
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPixmap, QPen
+from PyQt6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QLabel,
     QFrame,
     QGraphicsItem,
     QGraphicsPixmapItem,
@@ -44,7 +45,7 @@ class CrossCircleItem(QGraphicsItem):
                 True,
             )
 
-    def boundingRect(self) -> QRectF:
+    def boundingRect(self) -> QRectF:  # type: ignore[override]
         r = self.radius + self.thickness
         return QRectF(-r, -r, 2 * r, 2 * r)
 
@@ -64,6 +65,10 @@ class NewVideoViewer(QGraphicsView):
 
     coordinatesChanged: "pyqtSignal" = pyqtSignal(QPoint)
     clicked: "pyqtSignal" = pyqtSignal(QPoint)
+
+    _MINIMAP_MARGIN: Final[int] = 12
+    _MINIMAP_MIN_SIZE: Final[int] = 120
+    _MINIMAP_MAX_SIZE: Final[int] = 220
 
     def __init__(self, scale_factor: float = 1.25) -> None:
         super().__init__()
@@ -89,40 +94,19 @@ class NewVideoViewer(QGraphicsView):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.crosshairs: list[CrossCircleItem] = []
 
-        # Minimap overlay components for highlighting the current viewport.
-        self._minimap = QGraphicsView(self.viewport())
-        self._minimap.setScene(QGraphicsScene(self))
-        self._minimap.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        self._minimap_label = QLabel(self.viewport())
+        self._minimap_label.setFrameShape(QFrame.Shape.Panel)
+        self._minimap_label.setFrameShadow(QFrame.Shadow.Sunken)
+        self._minimap_label.setStyleSheet(
+            "background-color: rgba(20, 20, 20, 190);"
+            "border: 1px solid rgba(255, 255, 255, 120);"
         )
-        self._minimap.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._minimap.setFrameShape(QFrame.Shape.Panel)
-        self._minimap.setFrameShadow(QFrame.Shadow.Sunken)
-        self._minimap.setBackgroundBrush(QBrush(QColor(20, 20, 20, 230)))
-        self._minimap.setTransformationAnchor(
-            QGraphicsView.ViewportAnchor.AnchorViewCenter
-        )
-        self._minimap.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-        self._minimap.setInteractive(False)
-        self._minimap.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._minimap.setStyleSheet(
-            "QGraphicsView { border: 1px solid rgba(255, 255, 255, 120); }"
-        )
-        self._minimap.setAttribute(
+        self._minimap_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._minimap_label.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
         )
-        self._minimap.hide()
-
-        self._minimap_scene: QGraphicsScene = self._minimap.scene()  # type: ignore[assignment]
-        self._minimap_image = QGraphicsPixmapItem()
-        self._minimap_scene.addItem(self._minimap_image)
-        pen = QPen(QColor(255, 255, 255, 200))
-        pen.setWidthF(0)
-        pen.setCosmetic(True)
-        self._minimap_view_rect = self._minimap_scene.addRect(QRectF(), pen)
-        self._minimap_view_rect.setZValue(10)
+        self._minimap_label.hide()
+        self._minimap_base = QPixmap()
 
         self.set_image_to_default()
 
@@ -160,9 +144,9 @@ class NewVideoViewer(QGraphicsView):
         self._empty = False
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self._image.setPixmap(default_pixmap)
-        self._minimap_image.setPixmap(default_pixmap)
-        self._minimap_scene.setSceneRect(QRectF(default_pixmap.rect()))
+        self._minimap_base = default_pixmap
         self.reset_view(round(self.scale_factor**self._zoom))
+        self._refresh_minimap()
 
     def has_image(self) -> bool:
         return not self._empty
@@ -190,22 +174,20 @@ class NewVideoViewer(QGraphicsView):
         self.scale(factor, factor)
         self.centerOn(self._image)
         self.update_coordinates()
-        self._update_minimap()
+        self._refresh_minimap()
 
     def clear_image(self) -> None:
         self._empty = True
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._image.setPixmap(QPixmap())
         self.reset_view(round(self.scale_factor**self._zoom))
-        self._minimap_image.setPixmap(QPixmap())
-        self._minimap_scene.setSceneRect(QRectF())
-        self._minimap.hide()
+        self._minimap_base = QPixmap()
+        self._minimap_label.hide()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._image.setPixmap(pixmap)
-        self._minimap_image.setPixmap(pixmap)
-        self._minimap_scene.setSceneRect(QRectF(pixmap.rect()))
-        self._update_minimap()
+        self._minimap_base = pixmap
+        self._refresh_minimap()
 
     def zoom_level(self) -> int:
         return self._zoom
@@ -223,10 +205,9 @@ class NewVideoViewer(QGraphicsView):
             else:
                 factor = 1 / self.scale_factor ** abs(step)
             self.scale(factor, factor)
-            self._minimap.setVisible(True)
         else:
             self.reset_view()
-        self._update_minimap()
+        self._refresh_minimap()
 
     def wheelEvent(self, event) -> None:  # type: ignore[override]
         delta = event.angleDelta().y()
@@ -236,8 +217,7 @@ class NewVideoViewer(QGraphicsView):
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self.reset_view()
-        self._layout_minimap()
-        self._update_minimap()
+        self._refresh_minimap()
 
     def toggle_drag_mode(self) -> None:
         if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -283,59 +263,111 @@ class NewVideoViewer(QGraphicsView):
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:  # type: ignore[override]
         super().scrollContentsBy(dx, dy)
-        self._update_minimap()
+        self._refresh_minimap()
+
+    def _refresh_minimap(self) -> None:
+        if self._minimap_base.isNull() or self._zoom <= 0:
+            self._minimap_label.hide()
+            return
+
+        if not self._layout_minimap():
+            self._minimap_label.hide()
+            return
+
+        label_size = self._minimap_label.size()
+        if label_size.width() <= 0 or label_size.height() <= 0:
+            self._minimap_label.hide()
+            return
+
+        scaled_size = self._minimap_base.size().scaled(
+            label_size, Qt.AspectRatioMode.KeepAspectRatio
+        )
+        if scaled_size.isEmpty():
+            self._minimap_label.hide()
+            return
+
+        scaled_pixmap = self._minimap_base.scaled(
+            scaled_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+        minimap_pixmap = QPixmap(label_size)
+        minimap_pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(minimap_pixmap)
+        offset_x = (label_size.width() - scaled_size.width()) // 2
+        offset_y = (label_size.height() - scaled_size.height()) // 2
+        painter.drawPixmap(offset_x, offset_y, scaled_pixmap)
+
+        highlight_rect = self._compute_highlight_rect(
+            scaled_size, offset_x, offset_y
+        )
+        if highlight_rect is not None and not highlight_rect.isEmpty():
+            pen = QPen(QColor(255, 255, 255, 200))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(highlight_rect)
+
+        painter.end()
+        self._minimap_label.setPixmap(minimap_pixmap)
+        self._minimap_label.show()
 
     def _layout_minimap(self) -> bool:
-        margin = 12
         viewport_size = self.viewport().size()
-        size = min(max(min(viewport_size.width(), viewport_size.height()) // 4, 120), 220)
-        if (
-            viewport_size.width() <= 2 * margin
-            or viewport_size.height() <= 2 * margin
-            or size <= 0
-        ):
-            self._minimap.hide()
+        if viewport_size.isEmpty():
             return False
 
-        self._minimap.setGeometry(
-            viewport_size.width() - size - margin,
-            margin,
+        size = min(
+            max(
+                min(viewport_size.width(), viewport_size.height()) // 4,
+                self._MINIMAP_MIN_SIZE,
+            ),
+            self._MINIMAP_MAX_SIZE,
+        )
+        if (
+            viewport_size.width() <= 2 * self._MINIMAP_MARGIN
+            or viewport_size.height() <= 2 * self._MINIMAP_MARGIN
+        ):
+            return False
+
+        self._minimap_label.setGeometry(
+            viewport_size.width() - size - self._MINIMAP_MARGIN,
+            self._MINIMAP_MARGIN,
             size,
             size,
         )
         return True
 
-    def _update_minimap(self) -> None:
-        if self._empty or self._image.pixmap().isNull():
-            self._minimap.hide()
-            return
-
-        if self._zoom <= 0:
-            self._minimap.hide()
-            return
-
-        if not self._layout_minimap():
-            return
-        if not self._minimap.isVisible():
-            self._minimap.show()
-
-        self._minimap.fitInView(
-            self._minimap_image, Qt.AspectRatioMode.KeepAspectRatio
-        )
+    def _compute_highlight_rect(
+        self, scaled_size: QSize, offset_x: int, offset_y: int
+    ) -> QRectF | None:
+        if self._image.pixmap().isNull():
+            return None
 
         viewport_rect = self.viewport().rect()
         if viewport_rect.isNull():
-            return
+            return None
 
-        scene_polygon = self.mapToScene(QRectF(viewport_rect))
+        scene_polygon = self.mapToScene(viewport_rect)
         scene_rect = scene_polygon.boundingRect()
         image_rect = QRectF(self._image.pixmap().rect())
         scene_rect = scene_rect.intersected(image_rect)
         if scene_rect.isEmpty():
-            self._minimap_view_rect.setVisible(False)
-        else:
-            self._minimap_view_rect.setRect(scene_rect)
-            self._minimap_view_rect.setVisible(True)
+            return QRectF()
+
+        scale_x = scaled_size.width() / image_rect.width()
+        scale_y = scaled_size.height() / image_rect.height()
+
+        x = (scene_rect.left() - image_rect.left()) * scale_x + offset_x
+        y = (scene_rect.top() - image_rect.top()) * scale_y + offset_y
+        width = scene_rect.width() * scale_x
+        height = scene_rect.height() * scale_y
+
+        highlight = QRectF(x, y, width, height)
+        label_rect = QRectF(0, 0, self._minimap_label.width(), self._minimap_label.height())
+        return highlight.intersected(label_rect)
 
 
 class VideoViewerDemo(QMainWindow):
@@ -367,7 +399,6 @@ class VideoViewerDemo(QMainWindow):
 
     def _update_frame(self) -> None:
         size = self._FRAME_SIZE
-        # Create a simple animated gradient to simulate changing video frames.
         y = np.arange(size, dtype=np.uint16)[:, None]
         x = np.arange(size, dtype=np.uint16)[None, :]
         frame = ((x + y + self._frame_counter) % 256).astype(np.uint8, copy=False)
