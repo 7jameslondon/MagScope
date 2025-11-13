@@ -87,8 +87,6 @@ class NewVideoViewer(QGraphicsView):
         )
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.set_image_to_default()
-
         self.crosshairs: list[CrossCircleItem] = []
 
         # Minimap overlay components for highlighting the current viewport.
@@ -125,6 +123,8 @@ class NewVideoViewer(QGraphicsView):
         pen.setCosmetic(True)
         self._minimap_view_rect = self._minimap_scene.addRect(QRectF(), pen)
         self._minimap_view_rect.setZValue(10)
+
+        self.set_image_to_default()
 
     def plot(self, x, y, size) -> None:
         self.clear_crosshairs()
