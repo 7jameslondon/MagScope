@@ -374,7 +374,7 @@ class DummyCameraBeads(CameraBase):
         'framerate',
         'n_static', 'n_tethered',
         'nm_per_px',
-        'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
+        'sigma_xy_px', 'sigma_z_um',
         'z_static_um', 'z_anchor_um',
         'electron_gain',
         'seed'
@@ -387,9 +387,7 @@ class DummyCameraBeads(CameraBase):
             'n_static'      : 2,
             'n_tethered'    : 4,
             'nm_per_px'     : float(self.nm_per_px),  # keep in sync
-            'theta_xy'      : 1.5,
             'sigma_xy_px'   : 3.0,
-            'theta_z'       : 2.0,
             'sigma_z_um'    : 0.3,
             'z_static_um'   : 0.0,
             'z_anchor_um'   : 0.0,
@@ -401,6 +399,8 @@ class DummyCameraBeads(CameraBase):
         self._edge_margin_px = 10.0
         self._background = 0.4
         self._radius_nm = 1500.0
+        self._theta_xy = 1.5
+        self._theta_z = 2.0
         self._rng = np.random.default_rng(self._settings['seed'])
 
         # placement and bead state
@@ -454,9 +454,9 @@ class DummyCameraBeads(CameraBase):
         # tethered: update OU and render per bead
         n_t = self._centers_teth.shape[0]
         if n_t:
-            th_xy   = float(self._settings['theta_xy'])
+            th_xy   = float(self._theta_xy)
             sig_xy  = float(self._settings['sigma_xy_px'])
-            th_z    = float(self._settings['theta_z'])
+            th_z    = float(self._theta_z)
             sig_z   = float(self._settings['sigma_z_um'])
             z_anchor = float(self._settings['z_anchor_um'])
             size_px = int(self._bead_size_px)
@@ -525,7 +525,7 @@ class DummyCameraBeads(CameraBase):
             return
 
         if name in ('nm_per_px', 'z_static_um', 'z_anchor_um',
-                    'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
+                    'sigma_xy_px', 'sigma_z_um',
                     'electron_gain'):
             v = f(value)
             self._settings[name] = v
