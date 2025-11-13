@@ -75,6 +75,7 @@ class WindowManager(ManagerProcessBase):
         self.selected_bead = 0
         self._timer: QTimer | None = None
         self._video_buffer_last_index: int = 0
+        self._video_viewer_need_reset: bool = True
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
 
@@ -335,6 +336,10 @@ class WindowManager(ManagerProcessBase):
                 scale, *self.video_buffer.image_shape,
                 numpy_type_to_qt_image_type(self.video_buffer.dtype))
             self.video_viewer.set_pixmap(QPixmap.fromImage(qt_img))
+
+            if self._video_viewer_need_reset:
+                self.video_viewer.reset_view()
+                self._video_viewer_need_reset = False
 
             # Update the bead position overlay
             self._update_beads_in_view()
