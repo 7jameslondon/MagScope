@@ -297,15 +297,23 @@ class ReorderableColumn(QWidget):
     def add_panel(self, wrapper: PanelWrapper, index: int | None = None) -> None:
         if wrapper.column is self:
             current_index = self._layout.indexOf(wrapper)
-            if current_index == -1:
-                return
             target_index = self._constrain_index(wrapper, self._target_index(index))
-            if current_index == target_index:
+            if current_index != -1:
+                if current_index == target_index:
+                    return
+
+                self._layout.removeWidget(wrapper)
+                target_index = self._constrain_index(wrapper, self._target_index(index))
+                self._layout.insertWidget(target_index, wrapper)
                 return
 
-            self._layout.removeWidget(wrapper)
-            target_index = self._constrain_index(wrapper, self._target_index(index))
+            # The wrapper belongs to this column but is currently removed from the
+            # layout (e.g. during an in-column drag). Reinsert it at the desired
+            # index so it becomes visible again.
+            wrapper.setParent(self)
+            wrapper.column = self
             self._layout.insertWidget(target_index, wrapper)
+            wrapper.show()
             return
 
         if wrapper.column is not None:
