@@ -108,6 +108,12 @@ class WindowManager(ManagerProcessBase):
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
+        # Ensure the zoom state is reset once the widget has been laid out.
+        # Calling ``reset_view`` immediately after construction guards against
+        # any persisted transform from previous sessions, while the queued call
+        # makes sure the view is fitted once the window is displayed.
+        self.video_viewer.reset_view()
+        QTimer.singleShot(0, self.video_viewer.reset_view)
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
