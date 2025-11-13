@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import sys
+from collections import OrderedDict
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -9,9 +10,11 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QHBoxLayout,
     QLabel,
-    QLayout
+    QLayout,
+    QScrollArea,
+    QFrame,
 )
-from PyQt6.QtCore import QPoint, QTimer, Qt, QThread
+from PyQt6.QtCore import QPoint, QTimer, Qt, QThread, QSettings
 from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
 import traceback
 from time import time
@@ -42,6 +45,7 @@ from magscope.gui.controls import (
     ProfilePanel,
     HelpPanel,
 )
+from magscope.gui.panel_layout import PanelLayoutManager, ReorderableColumn
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope._logging import get_logger
@@ -592,28 +596,47 @@ class LoadingWindow(QMainWindow):
 
 
 class Controls(QWidget):
+    """Container widget hosting draggable, persistent control panels."""
+
+    LAYOUT_SETTINGS_GROUP = "controls/layout"
+
     def __init__(self, manager: WindowManager):
         super().__init__()
-        self.manager:WindowManager = manager
-        self.panels: dict[str, ControlPanelBase] = {}
+        self.manager = manager
+        self.panels: dict[str, ControlPanelBase | QWidget] = {}
 
-        # Columns
-        layout = QHBoxLayout()
+        self._settings = QSettings("MagScope", "MagScope")
+
+        layout = QHBoxLayout(self)
         layout.setSpacing(6)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-        self.columns = [QVBoxLayout(), QVBoxLayout()]
-        for column in self.columns:
-            column.setSpacing(6)
-            column.setContentsMargins(0, 0, 0, 0)
-            column_widget = QWidget()
-            column_widget.setContentsMargins(0, 0, 0, 0)
-            column_widget.setLayout(column)
-            column_widget.setFixedWidth(300)
-            layout.addWidget(column_widget)
+
+        self.columns: "OrderedDict[str, ReorderableColumn]" = OrderedDict(
+            [
+                ("left", ReorderableColumn("left", pinned_ids={"HelpPanel"})),
+                ("right", ReorderableColumn("right")),
+            ]
+        )
+
+        for column in self.columns.values():
+            column.setFixedWidth(300)
+            scroll = QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(column)
+            scroll.setFixedWidth(320)
+            layout.addWidget(scroll)
+
         layout.addStretch(1)
 
-        # Add control panels
+        self.layout_manager = PanelLayoutManager(
+            self._settings,
+            self.LAYOUT_SETTINGS_GROUP,
+            self.columns,
+        )
+
+        # Instantiate standard panels
         self.help_panel = HelpPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
@@ -626,29 +649,46 @@ class Controls(QWidget):
         self.xy_lock_panel = XYLockPanel(self.manager)
         self.z_lock_panel = ZLockPanel(self.manager)
         self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
-        # Column - 0
-        self.add_panel(self.help_panel, column=0)
-        self.add_panel(self.status_panel, column=0)
-        self.add_panel(self.camera_panel, column=0)
-        self.add_panel(self.acquisition_panel, column=0)
-        self.add_panel(self.histogram_panel, column=0)
-        self.add_panel(self.bead_selection_panel, column=0)
-        self.add_panel(self.profile_panel, column=0)
-        # Column - 1
-        self.add_panel(self.plot_settings_panel, column=1)
-        self.add_panel(self.z_lut_generation_panel, column=1)
-        self.add_panel(self.script_panel, column=1)
-        self.add_panel(self.xy_lock_panel, column=1)
-        self.add_panel(self.z_lock_panel, column=1)
 
-        for c in self.manager.controls_to_add:
-            control = c[0]
-            column = c[1]
-            self.add_panel(control(self.manager), column=column)
+        definitions: list[tuple[str, QWidget, str, bool]] = [
+            ("HelpPanel", self.help_panel, "left", False),
+            ("StatusPanel", self.status_panel, "left", True),
+            ("CameraPanel", self.camera_panel, "left", True),
+            ("AcquisitionPanel", self.acquisition_panel, "left", True),
+            ("HistogramPanel", self.histogram_panel, "left", True),
+            ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
+            ("ProfilePanel", self.profile_panel, "left", True),
+            ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
+            ("ZLUTGenerationPanel", self.z_lut_generation_panel, "right", True),
+            ("ScriptPanel", self.script_panel, "right", True),
+            ("XYLockPanel", self.xy_lock_panel, "right", True),
+            ("ZLockPanel", self.z_lock_panel, "right", True),
+        ]
 
-        # Add a stretch to the bottom of each column
-        for column in self.columns:
-            column.addStretch(1)
+        column_names = list(self.columns.keys())
+
+        for panel_id, widget, column_name, draggable in definitions:
+            self.panels[panel_id] = widget
+            self.layout_manager.register_panel(
+                panel_id,
+                widget,
+                column_name,
+                draggable=draggable,
+            )
+
+        for control_factory, column in self.manager.controls_to_add:
+            widget = control_factory(self.manager)
+            panel_id = widget.__class__.__name__
+            if isinstance(column, int):
+                column_name = column_names[min(max(column, 0), len(column_names) - 1)]
+            else:
+                column_name = str(column)
+                if column_name not in self.columns:
+                    column_name = column_names[0]
+            self.panels[panel_id] = widget
+            self.layout_manager.register_panel(panel_id, widget, column_name)
+
+        self.layout_manager.restore_layout()
 
     @property
     def settings(self):
@@ -657,7 +697,3 @@ class Controls(QWidget):
     @settings.setter
     def settings(self, value):
         raise AttributeError("Read-only attribute.")
-
-    def add_panel(self, panel: ControlPanelBase, column: int):
-        self.columns[column].addWidget(panel)
-        self.panels[panel.__class__.__name__] = panel
