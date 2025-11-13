@@ -3,6 +3,7 @@ from magscope.gui.video_viewer import VideoViewer
 from magscope.gui.plots import PlotWorker, TimeSeriesPlotBase
 from magscope.gui.widgets import (
     CollapsibleGroupBox,
+    LabeledCollapsibleGroupBox,
     LabeledLineEditWithValue,
     LabeledLineEdit,
     LabeledCheckbox,

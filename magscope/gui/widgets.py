@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QPropertyAnimation, QTimer, QSettings, Qt,
                           QRect, pyqtSignal, QPointF, QPoint, QMimeData, QRectF)
-from PyQt6.QtGui import QValidator, QPainter, QColor, QPen, QDrag, QFont, QBrush
+from PyQt6.QtGui import (QValidator, QPainter, QColor, QPen, QDrag, QFont,
+                         QBrush, QPixmap, QPalette)
 from PyQt6.QtWidgets import (QCheckBox, QGroupBox, QLineEdit, QSplitter,
                              QSplitterHandle, QWidget, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QScrollArea, QPushButton,
@@ -183,6 +184,7 @@ class CollapsibleGroupBox(QGroupBox):
         super().__init__()
 
         self.title = title
+        self.drag_handle: QWidget | None = None
 
         # Retrieve last collapse state
         settings = QSettings('MagScope', 'MagScope')
@@ -209,10 +211,7 @@ class CollapsibleGroupBox(QGroupBox):
         # Replace the groupbox's default title with the button
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 2)
-        title_widget = QWidget()
-        title_layout = QVBoxLayout(title_widget)
-        title_layout.setContentsMargins(4, 4, 4, 4)
-        title_layout.addWidget(self.toggle_button)
+        title_widget = self._create_title_widget()
         self.setTitle("")
         self.layout().addWidget(title_widget)
         self.layout().setSpacing(0)
@@ -275,6 +274,86 @@ class CollapsibleGroupBox(QGroupBox):
     def _get_toggle_text(title, expanded):
         arrow = '▼' if expanded else '❯'
         return f' {arrow} {title}'
+
+    def _create_title_widget(self) -> QWidget:
+        title_widget = QWidget()
+        title_layout = QVBoxLayout(title_widget)
+        title_layout.setContentsMargins(4, 4, 4, 4)
+        title_layout.addWidget(self.toggle_button)
+        return title_widget
+
+
+class LabeledCollapsibleGroupBox(CollapsibleGroupBox):
+    """Collapsible group box with a leading drag handle."""
+
+    def __init__(self, title: str = "", collapsed: bool = False,
+                 handle_pixmap: QPixmap | None = None):
+        self._custom_handle_pixmap = handle_pixmap
+        super().__init__(title=title, collapsed=collapsed)
+
+    def _create_title_widget(self) -> QWidget:
+        title_widget = QWidget()
+        title_layout = QHBoxLayout(title_widget)
+        title_layout.setContentsMargins(4, 4, 4, 4)
+        title_layout.setSpacing(6)
+
+        self.drag_handle = QLabel(title_widget)
+        self.drag_handle.setObjectName("PanelDragHandle")
+        self.drag_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drag_handle.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                       QSizePolicy.Policy.Preferred)
+
+        icon = self._custom_handle_pixmap or self._create_default_handle_icon()
+        if icon is not None:
+            device_ratio = icon.devicePixelRatio()
+            logical_width = int(icon.width() / device_ratio)
+            self.drag_handle.setFixedWidth(max(logical_width, 14))
+            self.drag_handle.setPixmap(icon)
+        else:
+            self.drag_handle.setFixedWidth(16)
+            self.drag_handle.setText("⋮")
+
+        self.drag_handle.setStyleSheet(
+            "QLabel { border: none; padding: 0px; }")
+
+        self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Preferred)
+
+        title_layout.addWidget(self.drag_handle)
+        title_layout.addWidget(self.toggle_button, 1)
+
+        return title_widget
+
+    def _create_default_handle_icon(self) -> QPixmap:
+        handle_height = 14
+        handle_width = 14
+        pixel_ratio = max(1.0, self.devicePixelRatioF())
+        pixmap = QPixmap(int(handle_width * pixel_ratio),
+                         int(handle_height * pixel_ratio))
+        pixmap.setDevicePixelRatio(pixel_ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        palette = self.toggle_button.palette()
+        color = palette.color(QPalette.ColorRole.ButtonText)
+        color.setAlpha(180)
+
+        pen = QPen(color)
+        pen.setWidthF(1.8 * pixel_ratio)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+
+        line_offsets = [3, 7, 11]
+        for y in line_offsets:
+            painter.drawLine(3 * pixel_ratio, y * pixel_ratio,
+                             (handle_width - 3) * pixel_ratio,
+                             y * pixel_ratio)
+
+        painter.end()
+
+        return pixmap
 
 
 class GripHandle(QSplitterHandle):
