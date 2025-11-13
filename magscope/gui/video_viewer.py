@@ -287,23 +287,34 @@ class VideoViewer(QGraphicsView):
             -self._mini_map_inner_margin,
         )
 
-        available_size = QSize(
-            max(1, int(available_rect.width())),
-            max(1, int(available_rect.height())),
-        )
-        scaled = pixmap.scaled(
-            available_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        pixmap_rect = pixmap.rect()
+        pixmap_width = pixmap_rect.width()
+        pixmap_height = pixmap_rect.height()
+        if pixmap_width <= 0 or pixmap_height <= 0:
+            painter.restore()
+            return
+
+        scale_factor = min(
+            available_rect.width() / pixmap_width,
+            available_rect.height() / pixmap_height,
         )
 
+        target_width = max(1.0, pixmap_width * scale_factor)
+        target_height = max(1.0, pixmap_height * scale_factor)
+
         target_rect = QRectF(
-            available_rect.x() + (available_rect.width() - scaled.width()) / 2,
-            available_rect.y() + (available_rect.height() - scaled.height()) / 2,
-            scaled.width(),
-            scaled.height(),
+            available_rect.x() + (available_rect.width() - target_width) / 2,
+            available_rect.y() + (available_rect.height() - target_height) / 2,
+            target_width,
+            target_height,
         )
-        painter.drawPixmap(target_rect, scaled)
+        self._debug(
+            "mini map paint",
+            overlay_rect=self._rect_to_tuple(overlay_rect),
+            target_rect=self._rect_to_tuple(target_rect),
+            scale_factor=round(scale_factor, 4),
+        )
+        painter.drawPixmap(target_rect, pixmap, pixmap_rect)
 
         if self._mini_map_image_rect.width() == 0 or self._mini_map_image_rect.height() == 0:
             painter.restore()
@@ -324,6 +335,10 @@ class VideoViewer(QGraphicsView):
             target_rect.y() + rel_y * target_rect.height(),
             rel_w * target_rect.width(),
             rel_h * target_rect.height(),
+        )
+        self._debug(
+            "mini map highlight",
+            highlight_rect=self._rect_to_tuple(highlight_rect),
         )
 
         pen = QPen(QColor(255, 255, 255, 220))
