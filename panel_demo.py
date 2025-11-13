@@ -192,6 +192,7 @@ class PanelWrapper(QFrame):
         self.column: ReorderableColumn | None = None
         self._drag_filters: list[_TitleDragFilter] = []
         self.draggable = draggable
+        self._drop_accepted = False
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setObjectName(f"PanelWrapper_{panel_id}")
@@ -249,16 +250,20 @@ class PanelWrapper(QFrame):
         drag.setPixmap(pixmap)
 
         original_index = column.begin_drag(self)
+        self._drop_accepted = False
 
         result = drag.exec(Qt.DropAction.MoveAction)
 
-        if result != Qt.DropAction.MoveAction:
+        if result != Qt.DropAction.MoveAction or not self._drop_accepted:
             column.cancel_drag(self, original_index)
 
         column.finish_drag()
 
         for drag_filter in self._drag_filters:
             drag_filter.drag_finished()
+
+    def mark_drop_accepted(self) -> None:
+        self._drop_accepted = True
 
 
 class ReorderableColumn(QWidget):
@@ -470,6 +475,7 @@ class ReorderableColumn(QWidget):
                     drop_index = placeholder_index
                 self.clear_placeholder()
                 self.add_panel(wrapper, drop_index)
+                wrapper.mark_drop_accepted()
                 window.save_layout()
                 event.acceptProposedAction()
                 return
