@@ -86,7 +86,7 @@ class HelpPanel(QFrame):
         self.title_label.setFont(font)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        self.description_label = QLabel("Open the MagScope documentation")
+        self.description_label = QLabel("Click to open the MagScope documentation")
         self.description_label.setWordWrap(True)
 
         layout.addWidget(self.title_label)
@@ -95,11 +95,12 @@ class HelpPanel(QFrame):
         self._hovered = False
         self._apply_styles()
 
-    def mousePressEvent(self, event):
+    def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            QDesktopServices.openUrl(self.HELP_URL)
-            event.accept()
-            return
+            if self.rect().contains(event.pos()):
+                QDesktopServices.openUrl(self.HELP_URL)
+                event.accept()
+                return
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
