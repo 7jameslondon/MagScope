@@ -373,7 +373,7 @@ class DummyCameraBeads(CameraBase):
     settings = [
         'framerate',
         'n_static', 'n_tethered',
-        'radius_nm', 'nm_per_px',
+        'nm_per_px',
         'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
         'z_static_um', 'z_anchor_um',
         'electron_gain',
@@ -386,7 +386,6 @@ class DummyCameraBeads(CameraBase):
             'framerate'     : 30.0,    # Hz
             'n_static'      : 2,
             'n_tethered'    : 4,
-            'radius_nm'     : 1500.0,
             'nm_per_px'     : float(self.nm_per_px),  # keep in sync
             'theta_xy'      : 1.5,
             'sigma_xy_px'   : 3.0,
@@ -401,6 +400,7 @@ class DummyCameraBeads(CameraBase):
         self._min_sep_px = 32.0
         self._edge_margin_px = 10.0
         self._background = 0.4
+        self._radius_nm = 1500.0
         self._rng = np.random.default_rng(self._settings['seed'])
 
         # placement and bead state
@@ -461,7 +461,7 @@ class DummyCameraBeads(CameraBase):
             z_anchor = float(self._settings['z_anchor_um'])
             size_px = int(self._bead_size_px)
             nmpp    = float(self._settings['nm_per_px'])
-            radius  = float(self._settings['radius_nm'])
+            radius  = float(self._radius_nm)
 
             for j in range(n_t):
                 # OU updates
@@ -524,7 +524,7 @@ class DummyCameraBeads(CameraBase):
             self._init_tether_state()
             return
 
-        if name in ('radius_nm', 'nm_per_px', 'z_static_um', 'z_anchor_um',
+        if name in ('nm_per_px', 'z_static_um', 'z_anchor_um',
                     'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
                     'electron_gain'):
             v = f(value)
@@ -572,7 +572,7 @@ class DummyCameraBeads(CameraBase):
             return
         size_px = int(self._bead_size_px)
         nmpp    = float(self._settings['nm_per_px'])
-        radius  = float(self._settings['radius_nm'])
+        radius  = float(self._radius_nm)
         z_s     = float(self._settings['z_static_um'])
         xyz = np.array([[0.0, 0.0, z_s]], np.float32)
         crop_WHT = simulate_beads(xyz, nm_per_px=nmpp, size_px=size_px, radius_nm=radius)  # (w,h,1)
