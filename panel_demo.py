@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -254,6 +255,7 @@ class ReorderableColumn(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(6)
         self._layout.addStretch(1)
+        self._placeholder: QFrame | None = None
 
     def panels(self) -> list[PanelWrapper]:
         widgets: list[PanelWrapper] = []
@@ -304,21 +306,69 @@ class ReorderableColumn(QWidget):
                 return i
         return self._layout.count() - 1
 
+    def _ensure_placeholder(self) -> QFrame:
+        if self._placeholder is None:
+            placeholder = QFrame(self)
+            placeholder.setObjectName("panel_drop_placeholder")
+            placeholder.setStyleSheet(
+                "#panel_drop_placeholder { border: 2px dashed palette(mid); background: transparent; }"
+            )
+            placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            placeholder.hide()
+            self._placeholder = placeholder
+        return self._placeholder
+
+    def _update_placeholder(self, wrapper: PanelWrapper | None, cursor_y: float) -> None:
+        if wrapper is None:
+            self.clear_placeholder()
+            return
+
+        placeholder = self._ensure_placeholder()
+        height = wrapper.height() or wrapper.sizeHint().height()
+        placeholder.setFixedHeight(max(24, height))
+        target_index = self._drop_index(cursor_y)
+        current_index = self._layout.indexOf(placeholder)
+        if current_index == -1:
+            self._layout.insertWidget(target_index, placeholder)
+        elif current_index != target_index:
+            self._layout.removeWidget(placeholder)
+            self._layout.insertWidget(target_index, placeholder)
+        placeholder.show()
+
+    def clear_placeholder(self) -> None:
+        if self._placeholder is None:
+            return
+        index = self._layout.indexOf(self._placeholder)
+        if index != -1:
+            self._layout.removeWidget(self._placeholder)
+        self._placeholder.hide()
+
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         if event.mimeData().hasFormat(PANEL_MIME_TYPE):
             event.acceptProposedAction()
+            wrapper = self._wrapper_from_event(event)
+            if wrapper is not None:
+                self._update_placeholder(wrapper, event.position().y())
         else:
             event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # type: ignore[override]
         if event.mimeData().hasFormat(PANEL_MIME_TYPE):
             event.acceptProposedAction()
+            wrapper = self._wrapper_from_event(event)
+            if wrapper is not None:
+                self._update_placeholder(wrapper, event.position().y())
         else:
             event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # type: ignore[override]
+        self.clear_placeholder()
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # type: ignore[override]
         if not event.mimeData().hasFormat(PANEL_MIME_TYPE):
             event.ignore()
+            self.clear_placeholder()
             return
 
         panel_id = bytes(event.mimeData().data(PANEL_MIME_TYPE)).decode("utf-8")
@@ -330,8 +380,20 @@ class ReorderableColumn(QWidget):
                 self.add_panel(wrapper, drop_index)
                 window.save_layout()
                 event.acceptProposedAction()
+                self.clear_placeholder()
                 return
         event.ignore()
+        self.clear_placeholder()
+
+    def _wrapper_from_event(self, event) -> PanelWrapper | None:
+        panel_id_bytes = event.mimeData().data(PANEL_MIME_TYPE)
+        if panel_id_bytes.isEmpty():
+            return None
+        panel_id = bytes(panel_id_bytes).decode("utf-8")
+        window = self.window()
+        if isinstance(window, PanelDemoWindow):
+            return window.panel_wrappers.get(panel_id)
+        return None
 
 
 class PanelDemoWindow(QMainWindow):
