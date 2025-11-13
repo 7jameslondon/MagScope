@@ -371,13 +371,12 @@ class DummyCameraBeads(CameraBase):
 
     # Exposed settings
     settings = [
-        'framerate', 'exposure', 'gain',
+        'framerate',
         'n_static', 'n_tethered',
-        'bead_size_px', 'radius_nm', 'nm_per_px',
-        'min_sep_px', 'edge_margin_px',
+        'radius_nm', 'nm_per_px',
         'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
         'z_static_um', 'z_anchor_um',
-        'background', 'poisson', 'electron_gain',
+        'poisson', 'electron_gain',
         'seed'
     ]
 
@@ -385,26 +384,24 @@ class DummyCameraBeads(CameraBase):
         super().__init__()
         self._settings = {
             'framerate'     : 30.0,    # Hz
-            'exposure'      : 1.0,     # scalar multiplier before noise
-            'gain'          : 1.0,     # scalar multiplier after noise
             'n_static'      : 2,
             'n_tethered'    : 4,
-            'bead_size_px'  : 32,
             'radius_nm'     : 1500.0,
             'nm_per_px'     : float(self.nm_per_px),  # keep in sync
-            'min_sep_px'    : 32.0,
-            'edge_margin_px': 10.0,
             'theta_xy'      : 1.5,
             'sigma_xy_px'   : 3.0,
             'theta_z'       : 2.0,
             'sigma_z_um'    : 0.3,
             'z_static_um'   : 0.0,
             'z_anchor_um'   : 0.0,
-            'background'    : 0.4,
             'poisson'       : 1,        # 1=true, 0=false
             'electron_gain' : 25000.0,
             'seed'          : 2,
         }
+        self._bead_size_px = 32
+        self._min_sep_px = 32.0
+        self._edge_margin_px = 10.0
+        self._background = 0.4
         self._rng = np.random.default_rng(self._settings['seed'])
 
         # placement and bead state
@@ -448,7 +445,7 @@ class DummyCameraBeads(CameraBase):
         dt = (now - self.last_time) if self.last_time > 0 else (1.0 / fr)
 
         # compose frame
-        frame = np.full((self.height, self.width), float(self._settings['background']), np.float32)
+        frame = np.full((self.height, self.width), float(self._background), np.float32)
 
         # static beads
         if self._delta_static is not None and self._centers_static.size:
@@ -463,7 +460,7 @@ class DummyCameraBeads(CameraBase):
             th_z    = float(self._settings['theta_z'])
             sig_z   = float(self._settings['sigma_z_um'])
             z_anchor = float(self._settings['z_anchor_um'])
-            size_px = int(self._settings['bead_size_px'])
+            size_px = int(self._bead_size_px)
             nmpp    = float(self._settings['nm_per_px'])
             radius  = float(self._settings['radius_nm'])
 
@@ -485,22 +482,13 @@ class DummyCameraBeads(CameraBase):
         # noise and scaling
         np.clip(frame, 0.0, 1.0, out=frame)
 
-        # exposure before Poisson
-        exposure = float(self._settings['exposure'])
-        if exposure != 1.0:
-            frame *= exposure
-            np.clip(frame, 0.0, 1.0, out=frame)
-
         # Poisson
         if int(self._settings['poisson']) == 1:
             egain = float(self._settings['electron_gain'])
             lam = np.clip(frame, 0.0, 1.0) * egain
             frame = self._rng.poisson(lam).astype(np.float32) / egain
 
-        # gain and quantize
-        gain = float(self._settings['gain'])
-        if gain != 1.0:
-            frame *= gain
+        # quantize
         np.clip(frame, 0.0, 1.0, out=frame)
 
         max_int = float(np.iinfo(self.dtype).max)
@@ -530,12 +518,6 @@ class DummyCameraBeads(CameraBase):
             self._settings[name] = v
             return
 
-        if name in ('exposure', 'gain'):
-            v = f(value)
-            if v < 0: raise ValueError
-            self._settings[name] = v
-            return
-
         if name in ('n_static', 'n_tethered'):
             v = i(value)
             if not (0 <= v <= 5000): raise ValueError
@@ -544,16 +526,9 @@ class DummyCameraBeads(CameraBase):
             self._init_tether_state()
             return
 
-        if name in ('bead_size_px', 'min_sep_px', 'edge_margin_px'):
-            v = f(value)
-            if v <= 2: raise ValueError
-            self._settings[name] = v
-            self._reinit_centers_and_static()
-            return
-
         if name in ('radius_nm', 'nm_per_px', 'z_static_um', 'z_anchor_um',
                     'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
-                    'background', 'electron_gain'):
+                    'electron_gain'):
             v = f(value)
             self._settings[name] = v
             if name in ('nm_per_px',):
@@ -583,10 +558,10 @@ class DummyCameraBeads(CameraBase):
     # ------------------------- internals ----------------------------
     def _reinit_centers_and_static(self):
         w = self.width; h = self.height
-        size_px = int(self._settings['bead_size_px'])
+        size_px = int(self._bead_size_px)
         base_margin = size_px // 2 + 2
-        margin = int(max(base_margin, int(self._settings['edge_margin_px'])))
-        min_sep = float(self._settings['min_sep_px']) if self._settings['min_sep_px'] else float(size_px)
+        margin = int(max(base_margin, int(self._edge_margin_px)))
+        min_sep = float(self._min_sep_px) if self._min_sep_px else float(size_px)
 
         n_static   = int(self._settings['n_static'])
         n_tethered = int(self._settings['n_tethered'])
@@ -602,7 +577,7 @@ class DummyCameraBeads(CameraBase):
         if n_static <= 0:
             self._delta_static = None
             return
-        size_px = int(self._settings['bead_size_px'])
+        size_px = int(self._bead_size_px)
         nmpp    = float(self._settings['nm_per_px'])
         radius  = float(self._settings['radius_nm'])
         z_s     = float(self._settings['z_static_um'])
