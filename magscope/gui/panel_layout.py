@@ -278,7 +278,7 @@ class ReorderableColumn(QWidget):
             placeholder = QFrame(self)
             placeholder.setObjectName("panel_drop_placeholder")
             placeholder.setStyleSheet(
-                "#panel_drop_placeholder { border: 2px dashed palette(mid); background: transparent; }"
+                "#panel_drop_placeholder { border: 2px dashed palette(light); background: transparent; }"
             )
             placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             placeholder.hide()
