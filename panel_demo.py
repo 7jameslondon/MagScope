@@ -3,9 +3,11 @@
 This script creates a lightweight stub of the MagScope window manager so that
 all of the standard GUI control panels can be instantiated outside of the full
 application.  Panels can be rearranged between the two columns by dragging the
-title area of each panel and the last arrangement is stored with ``QSettings``
-so it is restored the next time the demo is launched.  It is intended as a
-starting point for experimenting with panel layout and behaviour in isolation.
+title area of each panel (with the exception of the Help panel, which remains
+anchored to the top of the left column) and the last arrangement is stored with
+``QSettings`` so it is restored the next time the demo is launched.  It is
+intended as a starting point for experimenting with panel layout and behaviour
+in isolation.
 """
 from __future__ import annotations
 
@@ -183,12 +185,13 @@ class _TitleDragFilter(QObject):
 class PanelWrapper(QFrame):
     """Wrap a panel widget and make its title initiate drag-and-drop."""
 
-    def __init__(self, panel_id: str, widget: QWidget) -> None:
+    def __init__(self, panel_id: str, widget: QWidget, *, draggable: bool = True) -> None:
         super().__init__()
         self.panel_id = panel_id
         self.panel_widget = widget
         self.column: ReorderableColumn | None = None
         self._drag_filters: list[_TitleDragFilter] = []
+        self.draggable = draggable
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setObjectName(f"PanelWrapper_{panel_id}")
@@ -199,7 +202,8 @@ class PanelWrapper(QFrame):
 
         layout.addWidget(widget)
 
-        self._attach_title_drag()
+        if self.draggable:
+            self._attach_title_drag()
 
     def _attach_title_drag(self) -> None:
         groupbox = getattr(self.panel_widget, "groupbox", None)
@@ -225,6 +229,8 @@ class PanelWrapper(QFrame):
         self._drag_filters.append(drag_filter)
 
     def start_drag(self) -> None:
+        if not self.draggable:
+            return
         drag = QDrag(self)
         mime = QMimeData()
         mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
@@ -246,7 +252,7 @@ class PanelWrapper(QFrame):
 class ReorderableColumn(QWidget):
     """Vertical column of draggable panels with drop support."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, pinned_ids: Iterable[str] | None = None) -> None:
         super().__init__()
         self.name = name
         self.setAcceptDrops(True)
@@ -256,6 +262,7 @@ class ReorderableColumn(QWidget):
         self._layout.setSpacing(6)
         self._layout.addStretch(1)
         self._placeholder: QFrame | None = None
+        self._pinned_ids = set(pinned_ids or ())
 
     def panels(self) -> list[PanelWrapper]:
         widgets: list[PanelWrapper] = []
@@ -272,7 +279,7 @@ class ReorderableColumn(QWidget):
     def add_panel(self, wrapper: PanelWrapper, index: int | None = None) -> None:
         if wrapper.column is self:
             current_index = self._layout.indexOf(wrapper)
-            target_index = self._target_index(index)
+            target_index = self._constrain_index(wrapper, self._target_index(index))
             if current_index != target_index:
                 self._layout.removeWidget(wrapper)
                 self._layout.insertWidget(target_index, wrapper)
@@ -283,7 +290,8 @@ class ReorderableColumn(QWidget):
 
         wrapper.setParent(self)
         wrapper.column = self
-        self._layout.insertWidget(self._target_index(index), wrapper)
+        constrained_index = self._constrain_index(wrapper, self._target_index(index))
+        self._layout.insertWidget(constrained_index, wrapper)
         wrapper.show()
 
     def remove_panel(self, wrapper: PanelWrapper) -> None:
@@ -306,6 +314,24 @@ class ReorderableColumn(QWidget):
                 return i
         return self._layout.count() - 1
 
+    def _locked_prefix_length(self) -> int:
+        count = 0
+        for i in range(self._layout.count() - 1):
+            widget = self._layout.itemAt(i).widget()
+            if isinstance(widget, PanelWrapper) and widget.panel_id in self._pinned_ids:
+                count += 1
+            else:
+                break
+        return count
+
+    def _constrain_index(self, wrapper: PanelWrapper, index: int) -> int:
+        if wrapper.panel_id in self._pinned_ids:
+            return 0
+        return max(index, self._locked_prefix_length())
+
+    def _constrained_drop_index(self, wrapper: PanelWrapper, cursor_y: float) -> int:
+        return self._constrain_index(wrapper, self._drop_index(cursor_y))
+
     def _ensure_placeholder(self) -> QFrame:
         if self._placeholder is None:
             placeholder = QFrame(self)
@@ -326,7 +352,7 @@ class ReorderableColumn(QWidget):
         placeholder = self._ensure_placeholder()
         height = wrapper.height() or wrapper.sizeHint().height()
         placeholder.setFixedHeight(max(24, height))
-        target_index = self._drop_index(cursor_y)
+        target_index = self._constrained_drop_index(wrapper, cursor_y)
         current_index = self._layout.indexOf(placeholder)
         if current_index == -1:
             self._layout.insertWidget(target_index, placeholder)
@@ -376,7 +402,7 @@ class ReorderableColumn(QWidget):
         if isinstance(window, PanelDemoWindow):
             wrapper = window.panel_wrappers.get(panel_id)
             if wrapper is not None:
-                drop_index = self._drop_index(event.position().y())
+                drop_index = self._constrained_drop_index(wrapper, event.position().y())
                 self.add_panel(wrapper, drop_index)
                 window.save_layout()
                 event.acceptProposedAction()
@@ -412,7 +438,10 @@ class PanelDemoWindow(QMainWindow):
 
         self.panel_wrappers: dict[str, PanelWrapper] = {}
         self.panels: dict[str, QWidget] = {}
-        self.columns = [ReorderableColumn("left"), ReorderableColumn("right")]
+        self.columns = [
+            ReorderableColumn("left", pinned_ids={"HelpPanel"}),
+            ReorderableColumn("right"),
+        ]
         for column in self.columns:
             column.setFixedWidth(300)
 
@@ -455,7 +484,11 @@ class PanelDemoWindow(QMainWindow):
 
         for panel_id, panel_widget in panels:
             self.panels[panel_id] = panel_widget
-            self.panel_wrappers[panel_id] = PanelWrapper(panel_id, panel_widget)
+            self.panel_wrappers[panel_id] = PanelWrapper(
+                panel_id,
+                panel_widget,
+                draggable=panel_id != "HelpPanel",
+            )
 
         self.manager.controls = self
 
@@ -488,6 +521,16 @@ class PanelDemoWindow(QMainWindow):
             elif isinstance(stored, str) and stored:
                 restored_layout[column_name] = [item for item in stored.split("|") if item]
         self.settings.endGroup()
+
+        # Ensure pinned panels remain in their designated columns.
+        pinned_targets = {"HelpPanel": "left"}
+        for panel_id, column_name in pinned_targets.items():
+            for other_name, layout in restored_layout.items():
+                if other_name != column_name:
+                    layout[:] = [item for item in layout if item != panel_id]
+            target_layout = restored_layout.setdefault(column_name, [])
+            if panel_id not in target_layout:
+                target_layout.insert(0, panel_id)
 
         used: set[str] = set()
         for column_name, column in zip(("left", "right"), self.columns):
