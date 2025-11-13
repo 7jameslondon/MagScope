@@ -2,8 +2,8 @@
 
 This script creates a lightweight stub of the MagScope window manager so that
 all of the standard GUI control panels can be instantiated outside of the full
-application.  Panels can be rearranged between the two columns via the grab
-handle above each panel and the last arrangement is stored with ``QSettings``
+application.  Panels can be rearranged between the two columns by dragging the
+title area of each panel and the last arrangement is stored with ``QSettings``
 so it is restored the next time the demo is launched.  It is intended as a
 starting point for experimenting with panel layout and behaviour in isolation.
 """
@@ -16,14 +16,14 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
-from PyQt6.QtCore import QPoint, Qt, QSettings, QMimeData
+from PyQt6.QtCore import QPoint, Qt, QSettings, QMimeData, QEvent, QObject
 from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -138,67 +138,90 @@ class DemoWindowManager:
 PANEL_MIME_TYPE = "application/x-magscope-panel"
 
 
-class DragHandle(QFrame):
-    """Slim grab handle that initiates panel drag-and-drop."""
+class _TitleDragFilter(QObject):
+    """Convert title-area drags into wrapper move operations."""
 
-    def __init__(self, parent: "PanelWrapper") -> None:
-        super().__init__(parent)
-        self._parent_wrapper = parent
+    def __init__(self, wrapper: "PanelWrapper", target: QWidget) -> None:
+        super().__init__(target)
+        self._wrapper = wrapper
+        self.target = target
         self._drag_start = QPoint()
+        self._dragging = False
 
-        self.setObjectName("PanelDragHandle")
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        label = QLabel("⋮⋮", self)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setToolTip("Drag to rearrange panel")
-        layout.addWidget(label)
-
-    def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        if event.button() == Qt.MouseButton.LeftButton:
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        if event.type() == QEvent.Type.Enter:
+            self.target.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif event.type() == QEvent.Type.Leave:
+            if not self._dragging:
+                self.target.unsetCursor()
+        elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             self._drag_start = event.position().toPoint()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
-        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self.target.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif event.type() == QEvent.Type.MouseMove and event.buttons() & Qt.MouseButton.LeftButton:
             distance = (event.position().toPoint() - self._drag_start).manhattanLength()
             if distance >= QApplication.startDragDistance():
-                self._parent_wrapper.start_drag()
-                return
-        super().mouseMoveEvent(event)
+                if isinstance(self.target, QPushButton):
+                    self.target.setDown(False)
+                self._dragging = True
+                self._wrapper.start_drag()
+                return True
+        elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            self.target.setCursor(Qt.CursorShape.OpenHandCursor)
+            if self._dragging:
+                self._dragging = False
+                return True
+        return QObject.eventFilter(self, obj, event)
 
-    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-        super().mouseReleaseEvent(event)
+    def drag_finished(self) -> None:
+        if self._dragging:
+            self._dragging = False
+        self.target.setCursor(Qt.CursorShape.OpenHandCursor)
 
 
 class PanelWrapper(QFrame):
-    """Wraps a panel widget and exposes drag behaviour via :class:`DragHandle`."""
+    """Wrap a panel widget and make its title initiate drag-and-drop."""
 
     def __init__(self, panel_id: str, widget: QWidget) -> None:
         super().__init__()
         self.panel_id = panel_id
         self.panel_widget = widget
         self.column: ReorderableColumn | None = None
+        self._drag_filters: list[_TitleDragFilter] = []
 
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setObjectName(f"PanelWrapper_{panel_id}")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self.handle = DragHandle(self)
-        self.handle.setFixedHeight(12)
-        layout.addWidget(self.handle)
+        layout.setSpacing(0)
 
         layout.addWidget(widget)
+
+        self._attach_title_drag()
+
+    def _attach_title_drag(self) -> None:
+        groupbox = getattr(self.panel_widget, "groupbox", None)
+        toggle_button = getattr(groupbox, "toggle_button", None) if groupbox is not None else None
+        if isinstance(toggle_button, QWidget):
+            self._register_drag_source(toggle_button)
+            title_container = toggle_button.parentWidget()
+            if isinstance(title_container, QWidget) and title_container is not toggle_button:
+                self._register_drag_source(title_container)
+            return
+
+        # Fallback for widgets that do not expose a CollapsibleGroupBox title
+        self._register_drag_source(self.panel_widget)
+
+    def _register_drag_source(self, widget: QWidget | None) -> None:
+        if widget is None:
+            return
+        for existing in self._drag_filters:
+            if existing.target is widget:
+                return
+        drag_filter = _TitleDragFilter(self, widget)
+        widget.installEventFilter(drag_filter)
+        self._drag_filters.append(drag_filter)
 
     def start_drag(self) -> None:
         drag = QDrag(self)
@@ -214,6 +237,9 @@ class PanelWrapper(QFrame):
         drag.setPixmap(pixmap)
 
         drag.exec(Qt.DropAction.MoveAction)
+
+        for drag_filter in self._drag_filters:
+            drag_filter.drag_finished()
 
 
 class ReorderableColumn(QWidget):
