@@ -150,7 +150,7 @@ class ReorderableColumn(QWidget):
         self._active_drag_height: int | None = None
         self._manager: PanelLayoutManager | None = None
 
-    def set_manager(self, manager: "PanelLayoutManager") -> None:
+    def set_manager(self, manager: "PanelLayoutManager | None") -> None:
         self._manager = manager
 
     def panels(self) -> list[PanelWrapper]:
@@ -419,7 +419,7 @@ class PanelLayoutManager:
         return wrapper
 
     def restore_layout(self) -> None:
-        layout = {name: [] for name in self.columns}
+        layout: "OrderedDict[str, list[str]]" = OrderedDict((name, []) for name in self.columns)
         used: set[str] = set()
 
         stored = self._load_layout()
@@ -454,8 +454,16 @@ class PanelLayoutManager:
         if self._settings is None:
             return
         self._settings.beginGroup(self._settings_group)
+        order_key = "__column_order__"
+        column_names = list(self.columns.keys())
+        self._settings.setValue(order_key, column_names)
+        stored_keys = set(self._settings.childKeys())
         for name, column in self.columns.items():
             self._settings.setValue(name, column.panel_ids())
+            stored_keys.discard(name)
+        stored_keys.discard(order_key)
+        for obsolete in stored_keys:
+            self._settings.remove(obsolete)
         self._settings.endGroup()
 
     def current_layout(self) -> dict[str, list[str]]:
@@ -466,16 +474,80 @@ class PanelLayoutManager:
         if self._on_layout_changed is not None:
             self._on_layout_changed(self.current_layout())
 
-    def _load_layout(self) -> dict[str, list[str]]:
+    def _normalise_panel_list(self, stored) -> list[str] | None:
+        if isinstance(stored, list):
+            return [str(item) for item in stored]
+        if isinstance(stored, str) and stored:
+            return [item.strip() for item in stored.split(",") if item.strip()]
+        return None
+
+    def _load_layout(self) -> "OrderedDict[str, list[str]]":
+        layout: "OrderedDict[str, list[str]]" = OrderedDict()
         if self._settings is None:
-            return {}
-        layout: dict[str, list[str]] = {}
+            return layout
         self._settings.beginGroup(self._settings_group)
-        for name in self.columns:
+        order_key = "__column_order__"
+        order_value = self._settings.value(order_key, defaultValue=[])
+        column_order: list[str]
+        if isinstance(order_value, list):
+            column_order = [str(item) for item in order_value]
+        elif isinstance(order_value, str) and order_value:
+            column_order = [item.strip() for item in order_value.split(",") if item.strip()]
+        else:
+            column_order = []
+        seen: set[str] = set()
+        for name in column_order:
             stored = self._settings.value(name, defaultValue=None)
-            if isinstance(stored, list):
-                layout[name] = [str(item) for item in stored]
-            elif isinstance(stored, str) and stored:
-                layout[name] = [item.strip() for item in stored.split(",") if item.strip()]
+            panel_ids = self._normalise_panel_list(stored)
+            if panel_ids is not None:
+                layout[name] = panel_ids
+                seen.add(name)
+        for name in self._settings.childKeys():
+            name = str(name)
+            if name == order_key or name in seen:
+                continue
+            stored = self._settings.value(name, defaultValue=None)
+            panel_ids = self._normalise_panel_list(stored)
+            if panel_ids is not None:
+                layout[name] = panel_ids
         self._settings.endGroup()
         return layout
+
+    def stored_layout(self) -> "OrderedDict[str, list[str]]":
+        return self._load_layout()
+
+    def stored_column_names(self) -> list[str]:
+        stored = self._load_layout()
+        return list(stored.keys())
+
+    def add_column(self, name: str, column: ReorderableColumn, index: int | None = None) -> None:
+        if name in self.columns:
+            raise ValueError(f"Column '{name}' already exists")
+        items = list(self.columns.items())
+        target_index = len(items) if index is None else max(0, min(index, len(items)))
+        items.insert(target_index, (name, column))
+        self.columns = OrderedDict(items)
+        column.set_manager(self)
+
+    def remove_column(self, name: str) -> None:
+        column = self.columns.get(name)
+        if column is None:
+            return
+        if column.panels():
+            raise ValueError(f"Column '{name}' is not empty")
+        column.set_manager(None)
+        del self.columns[name]
+        if self._settings is None:
+            return
+        self._settings.beginGroup(self._settings_group)
+        self._settings.remove(name)
+        order_key = "__column_order__"
+        order_value = self._settings.value(order_key, defaultValue=[])
+        if isinstance(order_value, list):
+            updated_order = [str(item) for item in order_value if str(item) != name]
+        elif isinstance(order_value, str) and order_value:
+            updated_order = [item.strip() for item in order_value.split(",") if item.strip() and item.strip() != name]
+        else:
+            updated_order = []
+        self._settings.setValue(order_key, updated_order)
+        self._settings.endGroup()
