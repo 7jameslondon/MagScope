@@ -737,6 +737,9 @@ class StatusPanel(ControlPanelBase):
         self.layout().addWidget(self.video_processors_status)
 
         # Video Buffer
+        self.video_buffer_size_status = QLabel()
+        self._update_video_buffer_size_label()
+        self.layout().addWidget(self.video_buffer_size_status)
         self.video_buffer_status = QLabel()
         self.layout().addWidget(self.video_buffer_status)
         self.video_buffer_status_bar = QProgressBar()
@@ -759,6 +762,15 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_status.setText(f'Video Buffer: {text}')
         value = int(text.split('%')[0])
         self.video_buffer_status_bar.setValue(value)
+
+    def _update_video_buffer_size_label(self) -> None:
+        video_buffer = getattr(self.manager, 'video_buffer', None)
+        if video_buffer is None or getattr(video_buffer, 'buffer_size', None) is None:
+            self.video_buffer_size_status.setText('Video Buffer Size: Unknown')
+            return
+
+        size_mb = video_buffer.buffer_size / 1e6
+        self.video_buffer_size_status.setText(f'Video Buffer Size: {size_mb:.1f} MB')
 
     def update_video_buffer_purge(self, t: float):
         string = time.strftime("%I:%M:%S %p", time.localtime(t))
