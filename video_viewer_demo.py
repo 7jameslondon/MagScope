@@ -35,6 +35,8 @@ class VideoViewerDemo(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_frame)
 
+        self._view_initialized = False
+
         self._update_frame()
         self._timer.start(self._FRAME_INTERVAL_MS)
 
@@ -56,7 +58,9 @@ class VideoViewerDemo(QMainWindow):
         )
         pixmap = QPixmap.fromImage(self._qimage)
         self.viewer.set_pixmap(pixmap)
-        self.viewer.reset_view()
+        if not self._view_initialized:
+            self.viewer.reset_view()
+            self._view_initialized = True
 
 
 def main() -> int:
