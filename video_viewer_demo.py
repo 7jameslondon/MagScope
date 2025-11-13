@@ -91,6 +91,41 @@ class NewVideoViewer(QGraphicsView):
 
         self.crosshairs: list[CrossCircleItem] = []
 
+        # Minimap overlay components for highlighting the current viewport.
+        self._minimap = QGraphicsView(self.viewport())
+        self._minimap.setScene(QGraphicsScene(self))
+        self._minimap.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._minimap.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._minimap.setFrameShape(QFrame.Shape.Panel)
+        self._minimap.setFrameShadow(QFrame.Shadow.Sunken)
+        self._minimap.setBackgroundBrush(QBrush(QColor(20, 20, 20, 230)))
+        self._minimap.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorViewCenter
+        )
+        self._minimap.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self._minimap.setInteractive(False)
+        self._minimap.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._minimap.setStyleSheet(
+            "QGraphicsView { border: 1px solid rgba(255, 255, 255, 120); }"
+        )
+        self._minimap.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._minimap.hide()
+
+        self._minimap_scene: QGraphicsScene = self._minimap.scene()  # type: ignore[assignment]
+        self._minimap_image = QGraphicsPixmapItem()
+        self._minimap_scene.addItem(self._minimap_image)
+        pen = QPen(QColor(255, 255, 255, 200))
+        pen.setWidthF(0)
+        pen.setCosmetic(True)
+        self._minimap_view_rect = self._minimap_scene.addRect(QRectF(), pen)
+        self._minimap_view_rect.setZValue(10)
+
     def plot(self, x, y, size) -> None:
         self.clear_crosshairs()
 
@@ -125,6 +160,8 @@ class NewVideoViewer(QGraphicsView):
         self._empty = False
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self._image.setPixmap(default_pixmap)
+        self._minimap_image.setPixmap(default_pixmap)
+        self._minimap_scene.setSceneRect(QRectF(default_pixmap.rect()))
         self.reset_view(round(self.scale_factor**self._zoom))
 
     def has_image(self) -> bool:
@@ -153,15 +190,22 @@ class NewVideoViewer(QGraphicsView):
         self.scale(factor, factor)
         self.centerOn(self._image)
         self.update_coordinates()
+        self._update_minimap()
 
     def clear_image(self) -> None:
         self._empty = True
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._image.setPixmap(QPixmap())
         self.reset_view(round(self.scale_factor**self._zoom))
+        self._minimap_image.setPixmap(QPixmap())
+        self._minimap_scene.setSceneRect(QRectF())
+        self._minimap.hide()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._image.setPixmap(pixmap)
+        self._minimap_image.setPixmap(pixmap)
+        self._minimap_scene.setSceneRect(QRectF(pixmap.rect()))
+        self._update_minimap()
 
     def zoom_level(self) -> int:
         return self._zoom
@@ -179,8 +223,10 @@ class NewVideoViewer(QGraphicsView):
             else:
                 factor = 1 / self.scale_factor ** abs(step)
             self.scale(factor, factor)
+            self._minimap.setVisible(True)
         else:
             self.reset_view()
+        self._update_minimap()
 
     def wheelEvent(self, event) -> None:  # type: ignore[override]
         delta = event.angleDelta().y()
@@ -190,6 +236,8 @@ class NewVideoViewer(QGraphicsView):
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self.reset_view()
+        self._layout_minimap()
+        self._update_minimap()
 
     def toggle_drag_mode(self) -> None:
         if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -232,6 +280,62 @@ class NewVideoViewer(QGraphicsView):
                     point = self.mapToScene(event.position().toPoint()).toPoint()
                     self.clicked.emit(point)
         super().mouseReleaseEvent(event)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:  # type: ignore[override]
+        super().scrollContentsBy(dx, dy)
+        self._update_minimap()
+
+    def _layout_minimap(self) -> bool:
+        margin = 12
+        viewport_size = self.viewport().size()
+        size = min(max(min(viewport_size.width(), viewport_size.height()) // 4, 120), 220)
+        if (
+            viewport_size.width() <= 2 * margin
+            or viewport_size.height() <= 2 * margin
+            or size <= 0
+        ):
+            self._minimap.hide()
+            return False
+
+        self._minimap.setGeometry(
+            viewport_size.width() - size - margin,
+            margin,
+            size,
+            size,
+        )
+        return True
+
+    def _update_minimap(self) -> None:
+        if self._empty or self._image.pixmap().isNull():
+            self._minimap.hide()
+            return
+
+        if self._zoom <= 0:
+            self._minimap.hide()
+            return
+
+        if not self._layout_minimap():
+            return
+        if not self._minimap.isVisible():
+            self._minimap.show()
+
+        self._minimap.fitInView(
+            self._minimap_image, Qt.AspectRatioMode.KeepAspectRatio
+        )
+
+        viewport_rect = self.viewport().rect()
+        if viewport_rect.isNull():
+            return
+
+        scene_polygon = self.mapToScene(QRectF(viewport_rect))
+        scene_rect = scene_polygon.boundingRect()
+        image_rect = QRectF(self._image.pixmap().rect())
+        scene_rect = scene_rect.intersected(image_rect)
+        if scene_rect.isEmpty():
+            self._minimap_view_rect.setVisible(False)
+        else:
+            self._minimap_view_rect.setRect(scene_rect)
+            self._minimap_view_rect.setVisible(True)
 
 
 class VideoViewerDemo(QMainWindow):
