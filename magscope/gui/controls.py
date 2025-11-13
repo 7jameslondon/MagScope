@@ -487,7 +487,7 @@ class PlotSettingsPanel(ControlPanelBase):
         # Marker size
         self.beads_in_view_marker_size = LabeledLineEdit(
             label_text='Marker size',
-            default='100',
+            default='20',
             callback=self.beads_in_view_marker_size_callback,
         )
         self.layout().addWidget(self.beads_in_view_marker_size)
