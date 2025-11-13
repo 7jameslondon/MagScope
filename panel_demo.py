@@ -363,6 +363,8 @@ class ReorderableColumn(QWidget):
             self._layout.insertWidget(target_index, placeholder)
         elif current_index != target_index:
             self._layout.removeWidget(placeholder)
+            stretch_index = self._layout.count() - 1
+            target_index = min(target_index, stretch_index)
             self._layout.insertWidget(target_index, placeholder)
         placeholder.show()
 
