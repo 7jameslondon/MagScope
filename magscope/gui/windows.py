@@ -90,83 +90,6 @@ class WindowManager(ManagerProcessBase):
         self.windows: list[QMainWindow] = []
 
 
-class AddColumnDropTarget(QFrame):
-    """Drop target that creates a new column when a panel is dropped."""
-
-    def __init__(self, controls: "Controls") -> None:
-        super().__init__()
-        self._controls = controls
-        self.setObjectName("add_column_drop_target")
-        self.setAcceptDrops(True)
-        self.setMinimumWidth(160)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
-        layout.addStretch(1)
-        label = QLabel("Drop here to create a new column")
-        label.setWordWrap(True)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        layout.addStretch(1)
-
-        self._set_active(False)
-        self.setVisible(False)
-
-    def set_drag_active(self, active: bool) -> None:
-        """Toggle visibility based on whether a panel is being dragged."""
-
-        self.setVisible(active)
-        if not active:
-            self._set_active(False)
-
-    def _set_active(self, active: bool) -> None:
-        color = "palette(highlight)" if active else "palette(mid)"
-        self.setStyleSheet(
-            "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
-        )
-
-    def _wrapper_from_event(self, event) -> PanelWrapper | None:
-        manager = self._controls.layout_manager
-        if manager is None:
-            return None
-        mime_data = event.mimeData()
-        if not mime_data.hasFormat(PANEL_MIME_TYPE):
-            return None
-        panel_id_bytes = mime_data.data(PANEL_MIME_TYPE)
-        if panel_id_bytes.isEmpty():
-            return None
-        panel_id = bytes(panel_id_bytes).decode("utf-8")
-        return manager.wrapper_for_id(panel_id)
-
-    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
-        if self._wrapper_from_event(event) is not None:
-            self._set_active(True)
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
-        if self._wrapper_from_event(event) is not None:
-            self._set_active(True)
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event) -> None:  # type: ignore[override]
-        self._set_active(False)
-        super().dragLeaveEvent(event)
-
-    def dropEvent(self, event) -> None:  # type: ignore[override]
-        wrapper = self._wrapper_from_event(event)
-        self._set_active(False)
-        if wrapper is None:
-            event.ignore()
-            return
-        self._controls.create_new_column_with_panel(wrapper)
-        event.acceptProposedAction()
-
     def setup(self):
         self.qt_app = QApplication.instance()
         if not self.qt_app:
@@ -174,8 +97,8 @@ class AddColumnDropTarget(QFrame):
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
 
         # Dark GUI Style
-        style_path = os.path.join(os.path.dirname(__file__), 'style.qss')
-        with open(style_path, 'r') as f:
+        style_path = os.path.join(os.path.dirname(__file__), "style.qss")
+        with open(style_path, "r") as f:
             self.qt_app.setStyleSheet(f.read())
 
         # If the number of windows is not specified, then use the number of screens
@@ -200,8 +123,10 @@ class AddColumnDropTarget(QFrame):
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
-        self.plots_thread.started.connect(self.plot_worker.run) # noqa
-        self.plot_worker.image_signal.connect(lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img)))
+        self.plots_thread.started.connect(self.plot_worker.run)  # noqa
+        self.plot_worker.image_signal.connect(
+            lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img))
+        )
         self.plots_widget.resized.connect(self.update_plot_figure_size)
         self.plots_thread.start(QThread.Priority.LowPriority)
 
@@ -214,7 +139,9 @@ class AddColumnDropTarget(QFrame):
             window.setWindowTitle("MagScope")
             screen = QApplication.screens()[i % len(QApplication.screens())]
             geometry = screen.geometry()
-            window.setGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height())
+            window.setGeometry(
+                geometry.x(), geometry.y(), geometry.width(), geometry.height()
+            )
             window.setMinimumWidth(300)
             window.setMinimumHeight(300)
             window.closeEvent = lambda _, w=window: self.quit()
@@ -228,7 +155,7 @@ class AddColumnDropTarget(QFrame):
 
         # Timer
         self._timer = QTimer()
-        self._timer.timeout.connect(self.do_main_loop) # noqa
+        self._timer.timeout.connect(self.do_main_loop)  # noqa
         self._timer.setInterval(0)
         self._timer.start()
 
@@ -243,7 +170,7 @@ class AddColumnDropTarget(QFrame):
         self.qt_app.exec()
 
     def update_plot_figure_size(self, w, h):
-        self.plot_worker.figure_size_signal.emit(w,h)
+        self.plot_worker.figure_size_signal.emit(w, h)
 
     def quit(self):
         super().quit()
@@ -267,6 +194,7 @@ class AddColumnDropTarget(QFrame):
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
             self.receive_ipc()
+
 
     @property
     def n_windows(self):
@@ -677,6 +605,84 @@ class LoadingWindow(QMainWindow):
         center_point = self.screen().availableGeometry().center()
         frame_geometry.moveCenter(center_point)
         self.move(frame_geometry.topLeft())
+
+
+class AddColumnDropTarget(QFrame):
+    """Drop target that creates a new column when a panel is dropped."""
+
+    def __init__(self, controls: "Controls") -> None:
+        super().__init__()
+        self._controls = controls
+        self.setObjectName("add_column_drop_target")
+        self.setAcceptDrops(True)
+        self.setMinimumWidth(160)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+        layout.addStretch(1)
+        label = QLabel("Drop here to create a new column")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        layout.addStretch(1)
+
+        self._set_active(False)
+        self.setVisible(False)
+
+    def set_drag_active(self, active: bool) -> None:
+        """Toggle visibility based on whether a panel is being dragged."""
+
+        self.setVisible(active)
+        if not active:
+            self._set_active(False)
+
+    def _set_active(self, active: bool) -> None:
+        color = "palette(highlight)" if active else "palette(mid)"
+        self.setStyleSheet(
+            "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
+        )
+
+    def _wrapper_from_event(self, event) -> PanelWrapper | None:
+        manager = self._controls.layout_manager
+        if manager is None:
+            return None
+        mime_data = event.mimeData()
+        if not mime_data.hasFormat(PANEL_MIME_TYPE):
+            return None
+        panel_id_bytes = mime_data.data(PANEL_MIME_TYPE)
+        if panel_id_bytes.isEmpty():
+            return None
+        panel_id = bytes(panel_id_bytes).decode("utf-8")
+        return manager.wrapper_for_id(panel_id)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if self._wrapper_from_event(event) is not None:
+            self._set_active(True)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._wrapper_from_event(event) is not None:
+            self._set_active(True)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_active(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        wrapper = self._wrapper_from_event(event)
+        self._set_active(False)
+        if wrapper is None:
+            event.ignore()
+            return
+        self._controls.create_new_column_with_panel(wrapper)
+        event.acceptProposedAction()
 
 
 class Controls(QWidget):
