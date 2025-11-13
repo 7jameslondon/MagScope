@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QMainWindow,
+    QPushButton,
 )
 
 
@@ -71,6 +72,7 @@ class NewVideoViewer(QGraphicsView):
     _MINIMAP_MAX_SIZE: Final[int] = 220
     _MINIMAP_LABEL_SPACING: Final[int] = 6
     _MINIMAP_ZOOM_HEIGHT: Final[int] = 26
+    _MINIMAP_BUTTON_SPACING: Final[int] = 6
 
     def __init__(self, scale_factor: float = 1.25) -> None:
         super().__init__()
@@ -119,6 +121,10 @@ class NewVideoViewer(QGraphicsView):
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
         )
         self._minimap_zoom_label.hide()
+        self._minimap_reset_button = QPushButton("Reset", self.viewport())
+        self._minimap_reset_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._minimap_reset_button.clicked.connect(lambda: self.reset_view())
+        self._minimap_reset_button.hide()
         self._minimap_base = QPixmap()
         self._fit_scale = 1.0
 
@@ -200,6 +206,7 @@ class NewVideoViewer(QGraphicsView):
         self._minimap_base = QPixmap()
         self._minimap_label.hide()
         self._minimap_zoom_label.hide()
+        self._minimap_reset_button.hide()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._image.setPixmap(pixmap)
@@ -286,17 +293,20 @@ class NewVideoViewer(QGraphicsView):
         if self._minimap_base.isNull() or self._zoom <= 0:
             self._minimap_label.hide()
             self._minimap_zoom_label.hide()
+            self._minimap_reset_button.hide()
             return
 
         if not self._layout_minimap():
             self._minimap_label.hide()
             self._minimap_zoom_label.hide()
+            self._minimap_reset_button.hide()
             return
 
         label_size = self._minimap_label.size()
         if label_size.width() <= 0 or label_size.height() <= 0:
             self._minimap_label.hide()
             self._minimap_zoom_label.hide()
+            self._minimap_reset_button.hide()
             return
 
         scaled_size = self._minimap_base.size().scaled(
@@ -305,6 +315,7 @@ class NewVideoViewer(QGraphicsView):
         if scaled_size.isEmpty():
             self._minimap_label.hide()
             self._minimap_zoom_label.hide()
+            self._minimap_reset_button.hide()
             return
 
         scaled_pixmap = self._minimap_base.scaled(
@@ -339,8 +350,10 @@ class NewVideoViewer(QGraphicsView):
         if zoom_percent is not None:
             self._minimap_zoom_label.setText(f"{zoom_percent:.0f}%")
             self._minimap_zoom_label.show()
+            self._minimap_reset_button.show()
         else:
             self._minimap_zoom_label.hide()
+            self._minimap_reset_button.hide()
 
     def _layout_minimap(self) -> bool:
         viewport_size = self.viewport().size()
@@ -357,6 +370,7 @@ class NewVideoViewer(QGraphicsView):
         zoom_height = max(
             self._minimap_zoom_label.sizeHint().height(),
             self._MINIMAP_ZOOM_HEIGHT,
+            self._minimap_reset_button.sizeHint().height(),
         )
         required_height = (
             size
@@ -373,14 +387,35 @@ class NewVideoViewer(QGraphicsView):
         top = self._MINIMAP_MARGIN
         left = viewport_size.width() - size - self._MINIMAP_MARGIN
         self._minimap_label.setGeometry(left, top, size, size)
+        available_width = size
+        button_hint_width = self._minimap_reset_button.sizeHint().width()
+        button_width = min(button_hint_width, available_width)
+        spacing = (
+            self._MINIMAP_BUTTON_SPACING if available_width > button_width else 0
+        )
+        label_width = available_width - button_width - spacing
+        if label_width <= 0:
+            label_width = max(available_width // 2, 1)
+            button_width = available_width - label_width - spacing
+        if label_width <= 0 or button_width <= 0:
+            return False
+
+        row_top = top + size + self._MINIMAP_LABEL_SPACING
         self._minimap_zoom_label.setGeometry(
             left,
-            top + size + self._MINIMAP_LABEL_SPACING,
-            size,
+            row_top,
+            label_width,
+            zoom_height,
+        )
+        self._minimap_reset_button.setGeometry(
+            left + label_width + spacing,
+            row_top,
+            button_width,
             zoom_height,
         )
         self._minimap_label.raise_()
         self._minimap_zoom_label.raise_()
+        self._minimap_reset_button.raise_()
         return True
 
     def _compute_highlight_rect(
