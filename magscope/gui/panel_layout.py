@@ -79,12 +79,9 @@ class PanelWrapper(QFrame):
 
     def _attach_title_drag(self) -> None:
         groupbox = getattr(self.panel_widget, "groupbox", None)
-        toggle_button = getattr(groupbox, "toggle_button", None) if groupbox is not None else None
-        if isinstance(toggle_button, QWidget):
-            self._register_drag_source(toggle_button)
-            title_container = toggle_button.parentWidget()
-            if isinstance(title_container, QWidget) and title_container is not toggle_button:
-                self._register_drag_source(title_container)
+        drag_handle = getattr(groupbox, "drag_handle", None) if groupbox is not None else None
+        if isinstance(drag_handle, QWidget):
+            self._register_drag_source(drag_handle)
             return
 
         # Fallback for widgets that do not expose a CollapsibleGroupBox title

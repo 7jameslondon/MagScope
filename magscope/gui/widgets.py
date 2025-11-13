@@ -196,12 +196,11 @@ class CollapsibleGroupBox(QGroupBox):
         self.toggle_button.setCheckable(True)
         self.toggle_button.setChecked(not collapsed)
         self.toggle_button.setStyleSheet("""
-            QPushButton {
                 text-align: left;
                 padding: 0px;
                 border: none;
                 font-weight: bold;
-            }
+                font-size: 14px;
         """)
 
         self.toggle_button.toggled.connect(self.toggle) # type: ignore
@@ -210,9 +209,21 @@ class CollapsibleGroupBox(QGroupBox):
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 2)
         title_widget = QWidget()
-        title_layout = QVBoxLayout(title_widget)
+        title_layout = QHBoxLayout(title_widget)
         title_layout.setContentsMargins(4, 4, 4, 4)
+        title_layout.setSpacing(6)
+        self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         title_layout.addWidget(self.toggle_button)
+
+        self.drag_handle = QLabel("᎒᎒᎒")
+        self.drag_handle.setObjectName("PanelDragHandle")
+        self.drag_handle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drag_handle.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.drag_handle.setToolTip("Drag to reposition panel")
+        self.drag_handle.setFixedWidth(20)
+        self.drag_handle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.drag_handle.setStyleSheet("font-size: 16px;")
+        title_layout.addWidget(self.drag_handle)
         self.setTitle("")
         self.layout().addWidget(title_widget)
         self.layout().setSpacing(0)
