@@ -41,9 +41,9 @@ class VideoViewerDemo(QMainWindow):
     def _update_frame(self) -> None:
         size = self._FRAME_SIZE
         # Create a simple animated gradient to simulate changing video frames.
-        y = np.arange(size, dtype=np.uint8)[:, None]
-        x = np.arange(size, dtype=np.uint8)[None, :]
-        frame = (x + y + self._frame_counter) % 256
+        y = np.arange(size, dtype=np.uint16)[:, None]
+        x = np.arange(size, dtype=np.uint16)[None, :]
+        frame = ((x + y + self._frame_counter) % 256).astype(np.uint8, copy=False)
         self._frame_counter = (self._frame_counter + 3) % 256
 
         self._frame = np.require(frame, requirements=("C",))
