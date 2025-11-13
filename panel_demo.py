@@ -374,6 +374,12 @@ class ReorderableColumn(QWidget):
             self._layout.removeWidget(self._placeholder)
         self._placeholder.hide()
 
+    def _placeholder_index(self) -> int | None:
+        if self._placeholder is None:
+            return None
+        index = self._layout.indexOf(self._placeholder)
+        return index if index != -1 else None
+
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         if event.mimeData().hasFormat(PANEL_MIME_TYPE):
             event.acceptProposedAction()
@@ -408,10 +414,13 @@ class ReorderableColumn(QWidget):
             wrapper = window.panel_wrappers.get(panel_id)
             if wrapper is not None:
                 drop_index = self._constrained_drop_index(wrapper, event.position().y())
+                placeholder_index = self._placeholder_index()
+                if placeholder_index is not None:
+                    drop_index = placeholder_index
+                self.clear_placeholder()
                 self.add_panel(wrapper, drop_index)
                 window.save_layout()
                 event.acceptProposedAction()
-                self.clear_placeholder()
                 return
         event.ignore()
         self.clear_placeholder()
