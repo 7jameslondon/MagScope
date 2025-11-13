@@ -376,7 +376,7 @@ class DummyCameraBeads(CameraBase):
         'radius_nm', 'nm_per_px',
         'theta_xy', 'sigma_xy_px', 'theta_z', 'sigma_z_um',
         'z_static_um', 'z_anchor_um',
-        'poisson', 'electron_gain',
+        'electron_gain',
         'seed'
     ]
 
@@ -394,7 +394,6 @@ class DummyCameraBeads(CameraBase):
             'sigma_z_um'    : 0.3,
             'z_static_um'   : 0.0,
             'z_anchor_um'   : 0.0,
-            'poisson'       : 1,        # 1=true, 0=false
             'electron_gain' : 25000.0,
             'seed'          : 2,
         }
@@ -482,11 +481,10 @@ class DummyCameraBeads(CameraBase):
         # noise and scaling
         np.clip(frame, 0.0, 1.0, out=frame)
 
-        # Poisson
-        if int(self._settings['poisson']) == 1:
-            egain = float(self._settings['electron_gain'])
-            lam = np.clip(frame, 0.0, 1.0) * egain
-            frame = self._rng.poisson(lam).astype(np.float32) / egain
+        # Poisson noise always enabled
+        egain = float(self._settings['electron_gain'])
+        lam = np.clip(frame, 0.0, 1.0) * egain
+        frame = self._rng.poisson(lam).astype(np.float32) / egain
 
         # quantize
         np.clip(frame, 0.0, 1.0, out=frame)
@@ -537,11 +535,6 @@ class DummyCameraBeads(CameraBase):
             if name in ('z_static_um',):
                 # refresh static crop
                 self._recompute_static_delta()
-            return
-
-        if name == 'poisson':
-            v = i(value)
-            self._settings[name] = 1 if v else 0
             return
 
         if name == 'seed':
