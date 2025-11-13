@@ -4,8 +4,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Callable, Iterable
 
-from PyQt6.QtCore import QEvent, QPoint, Qt, QObject, QSettings
-from PyQt6.QtGui import QDrag, QMimeData, QPixmap
+from PyQt6.QtCore import QEvent, QPoint, Qt, QObject, QSettings, QMimeData
+from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import QApplication, QFrame, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 
