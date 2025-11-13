@@ -218,11 +218,7 @@ class VideoWorker(Process):
                         'n_local': 7,
                         'line_ratio': 0.1
                     },
-                    fft_profile={
-                        'rmin': 0.09,
-                        'rmax': 0.25,
-                        'gaus_factor': 4.
-                    },
+                    **{'use fft_profile': False},
                     lookup_z={
                         'n_local': 7
                     })
