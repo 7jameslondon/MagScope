@@ -69,6 +69,8 @@ class NewVideoViewer(QGraphicsView):
     _MINIMAP_MARGIN: Final[int] = 12
     _MINIMAP_MIN_SIZE: Final[int] = 120
     _MINIMAP_MAX_SIZE: Final[int] = 220
+    _MINIMAP_LABEL_SPACING: Final[int] = 6
+    _MINIMAP_ZOOM_HEIGHT: Final[int] = 26
 
     def __init__(self, scale_factor: float = 1.25) -> None:
         super().__init__()
@@ -106,7 +108,19 @@ class NewVideoViewer(QGraphicsView):
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
         )
         self._minimap_label.hide()
+        self._minimap_zoom_label = QLabel(self.viewport())
+        self._minimap_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._minimap_zoom_label.setStyleSheet(
+            "color: white;"
+            "background-color: rgba(20, 20, 20, 190);"
+            "border: 1px solid rgba(255, 255, 255, 120);"
+        )
+        self._minimap_zoom_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._minimap_zoom_label.hide()
         self._minimap_base = QPixmap()
+        self._fit_scale = 1.0
 
         self.set_image_to_default()
 
@@ -167,10 +181,12 @@ class NewVideoViewer(QGraphicsView):
         self.scale(1 / unity.width(), 1 / unity.height())
         viewrect = self.viewport().rect()
         scenerect = self.transform().mapRect(rect)
-        factor = min(
+        fit_factor = min(
             viewrect.width() / scenerect.width(),
             viewrect.height() / scenerect.height(),
-        ) * scale
+        )
+        self._fit_scale = fit_factor if fit_factor > 0 else 1.0
+        factor = fit_factor * scale
         self.scale(factor, factor)
         self.centerOn(self._image)
         self.update_coordinates()
@@ -183,6 +199,7 @@ class NewVideoViewer(QGraphicsView):
         self.reset_view(round(self.scale_factor**self._zoom))
         self._minimap_base = QPixmap()
         self._minimap_label.hide()
+        self._minimap_zoom_label.hide()
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self._image.setPixmap(pixmap)
@@ -268,15 +285,18 @@ class NewVideoViewer(QGraphicsView):
     def _refresh_minimap(self) -> None:
         if self._minimap_base.isNull() or self._zoom <= 0:
             self._minimap_label.hide()
+            self._minimap_zoom_label.hide()
             return
 
         if not self._layout_minimap():
             self._minimap_label.hide()
+            self._minimap_zoom_label.hide()
             return
 
         label_size = self._minimap_label.size()
         if label_size.width() <= 0 or label_size.height() <= 0:
             self._minimap_label.hide()
+            self._minimap_zoom_label.hide()
             return
 
         scaled_size = self._minimap_base.size().scaled(
@@ -284,6 +304,7 @@ class NewVideoViewer(QGraphicsView):
         )
         if scaled_size.isEmpty():
             self._minimap_label.hide()
+            self._minimap_zoom_label.hide()
             return
 
         scaled_pixmap = self._minimap_base.scaled(
@@ -314,6 +335,13 @@ class NewVideoViewer(QGraphicsView):
         self._minimap_label.setPixmap(minimap_pixmap)
         self._minimap_label.show()
 
+        zoom_percent = self._current_zoom_percent()
+        if zoom_percent is not None:
+            self._minimap_zoom_label.setText(f"{zoom_percent:.0f}%")
+            self._minimap_zoom_label.show()
+        else:
+            self._minimap_zoom_label.hide()
+
     def _layout_minimap(self) -> bool:
         viewport_size = self.viewport().size()
         if viewport_size.isEmpty():
@@ -326,18 +354,33 @@ class NewVideoViewer(QGraphicsView):
             ),
             self._MINIMAP_MAX_SIZE,
         )
+        zoom_height = max(
+            self._minimap_zoom_label.sizeHint().height(),
+            self._MINIMAP_ZOOM_HEIGHT,
+        )
+        required_height = (
+            size
+            + self._MINIMAP_LABEL_SPACING
+            + zoom_height
+            + 2 * self._MINIMAP_MARGIN
+        )
         if (
             viewport_size.width() <= 2 * self._MINIMAP_MARGIN
-            or viewport_size.height() <= 2 * self._MINIMAP_MARGIN
+            or viewport_size.height() <= required_height
         ):
             return False
 
-        self._minimap_label.setGeometry(
-            viewport_size.width() - size - self._MINIMAP_MARGIN,
-            self._MINIMAP_MARGIN,
+        top = self._MINIMAP_MARGIN
+        left = viewport_size.width() - size - self._MINIMAP_MARGIN
+        self._minimap_label.setGeometry(left, top, size, size)
+        self._minimap_zoom_label.setGeometry(
+            left,
+            top + size + self._MINIMAP_LABEL_SPACING,
             size,
-            size,
+            zoom_height,
         )
+        self._minimap_label.raise_()
+        self._minimap_zoom_label.raise_()
         return True
 
     def _compute_highlight_rect(
@@ -368,6 +411,14 @@ class NewVideoViewer(QGraphicsView):
         highlight = QRectF(x, y, width, height)
         label_rect = QRectF(0, 0, self._minimap_label.width(), self._minimap_label.height())
         return highlight.intersected(label_rect)
+
+    def _current_zoom_percent(self) -> float | None:
+        if self._fit_scale <= 0:
+            return None
+        current_scale = self.transform().m11()
+        if current_scale <= 0:
+            return None
+        return (current_scale / self._fit_scale) * 100
 
 
 class VideoViewerDemo(QMainWindow):
