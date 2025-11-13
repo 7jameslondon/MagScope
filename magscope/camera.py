@@ -392,7 +392,7 @@ class DummyCameraBeads(CameraBase):
             'z_static_um'   : 0.0,
             'z_anchor_um'   : 0.0,
             'electron_gain' : 25000.0,
-            'seed'          : 2,
+            'seed'          : 12345,
         }
         self._bead_size_px = 32
         self._min_sep_px = 32.0
