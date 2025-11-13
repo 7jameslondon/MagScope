@@ -2,8 +2,10 @@
 
 This script creates a lightweight stub of the MagScope window manager so that
 all of the standard GUI control panels can be instantiated outside of the full
-application.  It is intended as a starting point for experimenting with panel
-layout and behaviour in isolation.
+application.  Panels can be rearranged between the two columns via the grab
+handle above each panel and the last arrangement is stored with ``QSettings``
+so it is restored the next time the demo is launched.  It is intended as a
+starting point for experimenting with panel layout and behaviour in isolation.
 """
 from __future__ import annotations
 
@@ -14,9 +16,13 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt, QSettings, QMimeData
+from PyQt6.QtGui import QDrag, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QScrollArea,
     QVBoxLayout,
@@ -24,7 +30,21 @@ from PyQt6.QtWidgets import (
 )
 
 from magscope import AcquisitionMode
-from magscope.gui.windows import Controls
+from magscope.gui.controls import (
+    AcquisitionPanel,
+    BeadSelectionPanel,
+    CameraPanel,
+    ControlPanelBase,
+    HelpPanel,
+    HistogramPanel,
+    PlotSettingsPanel,
+    ProfilePanel,
+    ScriptPanel,
+    StatusPanel,
+    XYLockPanel,
+    ZLockPanel,
+    ZLUTGenerationPanel,
+)
 
 
 class DummySignal:
@@ -115,27 +135,313 @@ class DemoWindowManager:
         print(f"Lock beads set to {value}")
 
 
+PANEL_MIME_TYPE = "application/x-magscope-panel"
+
+
+class DragHandle(QFrame):
+    """Slim grab handle that initiates panel drag-and-drop."""
+
+    def __init__(self, parent: "PanelWrapper") -> None:
+        super().__init__(parent)
+        self._parent_wrapper = parent
+        self._drag_start = QPoint()
+
+        self.setObjectName("PanelDragHandle")
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        label = QLabel("⋮⋮", self)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setToolTip("Drag to rearrange panel")
+        layout.addWidget(label)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            distance = (event.position().toPoint() - self._drag_start).manhattanLength()
+            if distance >= QApplication.startDragDistance():
+                self._parent_wrapper.start_drag()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+
+
+class PanelWrapper(QFrame):
+    """Wraps a panel widget and exposes drag behaviour via :class:`DragHandle`."""
+
+    def __init__(self, panel_id: str, widget: QWidget) -> None:
+        super().__init__()
+        self.panel_id = panel_id
+        self.panel_widget = widget
+        self.column: ReorderableColumn | None = None
+
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setObjectName(f"PanelWrapper_{panel_id}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        self.handle = DragHandle(self)
+        self.handle.setFixedHeight(12)
+        layout.addWidget(self.handle)
+
+        layout.addWidget(widget)
+
+    def start_drag(self) -> None:
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
+        drag.setMimeData(mime)
+        drag.setHotSpot(QPoint(self.width() // 2, 0))
+
+        # Provide lightweight visual feedback.
+        pixmap = QPixmap(self.size())
+        pixmap.fill(Qt.GlobalColor.transparent)
+        self.render(pixmap)
+        drag.setPixmap(pixmap)
+
+        drag.exec(Qt.DropAction.MoveAction)
+
+
+class ReorderableColumn(QWidget):
+    """Vertical column of draggable panels with drop support."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+        self.setAcceptDrops(True)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self._layout.addStretch(1)
+
+    def panels(self) -> list[PanelWrapper]:
+        widgets: list[PanelWrapper] = []
+        for index in range(self._layout.count() - 1):  # Exclude stretch
+            item = self._layout.itemAt(index)
+            widget = item.widget()
+            if isinstance(widget, PanelWrapper):
+                widgets.append(widget)
+        return widgets
+
+    def panel_ids(self) -> list[str]:
+        return [wrapper.panel_id for wrapper in self.panels()]
+
+    def add_panel(self, wrapper: PanelWrapper, index: int | None = None) -> None:
+        if wrapper.column is self:
+            current_index = self._layout.indexOf(wrapper)
+            target_index = self._target_index(index)
+            if current_index != target_index:
+                self._layout.removeWidget(wrapper)
+                self._layout.insertWidget(target_index, wrapper)
+            return
+
+        if wrapper.column is not None:
+            wrapper.column.remove_panel(wrapper)
+
+        wrapper.setParent(self)
+        wrapper.column = self
+        self._layout.insertWidget(self._target_index(index), wrapper)
+        wrapper.show()
+
+    def remove_panel(self, wrapper: PanelWrapper) -> None:
+        self._layout.removeWidget(wrapper)
+        wrapper.column = None
+
+    def _target_index(self, index: int | None) -> int:
+        stretch_index = self._layout.count() - 1
+        if index is None or index < 0 or index > stretch_index:
+            return stretch_index
+        return min(index, stretch_index)
+
+    def _drop_index(self, cursor_y: float) -> int:
+        for i in range(self._layout.count() - 1):
+            item = self._layout.itemAt(i)
+            widget = item.widget()
+            if widget is None:
+                continue
+            if cursor_y < widget.y() + widget.height() / 2:
+                return i
+        return self._layout.count() - 1
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(PANEL_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(PANEL_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        if not event.mimeData().hasFormat(PANEL_MIME_TYPE):
+            event.ignore()
+            return
+
+        panel_id = bytes(event.mimeData().data(PANEL_MIME_TYPE)).decode("utf-8")
+        window = self.window()
+        if isinstance(window, PanelDemoWindow):
+            wrapper = window.panel_wrappers.get(panel_id)
+            if wrapper is not None:
+                drop_index = self._drop_index(event.position().y())
+                self.add_panel(wrapper, drop_index)
+                window.save_layout()
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+
 class PanelDemoWindow(QMainWindow):
     """Main window containing the standard MagScope control panels."""
+
+    SETTINGS_GROUP = "panel_demo"
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("MagScope Panel Demo")
         self.resize(720, 800)
 
-        self.manager = DemoWindowManager()
-        self.controls = Controls(self.manager)
-        self.manager.controls = self.controls
+        self.settings = QSettings("MagScope", "PanelDemo")
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(self.controls)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.manager = DemoWindowManager()
+
+        self.panel_wrappers: dict[str, PanelWrapper] = {}
+        self.panels: dict[str, QWidget] = {}
+        self.columns = [ReorderableColumn("left"), ReorderableColumn("right")]
+        for column in self.columns:
+            column.setFixedWidth(300)
+
+        self._create_panels()
 
         container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.addWidget(scroll_area)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        for column in self.columns:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(column)
+            scroll.setFixedWidth(320)
+            layout.addWidget(scroll)
+
+        layout.addStretch(1)
         self.setCentralWidget(container)
+
+        self.restore_layout()
+
+    def _create_panels(self) -> None:
+        panels: list[tuple[str, QWidget]] = [
+            ("HelpPanel", HelpPanel(self.manager)),
+            ("StatusPanel", StatusPanel(self.manager)),
+            ("CameraPanel", CameraPanel(self.manager)),
+            ("AcquisitionPanel", AcquisitionPanel(self.manager)),
+            ("HistogramPanel", HistogramPanel(self.manager)),
+            ("BeadSelectionPanel", BeadSelectionPanel(self.manager)),
+            ("ProfilePanel", ProfilePanel(self.manager)),
+            ("PlotSettingsPanel", PlotSettingsPanel(self.manager)),
+            ("ZLUTGenerationPanel", ZLUTGenerationPanel(self.manager)),
+            ("ScriptPanel", ScriptPanel(self.manager)),
+            ("XYLockPanel", XYLockPanel(self.manager)),
+            ("ZLockPanel", ZLockPanel(self.manager)),
+        ]
+
+        for panel_id, panel_widget in panels:
+            self.panels[panel_id] = panel_widget
+            self.panel_wrappers[panel_id] = PanelWrapper(panel_id, panel_widget)
+
+        self.manager.controls = self
+
+    def restore_layout(self) -> None:
+        default_layout = {
+            "left": [
+                "HelpPanel",
+                "StatusPanel",
+                "CameraPanel",
+                "AcquisitionPanel",
+                "HistogramPanel",
+                "BeadSelectionPanel",
+                "ProfilePanel",
+            ],
+            "right": [
+                "PlotSettingsPanel",
+                "ZLUTGenerationPanel",
+                "ScriptPanel",
+                "XYLockPanel",
+                "ZLockPanel",
+            ],
+        }
+
+        restored_layout: dict[str, list[str]] = {}
+        self.settings.beginGroup(self.SETTINGS_GROUP)
+        for column_name in ("left", "right"):
+            stored = self.settings.value(column_name, defaultValue=None)
+            if isinstance(stored, list):
+                restored_layout[column_name] = [str(item) for item in stored]
+            elif isinstance(stored, str) and stored:
+                restored_layout[column_name] = [item for item in stored.split("|") if item]
+        self.settings.endGroup()
+
+        used: set[str] = set()
+        for column_name, column in zip(("left", "right"), self.columns):
+            column_order = restored_layout.get(column_name, default_layout[column_name])
+            for panel_id in column_order:
+                wrapper = self.panel_wrappers.get(panel_id)
+                if wrapper is None or panel_id in used:
+                    continue
+                column.add_panel(wrapper)
+                used.add(panel_id)
+
+        for column_name, column in zip(("left", "right"), self.columns):
+            for panel_id in default_layout[column_name]:
+                if panel_id in used:
+                    continue
+                wrapper = self.panel_wrappers.get(panel_id)
+                if wrapper is not None:
+                    column.add_panel(wrapper)
+                    used.add(panel_id)
+
+        # If new panels were added they may not be in the defaults yet.
+        for panel_id, wrapper in self.panel_wrappers.items():
+            if panel_id not in used:
+                self.columns[0].add_panel(wrapper)
+                used.add(panel_id)
+
+    def save_layout(self) -> None:
+        self.settings.beginGroup(self.SETTINGS_GROUP)
+        for column_name, column in zip(("left", "right"), self.columns):
+            self.settings.setValue(column_name, column.panel_ids())
+        self.settings.endGroup()
+        self.settings.sync()
+
+    def get_panel(self, panel_id: str) -> ControlPanelBase | QWidget | None:
+        wrapper = self.panel_wrappers.get(panel_id)
+        if wrapper:
+            return wrapper.panel_widget
+        return None
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self.save_layout()
+        super().closeEvent(event)
 
 
 def main() -> int:
