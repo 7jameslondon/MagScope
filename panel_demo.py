@@ -14,20 +14,18 @@ from __future__ import annotations
 import os
 import sys
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
-from PyQt6.QtCore import QPoint, Qt, QSettings, QMimeData, QEvent, QObject
-from PyQt6.QtGui import QDrag, QPixmap
+from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
     QMainWindow,
-    QPushButton,
     QScrollArea,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +46,8 @@ from magscope.gui.controls import (
     ZLockPanel,
     ZLUTGenerationPanel,
 )
+
+from magscope.gui.panel_layout import PanelLayoutManager, ReorderableColumn
 
 
 class DummySignal:
@@ -138,367 +138,6 @@ class DemoWindowManager:
         print(f"Lock beads set to {value}")
 
 
-PANEL_MIME_TYPE = "application/x-magscope-panel"
-
-
-class _TitleDragFilter(QObject):
-    """Convert title-area drags into wrapper move operations."""
-
-    def __init__(self, wrapper: "PanelWrapper", target: QWidget) -> None:
-        super().__init__(target)
-        self._wrapper = wrapper
-        self.target = target
-        self._drag_start = QPoint()
-        self._dragging = False
-
-    def eventFilter(self, obj, event):  # type: ignore[override]
-        if event.type() == QEvent.Type.Enter:
-            self.target.setCursor(Qt.CursorShape.OpenHandCursor)
-        elif event.type() == QEvent.Type.Leave:
-            if not self._dragging:
-                self.target.unsetCursor()
-        elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = event.position().toPoint()
-            self._dragging = False
-            self.target.setCursor(Qt.CursorShape.ClosedHandCursor)
-        elif event.type() == QEvent.Type.MouseMove and event.buttons() & Qt.MouseButton.LeftButton:
-            distance = (event.position().toPoint() - self._drag_start).manhattanLength()
-            if distance >= QApplication.startDragDistance():
-                if isinstance(self.target, QPushButton):
-                    self.target.setDown(False)
-                self._dragging = True
-                self._wrapper.start_drag()
-                return True
-        elif event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
-            self.target.setCursor(Qt.CursorShape.OpenHandCursor)
-            if self._dragging:
-                self._dragging = False
-                return True
-        return QObject.eventFilter(self, obj, event)
-
-    def drag_finished(self) -> None:
-        if self._dragging:
-            self._dragging = False
-        self.target.setCursor(Qt.CursorShape.OpenHandCursor)
-
-
-class PanelWrapper(QFrame):
-    """Wrap a panel widget and make its title initiate drag-and-drop."""
-
-    def __init__(self, panel_id: str, widget: QWidget, *, draggable: bool = True) -> None:
-        super().__init__()
-        self.panel_id = panel_id
-        self.panel_widget = widget
-        self.column: ReorderableColumn | None = None
-        self._drag_filters: list[_TitleDragFilter] = []
-        self.draggable = draggable
-        self._drop_accepted = False
-
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setObjectName(f"PanelWrapper_{panel_id}")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        layout.addWidget(widget)
-
-        if self.draggable:
-            self._attach_title_drag()
-
-    def _attach_title_drag(self) -> None:
-        groupbox = getattr(self.panel_widget, "groupbox", None)
-        toggle_button = getattr(groupbox, "toggle_button", None) if groupbox is not None else None
-        if isinstance(toggle_button, QWidget):
-            self._register_drag_source(toggle_button)
-            title_container = toggle_button.parentWidget()
-            if isinstance(title_container, QWidget) and title_container is not toggle_button:
-                self._register_drag_source(title_container)
-            return
-
-        # Fallback for widgets that do not expose a CollapsibleGroupBox title
-        self._register_drag_source(self.panel_widget)
-
-    def _register_drag_source(self, widget: QWidget | None) -> None:
-        if widget is None:
-            return
-        for existing in self._drag_filters:
-            if existing.target is widget:
-                return
-        drag_filter = _TitleDragFilter(self, widget)
-        widget.installEventFilter(drag_filter)
-        self._drag_filters.append(drag_filter)
-
-    def start_drag(self) -> None:
-        if not self.draggable:
-            return
-
-        column = self.column
-        if column is None:
-            return
-
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(PANEL_MIME_TYPE, self.panel_id.encode("utf-8"))
-        drag.setMimeData(mime)
-        drag.setHotSpot(QPoint(self.width() // 2, 0))
-
-        # Provide lightweight visual feedback.
-        pixmap = QPixmap(self.size())
-        pixmap.fill(Qt.GlobalColor.transparent)
-        self.render(pixmap)
-        drag.setPixmap(pixmap)
-
-        original_index = column.begin_drag(self)
-        self._drop_accepted = False
-
-        result = drag.exec(Qt.DropAction.MoveAction)
-
-        if result != Qt.DropAction.MoveAction or not self._drop_accepted:
-            column.cancel_drag(self, original_index)
-
-        column.finish_drag()
-
-        for drag_filter in self._drag_filters:
-            drag_filter.drag_finished()
-
-    def mark_drop_accepted(self) -> None:
-        self._drop_accepted = True
-
-
-class ReorderableColumn(QWidget):
-    """Vertical column of draggable panels with drop support."""
-
-    def __init__(self, name: str, pinned_ids: Iterable[str] | None = None) -> None:
-        super().__init__()
-        self.name = name
-        self.setAcceptDrops(True)
-
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(6)
-        self._layout.addStretch(1)
-        self._placeholder: QFrame | None = None
-        self._pinned_ids = set(pinned_ids or ())
-        self._active_drag_height: int | None = None
-
-    def panels(self) -> list[PanelWrapper]:
-        widgets: list[PanelWrapper] = []
-        for index in range(self._layout.count() - 1):  # Exclude stretch
-            item = self._layout.itemAt(index)
-            widget = item.widget()
-            if isinstance(widget, PanelWrapper):
-                widgets.append(widget)
-        return widgets
-
-    def panel_ids(self) -> list[str]:
-        return [wrapper.panel_id for wrapper in self.panels()]
-
-    def add_panel(self, wrapper: PanelWrapper, index: int | None = None) -> None:
-        if wrapper.column is self:
-            current_index = self._layout.indexOf(wrapper)
-            target_index = self._constrain_index(wrapper, self._target_index(index))
-            if current_index != -1:
-                if current_index == target_index:
-                    return
-
-                self._layout.removeWidget(wrapper)
-                target_index = self._constrain_index(wrapper, self._target_index(index))
-                self._layout.insertWidget(target_index, wrapper)
-                return
-
-            # The wrapper belongs to this column but is currently removed from the
-            # layout (e.g. during an in-column drag). Reinsert it at the desired
-            # index so it becomes visible again.
-            wrapper.setParent(self)
-            wrapper.column = self
-            self._layout.insertWidget(target_index, wrapper)
-            wrapper.show()
-            return
-
-        if wrapper.column is not None:
-            wrapper.column.remove_panel(wrapper)
-
-        wrapper.setParent(self)
-        wrapper.column = self
-        constrained_index = self._constrain_index(wrapper, self._target_index(index))
-        self._layout.insertWidget(constrained_index, wrapper)
-        wrapper.show()
-
-    def remove_panel(self, wrapper: PanelWrapper) -> None:
-        self._layout.removeWidget(wrapper)
-        wrapper.column = None
-
-    def begin_drag(self, wrapper: PanelWrapper) -> int:
-        index = self._layout.indexOf(wrapper)
-        if index == -1:
-            return -1
-
-        placeholder = self._ensure_placeholder()
-        height = wrapper.height() or wrapper.sizeHint().height()
-        height = max(24, height)
-        self._active_drag_height = height
-        placeholder.setFixedHeight(height)
-
-        self._layout.removeWidget(wrapper)
-        wrapper.hide()
-        target_index = min(index, self._layout.count() - 1)
-        self._layout.insertWidget(target_index, placeholder)
-        placeholder.show()
-        return index
-
-    def cancel_drag(self, wrapper: PanelWrapper, index: int) -> None:
-        placeholder = self._placeholder
-        if placeholder is not None:
-            self._layout.removeWidget(placeholder)
-            placeholder.hide()
-        if index < 0:
-            index = self._layout.count() - 1
-        target_index = min(index, self._layout.count() - 1)
-        self._layout.insertWidget(target_index, wrapper)
-        wrapper.show()
-
-    def finish_drag(self) -> None:
-        self._active_drag_height = None
-        self.clear_placeholder()
-
-    def _target_index(self, index: int | None) -> int:
-        stretch_index = self._layout.count() - 1
-        if index is None or index < 0 or index > stretch_index:
-            return stretch_index
-        return min(index, stretch_index)
-
-    def _drop_index(self, cursor_y: float) -> int:
-        for i in range(self._layout.count() - 1):
-            item = self._layout.itemAt(i)
-            widget = item.widget()
-            if widget is None:
-                continue
-            if cursor_y < widget.y() + widget.height() / 2:
-                return i
-        return self._layout.count() - 1
-
-    def _locked_prefix_length(self) -> int:
-        count = 0
-        for i in range(self._layout.count() - 1):
-            widget = self._layout.itemAt(i).widget()
-            if isinstance(widget, PanelWrapper) and widget.panel_id in self._pinned_ids:
-                count += 1
-            else:
-                break
-        return count
-
-    def _constrain_index(self, wrapper: PanelWrapper, index: int) -> int:
-        if wrapper.panel_id in self._pinned_ids:
-            return 0
-        return max(index, self._locked_prefix_length())
-
-    def _constrained_drop_index(self, wrapper: PanelWrapper, cursor_y: float) -> int:
-        return self._constrain_index(wrapper, self._drop_index(cursor_y))
-
-    def _ensure_placeholder(self) -> QFrame:
-        if self._placeholder is None:
-            placeholder = QFrame(self)
-            placeholder.setObjectName("panel_drop_placeholder")
-            placeholder.setStyleSheet(
-                "#panel_drop_placeholder { border: 2px dashed palette(mid); background: transparent; }"
-            )
-            placeholder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            placeholder.hide()
-            self._placeholder = placeholder
-        return self._placeholder
-
-    def _update_placeholder(self, wrapper: PanelWrapper | None, cursor_y: float) -> None:
-        if wrapper is None:
-            self.clear_placeholder()
-            return
-
-        placeholder = self._ensure_placeholder()
-        if self._active_drag_height is not None:
-            placeholder.setFixedHeight(self._active_drag_height)
-        else:
-            height = wrapper.height() or wrapper.sizeHint().height()
-            placeholder.setFixedHeight(max(24, height))
-        target_index = self._constrained_drop_index(wrapper, cursor_y)
-        current_index = self._layout.indexOf(placeholder)
-        if current_index == -1:
-            self._layout.insertWidget(target_index, placeholder)
-        elif current_index != target_index:
-            self._layout.removeWidget(placeholder)
-            stretch_index = self._layout.count() - 1
-            target_index = min(target_index, stretch_index)
-            self._layout.insertWidget(target_index, placeholder)
-        placeholder.show()
-
-    def clear_placeholder(self) -> None:
-        if self._placeholder is None:
-            return
-        index = self._layout.indexOf(self._placeholder)
-        if index != -1:
-            self._layout.removeWidget(self._placeholder)
-        self._placeholder.hide()
-
-    def _placeholder_index(self) -> int | None:
-        if self._placeholder is None:
-            return None
-        index = self._layout.indexOf(self._placeholder)
-        return index if index != -1 else None
-
-    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
-        if event.mimeData().hasFormat(PANEL_MIME_TYPE):
-            event.acceptProposedAction()
-            wrapper = self._wrapper_from_event(event)
-            if wrapper is not None:
-                self._update_placeholder(wrapper, event.position().y())
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
-        if event.mimeData().hasFormat(PANEL_MIME_TYPE):
-            event.acceptProposedAction()
-            wrapper = self._wrapper_from_event(event)
-            if wrapper is not None:
-                self._update_placeholder(wrapper, event.position().y())
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event) -> None:  # type: ignore[override]
-        self.clear_placeholder()
-        super().dragLeaveEvent(event)
-
-    def dropEvent(self, event) -> None:  # type: ignore[override]
-        if not event.mimeData().hasFormat(PANEL_MIME_TYPE):
-            event.ignore()
-            self.clear_placeholder()
-            return
-
-        panel_id = bytes(event.mimeData().data(PANEL_MIME_TYPE)).decode("utf-8")
-        window = self.window()
-        if isinstance(window, PanelDemoWindow):
-            wrapper = window.panel_wrappers.get(panel_id)
-            if wrapper is not None:
-                drop_index = self._constrained_drop_index(wrapper, event.position().y())
-                placeholder_index = self._placeholder_index()
-                if placeholder_index is not None:
-                    drop_index = placeholder_index
-                self.clear_placeholder()
-                self.add_panel(wrapper, drop_index)
-                wrapper.mark_drop_accepted()
-                window.save_layout()
-                event.acceptProposedAction()
-                return
-        event.ignore()
-        self.clear_placeholder()
-
-    def _wrapper_from_event(self, event) -> PanelWrapper | None:
-        panel_id_bytes = event.mimeData().data(PANEL_MIME_TYPE)
-        if panel_id_bytes.isEmpty():
-            return None
-        panel_id = bytes(panel_id_bytes).decode("utf-8")
-        window = self.window()
-        if isinstance(window, PanelDemoWindow):
-            return window.panel_wrappers.get(panel_id)
-        return None
 
 
 class PanelDemoWindow(QMainWindow):
@@ -515,14 +154,21 @@ class PanelDemoWindow(QMainWindow):
 
         self.manager = DemoWindowManager()
 
-        self.panel_wrappers: dict[str, PanelWrapper] = {}
         self.panels: dict[str, QWidget] = {}
-        self.columns = [
-            ReorderableColumn("left", pinned_ids={"HelpPanel"}),
-            ReorderableColumn("right"),
-        ]
-        for column in self.columns:
+        self.columns: "OrderedDict[str, ReorderableColumn]" = OrderedDict(
+            [
+                ("left", ReorderableColumn("left", pinned_ids={"HelpPanel"})),
+                ("right", ReorderableColumn("right")),
+            ]
+        )
+        for column in self.columns.values():
             column.setFixedWidth(300)
+
+        self.layout_manager = PanelLayoutManager(
+            self.settings,
+            self.SETTINGS_GROUP,
+            self.columns,
+        )
 
         self._create_panels()
 
@@ -531,7 +177,7 @@ class PanelDemoWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        for column in self.columns:
+        for column in self.columns.values():
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -546,108 +192,54 @@ class PanelDemoWindow(QMainWindow):
         self.restore_layout()
 
     def _create_panels(self) -> None:
-        panels: list[tuple[str, QWidget]] = [
-            ("HelpPanel", HelpPanel(self.manager)),
-            ("StatusPanel", StatusPanel(self.manager)),
-            ("CameraPanel", CameraPanel(self.manager)),
-            ("AcquisitionPanel", AcquisitionPanel(self.manager)),
-            ("HistogramPanel", HistogramPanel(self.manager)),
-            ("BeadSelectionPanel", BeadSelectionPanel(self.manager)),
-            ("ProfilePanel", ProfilePanel(self.manager)),
-            ("PlotSettingsPanel", PlotSettingsPanel(self.manager)),
-            ("ZLUTGenerationPanel", ZLUTGenerationPanel(self.manager)),
-            ("ScriptPanel", ScriptPanel(self.manager)),
-            ("XYLockPanel", XYLockPanel(self.manager)),
-            ("ZLockPanel", ZLockPanel(self.manager)),
-        ]
-
-        for panel_id, panel_widget in panels:
-            self.panels[panel_id] = panel_widget
-            self.panel_wrappers[panel_id] = PanelWrapper(
-                panel_id,
-                panel_widget,
-                draggable=panel_id != "HelpPanel",
-            )
-
         self.manager.controls = self
 
+        definitions: list[tuple[str, QWidget, str, bool]] = [
+            ("HelpPanel", HelpPanel(self.manager), "left", False),
+            ("StatusPanel", StatusPanel(self.manager), "left", True),
+            ("CameraPanel", CameraPanel(self.manager), "left", True),
+            ("AcquisitionPanel", AcquisitionPanel(self.manager), "left", True),
+            ("HistogramPanel", HistogramPanel(self.manager), "left", True),
+            ("BeadSelectionPanel", BeadSelectionPanel(self.manager), "left", True),
+            ("ProfilePanel", ProfilePanel(self.manager), "left", True),
+            ("PlotSettingsPanel", PlotSettingsPanel(self.manager), "right", True),
+            ("ZLUTGenerationPanel", ZLUTGenerationPanel(self.manager), "right", True),
+            ("ScriptPanel", ScriptPanel(self.manager), "right", True),
+            ("XYLockPanel", XYLockPanel(self.manager), "right", True),
+            ("ZLockPanel", ZLockPanel(self.manager), "right", True),
+        ]
+
+        column_names = list(self.columns.keys())
+
+        for panel_id, widget, column_name, draggable in definitions:
+            self.panels[panel_id] = widget
+            self.layout_manager.register_panel(
+                panel_id,
+                widget,
+                column_name,
+                draggable=draggable,
+            )
+
+        for control_factory, column in self.manager.controls_to_add:
+            widget = control_factory(self.manager)
+            panel_id = widget.__class__.__name__
+            if isinstance(column, int):
+                column_name = column_names[min(max(column, 0), len(column_names) - 1)]
+            else:
+                column_name = str(column)
+                if column_name not in self.columns:
+                    column_name = column_names[0]
+            self.panels[panel_id] = widget
+            self.layout_manager.register_panel(panel_id, widget, column_name)
+
     def restore_layout(self) -> None:
-        default_layout = {
-            "left": [
-                "HelpPanel",
-                "StatusPanel",
-                "CameraPanel",
-                "AcquisitionPanel",
-                "HistogramPanel",
-                "BeadSelectionPanel",
-                "ProfilePanel",
-            ],
-            "right": [
-                "PlotSettingsPanel",
-                "ZLUTGenerationPanel",
-                "ScriptPanel",
-                "XYLockPanel",
-                "ZLockPanel",
-            ],
-        }
-
-        restored_layout: dict[str, list[str]] = {}
-        self.settings.beginGroup(self.SETTINGS_GROUP)
-        for column_name in ("left", "right"):
-            stored = self.settings.value(column_name, defaultValue=None)
-            if isinstance(stored, list):
-                restored_layout[column_name] = [str(item) for item in stored]
-            elif isinstance(stored, str) and stored:
-                restored_layout[column_name] = [item for item in stored.split("|") if item]
-        self.settings.endGroup()
-
-        # Ensure pinned panels remain in their designated columns.
-        pinned_targets = {"HelpPanel": "left"}
-        for panel_id, column_name in pinned_targets.items():
-            for other_name, layout in restored_layout.items():
-                if other_name != column_name:
-                    layout[:] = [item for item in layout if item != panel_id]
-            target_layout = restored_layout.setdefault(column_name, [])
-            if panel_id not in target_layout:
-                target_layout.insert(0, panel_id)
-
-        used: set[str] = set()
-        for column_name, column in zip(("left", "right"), self.columns):
-            column_order = restored_layout.get(column_name, default_layout[column_name])
-            for panel_id in column_order:
-                wrapper = self.panel_wrappers.get(panel_id)
-                if wrapper is None or panel_id in used:
-                    continue
-                column.add_panel(wrapper)
-                used.add(panel_id)
-
-        for column_name, column in zip(("left", "right"), self.columns):
-            for panel_id in default_layout[column_name]:
-                if panel_id in used:
-                    continue
-                wrapper = self.panel_wrappers.get(panel_id)
-                if wrapper is not None:
-                    column.add_panel(wrapper)
-                    used.add(panel_id)
-
-        # If new panels were added they may not be in the defaults yet.
-        for panel_id, wrapper in self.panel_wrappers.items():
-            if panel_id not in used:
-                self.columns[0].add_panel(wrapper)
-                used.add(panel_id)
+        self.layout_manager.restore_layout()
 
     def save_layout(self) -> None:
-        self.settings.beginGroup(self.SETTINGS_GROUP)
-        for column_name, column in zip(("left", "right"), self.columns):
-            self.settings.setValue(column_name, column.panel_ids())
-        self.settings.endGroup()
-        self.settings.sync()
+        self.layout_manager.save_layout()
 
     def get_panel(self, panel_id: str) -> ControlPanelBase | QWidget | None:
-        wrapper = self.panel_wrappers.get(panel_id)
-        if wrapper:
-            return wrapper.panel_widget
-        return None
+        return self.panels.get(panel_id)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.save_layout()
