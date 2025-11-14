@@ -11,7 +11,6 @@ from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout, QMainWindow,
                              QMessageBox, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
-from magscope import AcquisitionMode
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
@@ -23,7 +22,7 @@ from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, Pane
                                        ReorderableColumn)
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
-from magscope.utils import Message, numpy_type_to_qt_image_type
+from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")
 
