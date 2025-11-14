@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QPropertyAnimation, QTimer, QSettings, Qt,
                           QRect, pyqtSignal, QPointF, QPoint, QMimeData, QRectF)
-from PyQt6.QtGui import QValidator, QPainter, QColor, QPen, QDrag, QFont, QBrush
+from PyQt6.QtGui import QValidator, QPainter, QColor, QPen, QDrag, QFont, QBrush, QPalette
 from PyQt6.QtWidgets import (QCheckBox, QGroupBox, QLineEdit, QSplitter,
                              QSplitterHandle, QWidget, QLabel, QVBoxLayout,
                              QHBoxLayout, QFrame, QScrollArea, QPushButton,
@@ -319,11 +319,10 @@ class GripHandle(QSplitterHandle):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Background with simple states
-        background = QColor("#1e1e1e")
-        base = QColor("#1e1e1e")
-        pressed = QColor("#555555")
-        hover = QColor("#333333")
-        dot = QColor("#777777")
+        base = QPalette().mid().color() # QColor("#1e1e1e")
+        pressed = QPalette().light().color()
+        hover = QPalette().midlight().color()
+        dot = QPalette().light().color()
         if self._pressed:
             color = pressed
         elif self.underMouse():

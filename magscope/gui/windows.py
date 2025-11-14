@@ -639,7 +639,7 @@ class AddColumnDropTarget(QFrame):
             self._set_active(False)
 
     def _set_active(self, active: bool) -> None:
-        color = "palette(highlight)" if active else "palette(mid)"
+        color = "palette(highlight)" if active else "palette(midlight)"
         self.setStyleSheet(
             "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
         )
