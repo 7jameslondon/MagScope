@@ -326,13 +326,15 @@ class DummyCameraFastNoise(CameraBase):
             np.maximum(images, 0, out=images)
             np.minimum(images, max_int, out=images)
             self.fake_images = images.astype(self.dtype).tobytes()
-        self.fake_image_index += 1
-        if self.fake_image_index >= self.fake_images_n:
-            self.fake_image_index = 0
 
         stride = self.height * self.width * np.dtype(self.dtype).itemsize
-        return self.fake_images[self.fake_image_index * stride:
-                                (self.fake_image_index + 1) * stride]
+        start = self.fake_image_index * stride
+        end = start + stride
+        image = self.fake_images[start:end]
+
+        self.fake_image_index = (self.fake_image_index + 1) % self.fake_images_n
+
+        return image
 
     def release(self):
         pass
