@@ -98,7 +98,10 @@ class CameraManager(ManagerProcessBase):
         try:
             self.camera[name] = value
         except Exception as e:
-            warn(f'Could not set camera setting {name} to {value}: {e}')
+            reason = str(e).strip()
+            if not reason:
+                reason = repr(e)
+            warn(f'Could not set camera setting {name} to {value}: {reason}')
         for setting in self.camera.settings:
             self.get_camera_setting(setting)
 
@@ -515,13 +518,15 @@ class DummyCameraBeads(CameraBase):
 
         if name == 'framerate':
             v = f(value)
-            if not (1 <= v <= 10000): raise ValueError
+            if not (1 <= v <= 10000):
+                raise ValueError("framerate must be between 1 and 10000 Hz")
             self._settings[name] = v
             return
 
         if name in ('n_static', 'n_tethered'):
             v = i(value)
-            if not (0 <= v <= 5000): raise ValueError
+            if not (0 <= v <= 5000):
+                raise ValueError("n_static and n_tethered must be between 0 and 5000")
             self._settings[name] = v
             self._reinit_centers_and_static()
             self._init_tether_state()
