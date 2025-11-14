@@ -644,20 +644,22 @@ class DummyCameraBeads(CameraBase):
         y_lo, y_hi = margin_px, H - margin_px
         if x_hi <= x_lo or y_hi <= y_lo:
             raise ValueError("Margin too large for frame size.")
-        pts = np.empty((0, 2), dtype=np.float32)
+        pts_list: list[tuple[float, float]] = []
         r2 = float(min_sep_px) * float(min_sep_px)
         tries = 0
         cur_min_sep = float(min_sep_px)
-        while pts.shape[0] < n:
+        while len(pts_list) < n:
             if tries >= max_tries:
                 cur_min_sep *= relax
                 r2 = cur_min_sep * cur_min_sep
                 tries = 0
             tries += 1
             x = rng.uniform(x_lo, x_hi); y = rng.uniform(y_lo, y_hi)
-            if pts.size == 0:
-                pts = np.array([[x, y]], dtype=np.float32); continue
+            if not pts_list:
+                pts_list.append((x, y))
+                continue
+            pts = np.asarray(pts_list, dtype=np.float32)
             d2 = (pts[:,0] - x)**2 + (pts[:,1] - y)**2
             if np.all(d2 >= r2):
-                pts = np.vstack((pts, [x, y]))
-        return pts
+                pts_list.append((x, y))
+        return np.asarray(pts_list, dtype=np.float32)
