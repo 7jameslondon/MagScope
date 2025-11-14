@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from functools import lru_cache
 from magtrack.simulation import simulate_beads
 import numpy as np
 import queue
@@ -623,12 +624,15 @@ class DummyCameraBeads(CameraBase):
         return np.median(np.r_[imgHW[0,:], imgHW[-1,:], imgHW[:,0], imgHW[:,-1]])
 
     @staticmethod
+    @lru_cache(maxsize=8)
     def _tukey_taper(H, W, pad=4):
         y = np.minimum(np.arange(H), np.arange(H)[::-1])
         x = np.minimum(np.arange(W), np.arange(W)[::-1])
         d = np.minimum.outer(y, x).astype(np.float32) / max(1, pad)
         u = np.clip(d, 0.0, 1.0)
-        return 0.5 - 0.5*np.cos(np.pi*u)  # 0 at edge → 1 inside
+        win = 0.5 - 0.5*np.cos(np.pi*u)  # 0 at edge → 1 inside
+        win.setflags(write=False)
+        return win
 
     @classmethod
     def _delta_for_crop(cls, cropHW, pad=4):
