@@ -491,7 +491,7 @@ class DummyCameraBeads(CameraBase):
 
         # Poisson noise always enabled
         egain = float(self._settings['electron_gain'])
-        lam = np.clip(frame, 0.0, 1.0) * egain
+        lam = frame * egain
         frame = self._rng.poisson(lam).astype(np.float32) / egain
 
         # quantize
