@@ -18,3 +18,9 @@ To ensure consistency across the repository, please order and format imports as 
    - Keep import statements at the top of the file, after any module-level docstring and before other code.
 
 These guidelines apply to every file within this repository unless overridden by a more specific `AGENTS.md` file in a subdirectory.
+
+# Circular Import Safety
+
+- When adjusting imports, double-check that reordering does not change when modules are first executed. Many packages (notably `magscope.gui`) rely on specific initialization order, so moving an import between groups can introduce circular dependencies.
+- Prefer importing from a module that defines the symbol directly instead of going through package-level re-exports when there is any risk of a cycle (e.g., import `AcquisitionMode` from `magscope.utils`, not from `magscope`).
+- If you must refactor imports across modules, run `python -c "import magscope"` locally to confirm no circular import errors are introduced.
