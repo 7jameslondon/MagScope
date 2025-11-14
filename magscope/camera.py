@@ -115,7 +115,7 @@ class CameraBase(metaclass=ABCMeta):
     def __init__(self):
         self.is_connected = False
         self.video_buffer: VideoBuffer | None = None
-        self.camera_buffers: queue.Queue = None  # type: ignore
+        self.camera_buffers: queue.Queue | None = None
         if None in (self.width, self.height, self.dtype, self.nm_per_px):
             raise NotImplementedError
 
