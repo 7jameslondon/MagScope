@@ -381,7 +381,6 @@ class DummyCameraBeads(CameraBase):
     settings = [
         'framerate',
         'n_static', 'n_tethered',
-        'nm_per_px',
         'sigma_xy_px', 'sigma_z_um',
         'z_static_um', 'z_anchor_um',
         'electron_gain',
@@ -394,7 +393,6 @@ class DummyCameraBeads(CameraBase):
             'framerate'     : 30.0,    # Hz
             'n_static'      : 2,
             'n_tethered'    : 4,
-            'nm_per_px'     : float(self.nm_per_px),  # keep in sync
             'sigma_xy_px'   : 3.0,
             'sigma_z_um'    : 0.3,
             'z_static_um'   : 0.0,
@@ -468,7 +466,7 @@ class DummyCameraBeads(CameraBase):
             sig_z   = float(self._settings['sigma_z_um'])
             z_anchor = float(self._settings['z_anchor_um'])
             size_px = int(self._bead_size_px)
-            nmpp    = float(self._settings['nm_per_px'])
+            nmpp    = float(self.nm_per_px)
             radius  = float(self._radius_nm)
             xyz     = np.zeros((1, 3), dtype=np.float32)
 
@@ -535,14 +533,11 @@ class DummyCameraBeads(CameraBase):
             self._init_tether_state()
             return
 
-        if name in ('nm_per_px', 'z_static_um', 'z_anchor_um',
+        if name in ('z_static_um', 'z_anchor_um',
                     'sigma_xy_px', 'sigma_z_um',
                     'electron_gain'):
             v = f(value)
             self._settings[name] = v
-            if name in ('nm_per_px',):
-                # keep instance attribute in sync for external readers
-                self.nm_per_px = v
             if name in ('z_static_um',):
                 # refresh static crop
                 self._recompute_static_delta()
@@ -582,7 +577,7 @@ class DummyCameraBeads(CameraBase):
             self._delta_static = None
             return
         size_px = int(self._bead_size_px)
-        nmpp    = float(self._settings['nm_per_px'])
+        nmpp    = float(self.nm_per_px)
         radius  = float(self._radius_nm)
         z_s     = float(self._settings['z_static_um'])
         xyz = np.array([[0.0, 0.0, z_s]], np.float32)
