@@ -42,8 +42,7 @@ process so that real-time video frames, bead tracking data, and scripted events
 remain synchronized.
 """
 
-from ctypes import c_uint8
-from multiprocessing import Event, freeze_support, Pipe, Lock, Value
+from multiprocessing import Event, freeze_support, Pipe, Lock
 import logging
 import numpy as np
 import os
