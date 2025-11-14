@@ -470,6 +470,7 @@ class DummyCameraBeads(CameraBase):
             size_px = int(self._bead_size_px)
             nmpp    = float(self._settings['nm_per_px'])
             radius  = float(self._radius_nm)
+            xyz     = np.zeros((1, 3), dtype=np.float32)
 
             for j in range(n_t):
                 # OU updates
@@ -478,7 +479,7 @@ class DummyCameraBeads(CameraBase):
                 self._z[j]    = self._ou_step(self._z[j],    dt, th_z,  sig_z,  z_anchor, self._rng)
 
                 # render crop at current z (T=1)
-                xyz = np.array([[0.0, 0.0, float(self._z[j])]], np.float32)
+                xyz[0, 2] = float(self._z[j])
                 crop_WHT = simulate_beads(xyz, nm_per_px=nmpp, size_px=size_px, radius_nm=radius)  # (w,h,1)
                 crop_HW  = crop_WHT[:, :, 0].T
                 delta    = self._delta_for_crop(crop_HW, pad=4)
