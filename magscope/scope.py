@@ -131,6 +131,7 @@ class MagScope:
 
         if self._running:
             warn('MagScope is already running')
+            return
         self._running = True
 
         # ===== Collect separate processes in a dictionary =====
