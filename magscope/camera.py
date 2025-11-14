@@ -134,9 +134,12 @@ class CameraBase(metaclass=ABCMeta):
             raise ValueError("All cameras must declare a 'framerate' setting")
 
     def __del__(self):
-        if self.is_connected:
-            self.release_all()
-        del self.video_buffer
+        try:
+            if self.is_connected:
+                self.release_all()
+        except Exception:
+            pass
+        self.video_buffer = None
 
     @abstractmethod
     def connect(self, video_buffer):
