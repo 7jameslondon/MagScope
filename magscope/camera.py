@@ -82,7 +82,7 @@ class CameraManager(ManagerProcessBase):
         if self.video_buffer is None:
             return
 
-        for i in range(self.video_buffer.stack_shape[2]):
+        for _ in range(self.video_buffer.stack_shape[2]):
             self.camera.release()
 
     def get_camera_setting(self, name: str):
@@ -109,7 +109,7 @@ class CameraManager(ManagerProcessBase):
 class CameraBase(metaclass=ABCMeta):
     """ Abstract base class for camera implementation """
     bits: int
-    dtype: np.dtypes
+    dtype: np.dtype
     height: int
     nm_per_px: float
     width: int
@@ -176,8 +176,7 @@ class CameraBase(metaclass=ABCMeta):
         pass
 
     def release_all(self):
-        while self.camera_buffers is not None and self.camera_buffers.qsize(
-        ) > 0:
+        while self.camera_buffers is not None and self.camera_buffers.qsize() > 0:
             self.release()
 
     @abstractmethod
