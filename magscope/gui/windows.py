@@ -613,6 +613,7 @@ class AddColumnDropTarget(QFrame):
     def __init__(self, controls: "Controls") -> None:
         super().__init__()
         self._controls = controls
+        self._drag_active = False
         self.setObjectName("add_column_drop_target")
         self.setAcceptDrops(True)
         self.setMinimumWidth(300)
@@ -634,8 +635,16 @@ class AddColumnDropTarget(QFrame):
     def set_drag_active(self, active: bool) -> None:
         """Toggle visibility based on whether a panel is being dragged."""
 
-        self.setVisible(active)
-        if not active:
+        self._drag_active = active
+        self._update_visibility()
+
+    def refresh_visibility(self) -> None:
+        self._update_visibility()
+
+    def _update_visibility(self) -> None:
+        should_show = self._drag_active and self._controls.has_room_for_new_column()
+        self.setVisible(should_show)
+        if not should_show:
             self._set_active(False)
 
     def _set_active(self, active: bool) -> None:
@@ -647,6 +656,8 @@ class AddColumnDropTarget(QFrame):
     def _wrapper_from_event(self, event) -> PanelWrapper | None:
         manager = self._controls.layout_manager
         if manager is None:
+            return None
+        if not self._controls.has_room_for_new_column():
             return None
         mime_data = event.mimeData()
         if not mime_data.hasFormat(PANEL_MIME_TYPE):
@@ -679,6 +690,9 @@ class AddColumnDropTarget(QFrame):
         wrapper = self._wrapper_from_event(event)
         self._set_active(False)
         if wrapper is None:
+            event.ignore()
+            return
+        if not self._controls.has_room_for_new_column():
             event.ignore()
             return
         self._controls.create_new_column_with_panel(wrapper)
@@ -847,6 +861,7 @@ class Controls(QWidget):
             insert_index = self._layout_insert_index(name)
             self._columns_layout.insertWidget(insert_index, scroll)
             self._column_scrolls[name] = scroll
+            self._add_column_target.refresh_visibility()
         return column
 
     def create_new_column_with_panel(self, wrapper: PanelWrapper) -> None:
@@ -899,3 +914,24 @@ class Controls(QWidget):
         finally:
             self._suppress_layout_callback = False
         self.layout_manager.layout_changed()
+        self._add_column_target.refresh_visibility()
+
+    def has_room_for_new_column(self) -> bool:
+        """Return True if a new column can fit beside the existing ones."""
+
+        layout_width = self._columns_layout.contentsRect().width()
+        if layout_width <= 0:
+            layout_width = self.width()
+
+        spacing = max(0, self._columns_layout.spacing())
+        visible_scrolls = [scroll for scroll in self._column_scrolls.values() if scroll.isVisible()]
+        if not visible_scrolls:
+            return layout_width >= self._add_column_target.minimumWidth()
+
+        column_width = visible_scrolls[0].width() or visible_scrolls[0].sizeHint().width()
+        required_width = (len(visible_scrolls) + 1) * (column_width + spacing)
+        return layout_width >= required_width
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        super().resizeEvent(event)
+        self._add_column_target.refresh_visibility()
