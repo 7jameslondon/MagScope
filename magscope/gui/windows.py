@@ -1,62 +1,28 @@
-import numpy as np
 import os
 import sys
-from typing import Iterable
-from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QMessageBox,
-    QHBoxLayout,
-    QLabel,
-    QLayout,
-    QScrollArea,
-    QFrame,
-    QSizePolicy,
-)
-from PyQt6.QtCore import QPoint, QTimer, Qt, QThread, QSettings
-from PyQt6.QtGui import QImage, QPixmap, QGuiApplication
 import traceback
 from time import time
+from typing import Iterable
 from warnings import warn
 
-from magscope import AcquisitionMode
+import numpy as np
+from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer
+from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
+from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout, QMainWindow,
+                             QMessageBox, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
+
+from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
-from magscope.gui import (
-    VideoViewer,
-    PlotWorker,
-    TimeSeriesPlotBase,
-    CameraPanel,
-    GripSplitter,
-    BeadSelectionPanel,
-    AcquisitionPanel,
-    ScriptPanel,
-    HistogramPanel,
-    StatusPanel,
-    BeadGraphic,
-    ControlPanelBase,
-    ResizableLabel,
-)
-from magscope.gui.controls import (
-    PlotSettingsPanel,
-    ZLockPanel,
-    XYLockPanel,
-    ZLUTGenerationPanel,
-    ProfilePanel,
-    HelpPanel,
-)
-from magscope.gui.panel_layout import (
-    PANEL_MIME_TYPE,
-    PanelLayoutManager,
-    PanelWrapper,
-    ReorderableColumn,
-)
+from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
+                          ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
+                          ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
+from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, XYLockPanel,
+                                   ZLockPanel, ZLUTGenerationPanel)
+from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
+                                       ReorderableColumn)
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
-from magscope._logging import get_logger
-from magscope.utils import Message, numpy_type_to_qt_image_type
-
+from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")
 

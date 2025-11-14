@@ -1,9 +1,11 @@
 from __future__ import annotations
-from enum import IntEnum, StrEnum
+
 from datetime import datetime
+from enum import IntEnum, StrEnum
+from typing import TYPE_CHECKING, Callable, Type
+
 import numpy as np
 from PyQt6.QtGui import QImage
-from typing import Callable, TYPE_CHECKING, Type
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:

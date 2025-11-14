@@ -1,6 +1,7 @@
 from math import copysign, isnan
-import numpy as np
 from time import time
+
+import numpy as np
 
 from magscope.gui import WindowManager
 from magscope.processes import ManagerProcessBase

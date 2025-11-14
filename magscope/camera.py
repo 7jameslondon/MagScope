@@ -1,14 +1,16 @@
+import queue
 from abc import ABCMeta, abstractmethod
 from functools import lru_cache
-from magtrack.simulation import simulate_beads
-import numpy as np
-import queue
 from time import time
 from warnings import warn
+
+import numpy as np
+from magtrack.simulation import simulate_beads
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
 from magscope.processes import ManagerProcessBase
 from magscope.utils import Message, PoolVideoFlag
+
 
 class CameraManager(ManagerProcessBase):
     def __init__(self):

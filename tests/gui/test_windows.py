@@ -3,13 +3,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QWidget
 
 from magscope.gui.windows import LoadingWindow, WindowManager
-from magscope.utils import AcquisitionMode
 from magscope.processes import SingletonMeta
+from magscope.utils import AcquisitionMode
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

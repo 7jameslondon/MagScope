@@ -1,7 +1,7 @@
 import numpy as np
 
 import magscope
-from magscope import Units, AcquisitionMode
+from magscope import AcquisitionMode, Units
 
 my_script = magscope.Script()
 

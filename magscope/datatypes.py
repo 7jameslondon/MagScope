@@ -17,13 +17,13 @@ objects to coordinate access between processes. See the class docstrings
 below for usage details.
 """
 
+import struct
 from multiprocessing.shared_memory import SharedMemory
 from multiprocessing.synchronize import Lock
+
 import numpy as np
-import struct
 
 from ._logging import get_logger
-
 
 logger = get_logger("datatypes")
 

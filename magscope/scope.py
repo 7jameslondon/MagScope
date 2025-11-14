@@ -42,26 +42,26 @@ process so that real-time video frames, bead tracking data, and scripted events
 remain synchronized.
 """
 
-from multiprocessing import Event, freeze_support, Pipe, Lock
 import logging
-import numpy as np
 import os
 import sys
+from multiprocessing import Event, Lock, Pipe, freeze_support
 from typing import TYPE_CHECKING
 from warnings import warn
+
+import numpy as np
 import yaml
 
+from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.gui import ControlPanelBase, WindowManager, TimeSeriesPlotBase
+from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
 from magscope.processes import InterprocessValues, ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
-from magscope._logging import configure_logging, get_logger
-
 
 logger = get_logger("scope")
 

@@ -2,15 +2,15 @@
 Miscellaneous custom Qt widgets for the GUI
 """
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
-from PyQt6.QtCore import (QEasingCurve, QPropertyAnimation, QTimer, QSettings, Qt,
-                          QRect, pyqtSignal, QPointF, QPoint, QMimeData, QRectF)
-from PyQt6.QtGui import QValidator, QPainter, QColor, QPen, QDrag, QFont, QBrush, QPalette
-from PyQt6.QtWidgets import (QCheckBox, QGroupBox, QLineEdit, QSplitter,
-                             QSplitterHandle, QWidget, QLabel, QVBoxLayout,
-                             QHBoxLayout, QFrame, QScrollArea, QPushButton,
-                             QSizePolicy, QGraphicsItem, QGraphicsRectItem,
-                             QGraphicsTextItem)
+
+from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
+                          QRectF, QSettings, Qt, QTimer, pyqtSignal)
+from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
+                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.gui.windows import WindowManager
