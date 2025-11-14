@@ -615,7 +615,7 @@ class AddColumnDropTarget(QFrame):
         self._controls = controls
         self.setObjectName("add_column_drop_target")
         self.setAcceptDrops(True)
-        self.setMinimumWidth(160)
+        self.setMinimumWidth(300)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)
