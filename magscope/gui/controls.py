@@ -1,41 +1,26 @@
 from __future__ import annotations
-import datetime
-import traceback
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import numpy as np
+import datetime
 import os
 import time
+import traceback
 from typing import TYPE_CHECKING
-from PyQt6.QtCore import Qt, QVariant, pyqtSignal, QSettings, QUrl
-from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
-from PyQt6.QtWidgets import (
-    QFileDialog,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-    QComboBox,
-    QProgressBar,
-    QStackedLayout,
-    QFrame
-)
 
-from magscope.gui import (
-    CollapsibleGroupBox,
-    LabeledCheckbox,
-    LabeledLineEditWithValue,
-    LabeledStepperLineEdit,
-    LabeledLineEdit)
+import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import QSettings, Qt, QUrl, QVariant, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
+from PyQt6.QtWidgets import (QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+                             QLineEdit, QProgressBar, QPushButton, QStackedLayout, QTextEdit,
+                             QVBoxLayout, QWidget)
+
+from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEdit,
+                          LabeledLineEditWithValue, LabeledStepperLineEdit)
 from magscope.gui.widgets import FlashLabel
 from magscope.processes import ManagerProcessBase
-from magscope.scripting import ScriptStatus, ScriptManager
-from magscope.utils import AcquisitionMode, crop_stack_to_rois, Message
+from magscope.scripting import ScriptManager, ScriptStatus
+from magscope.utils import AcquisitionMode, Message, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:

@@ -1,25 +1,26 @@
 from __future__ import annotations
-from multiprocessing import Process, Queue, Lock
-import numpy as np
+
 import os
-import tifffile
+from multiprocessing import Lock, Process, Queue
 from typing import TYPE_CHECKING
 
-from magscope._logging import get_logger
-
-from magtrack import auto_conv_multiline_sub_pixel
-
-from magscope.datatypes import VideoBuffer, MatrixBuffer
-from magscope.processes import ManagerProcessBase
-from magscope.scripting import ScriptManager
-from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
 import magtrack
+import numpy as np
+import tifffile
+from magtrack import auto_conv_multiline_sub_pixel
 from magtrack._cupy import cp, is_cupy_available
 
+from magscope._logging import get_logger
+from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.processes import ManagerProcessBase
+from magscope.scripting import ScriptManager
+from magscope.utils import (AcquisitionMode, Message, PoolVideoFlag, crop_stack_to_rois,
+                            date_timestamp_str)
+
 if TYPE_CHECKING:
-    from multiprocessing.synchronize import Lock as LockType
-    from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.queues import Queue as QueueType
+    from multiprocessing.sharedctypes import Synchronized
+    from multiprocessing.synchronize import Lock as LockType
     ValueTypeUI8 = Synchronized[int]
 
 

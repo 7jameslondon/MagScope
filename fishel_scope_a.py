@@ -1,12 +1,13 @@
 from datetime import datetime
 from math import copysign
+from time import time
+from warnings import warn
+
 import matplotlib
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 from scipy.interpolate import PchipInterpolator
-from time import time
-from warnings import warn
 
 import magscope
 

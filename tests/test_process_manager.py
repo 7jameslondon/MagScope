@@ -1,7 +1,7 @@
 import importlib.util
+import sys
 import types
 from pathlib import Path
-import sys
 
 import pytest
 

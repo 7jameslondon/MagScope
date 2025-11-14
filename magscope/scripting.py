@@ -12,10 +12,10 @@ communicates with other parts of the application through the standard IPC
 mechanism.
 """
 
-from enum import StrEnum
 import inspect
-from time import time
 import traceback
+from enum import StrEnum
+from time import time
 from typing import Callable
 from warnings import warn
 

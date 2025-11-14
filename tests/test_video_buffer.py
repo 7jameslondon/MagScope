@@ -1,10 +1,10 @@
 import unittest
-
-import numpy as np
+from importlib import util
 from multiprocessing import Lock
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from importlib import util
+
+import numpy as np
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "magscope" / "datatypes.py"
 SPEC = util.spec_from_file_location("magscope.datatypes", MODULE_PATH)

@@ -1,16 +1,18 @@
 from __future__ import annotations
-from abc import abstractmethod, ABCMeta
+
+from abc import ABCMeta, abstractmethod
 from datetime import datetime
+from time import sleep, time
+from typing import TYPE_CHECKING
+
 import matplotlib
-from PyQt6.QtCore import QObject, pyqtSignal, QMutex
-from PyQt6.QtGui import QImage
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.dates as mdates
-from matplotlib.figure import Figure
 import matplotlib.style as mplstyle
 import numpy as np
-from time import time, sleep
-from typing import TYPE_CHECKING
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import QMutex, QObject, pyqtSignal
+from PyQt6.QtGui import QImage
 
 from magscope.datatypes import MatrixBuffer
 

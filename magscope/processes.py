@@ -1,24 +1,24 @@
 from __future__ import annotations
+
+import sys
+import traceback
 from abc import ABC, ABCMeta, abstractmethod
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
-import sys
-import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
+from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.utils import AcquisitionMode, Message, registerwithscript
-from magscope._logging import get_logger
-
 
 logger = get_logger("processes")
 
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
+    from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
-    from multiprocessing.sharedctypes import Synchronized
     ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraBase
     from magscope.hardware import HardwareManagerBase

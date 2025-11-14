@@ -1,24 +1,11 @@
-import numpy as np
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, pyqtSignal
-from PyQt6.QtGui import (
-    QBrush,
-    QColor,
-    QCursor,
-    QImage,
-    QPainter,
-    QPen,
-    QPixmap,
-)
-from PyQt6.QtWidgets import (
-    QFrame,
-    QGraphicsItem,
-    QGraphicsPixmapItem,
-    QGraphicsScene,
-    QGraphicsView,
-    QLabel,
-    QPushButton,
-)
 import time
+
+import numpy as np
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtWidgets import (QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene,
+                             QGraphicsView, QLabel, QPushButton)
+
 
 class VideoViewer(QGraphicsView):
     coordinatesChanged: 'pyqtSignal' = pyqtSignal(QPoint)
