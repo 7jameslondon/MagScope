@@ -271,7 +271,9 @@ class VideoWorker(Process):
             pad_profiles = np.vstack((t, b, pad_profiles))
 
             # Write the profile data(transposed) to the buffer
-            self._profiles_buffer.write(pad_profiles.T)
+            # If there are too many profiles, then truncate
+            max_rows = self._profiles_buffer.shape[0]
+            self._profiles_buffer.write(pad_profiles[:, :max_rows].T)
 
             return tracks, profiles
 
