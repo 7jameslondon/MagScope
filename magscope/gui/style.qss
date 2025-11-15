@@ -1,8 +1,0 @@
-#HelpPanelFrame {
-    border: 1px solid #5b5b5b;
-    border-radius: 6px;
-}
-
-#HelpPanelFrame:hover {
-    background-color: white;
-}

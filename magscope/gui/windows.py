@@ -1,4 +1,3 @@
-import os
 import sys
 import traceback
 from time import time
@@ -25,7 +24,6 @@ from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")
-
 
 class WindowManager(ManagerProcessBase):
     def __init__(self):
@@ -61,11 +59,6 @@ class WindowManager(ManagerProcessBase):
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
-
-        # Dark GUI Style
-        style_path = os.path.join(os.path.dirname(__file__), "style.qss")
-        with open(style_path, "r") as f:
-            self.qt_app.setStyleSheet(f.read())
 
         # If the number of windows is not specified, then use the number of screens
         if self._n_windows is None:
