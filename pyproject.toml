@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools >= 77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,7 +15,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Microsoft :: Any",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Image Processing"
 ]
 license = "GPL-3.0"
 license-files = ["license"]
@@ -25,7 +27,7 @@ dependencies = [
     "matplotlib",
     "tifffile",
     "PyYAML",
-    "magtrack",
+    "magtrack>=0.7",
     "PyQt6",
 ]
 
@@ -48,8 +50,10 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/7jameslondon/MagScope"
+Source = "https://github.com/7jameslondon/MagScope"
+Documentation = "https://magscope.readthedocs.io"
 Issues = "https://github.com/7jameslondon/MagScope/issues"
 
-[tool.setuptools]
-packages = { find = { include = ["magscope", "magscope.*"] } }
-include-package-data = true
+[tool.setuptools.packages.find]
+include = ["magscope*"]
+exclude = ["tests*", "docs*", "examples*", "assets*"]
