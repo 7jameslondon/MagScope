@@ -168,13 +168,31 @@ class MagScope:
 
     def receive_ipc(self):
         """Poll every IPC pipe and relay messages between processes."""
-        for pipe in self.pipes.values():
+        for name, pipe in self.pipes.items():
             # Check if this pipe has a message
-            if not pipe.poll():
+            try:
+                has_message = pipe.poll()
+            except (OSError, EOFError):
+                logger.warning(
+                    "IPC pipe to process %s became unavailable during poll; skipping",
+                    name,
+                    exc_info=True,
+                )
+                continue
+
+            if not has_message:
                 continue
 
             # Get the message
-            message = pipe.recv()
+            try:
+                message = pipe.recv()
+            except (EOFError, OSError):
+                logger.warning(
+                    "Failed to receive message from process %s; skipping",
+                    name,
+                    exc_info=True,
+                )
+                continue
 
             logger.info('%s', message)
 

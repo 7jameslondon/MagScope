@@ -147,7 +147,10 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                 self._magscope_quitting,
                 self._pipe,
             )
-            self._pipe.close()
+            try:
+                self._pipe.close()
+            except (OSError, EOFError):
+                pass
             self._pipe = None
         logger.info('%s quit', self.name)
 
@@ -157,11 +160,44 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
 
     def receive_ipc(self):
         # Check pipe for new messages
-        if self._pipe is None or not self._pipe.poll():
+        if self._pipe is None:
+            return
+
+        try:
+            has_message = self._pipe.poll()
+        except (OSError, EOFError):
+            logger.warning(
+                "%s IPC pipe became unavailable during poll; stopping receive loop",
+                self.name,
+                exc_info=True,
+            )
+            try:
+                self._pipe.close()
+            except (OSError, EOFError):
+                pass
+            self._pipe = None
+            self._running = False
+            return
+
+        if not has_message:
             return
 
         # Get the message
-        message = self._pipe.recv()
+        try:
+            message = self._pipe.recv()
+        except (EOFError, OSError):
+            logger.warning(
+                "%s failed to receive IPC message; treating pipe as closed",
+                self.name,
+                exc_info=True,
+            )
+            try:
+                self._pipe.close()
+            except (OSError, EOFError):
+                pass
+            self._pipe = None
+            self._running = False
+            return
 
         # Special case: if the message is 'quit'
         # then set a flag to prevent this message repeating
