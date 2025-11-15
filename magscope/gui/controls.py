@@ -100,8 +100,14 @@ class HelpPanel(QFrame):
 
     def _apply_styles(self):
         text_color = "black" if self._hovered else "white"
+        background_color = "white" if self._hovered else "transparent"
         self.setStyleSheet(
             f"""
+            #HelpPanelFrame {{
+                border: 1px solid #5b5b5b;
+                border-radius: 6px;
+                background-color: {background_color};
+            }}
             #HelpPanelFrame QLabel {{
                 color: {text_color};
             }}
