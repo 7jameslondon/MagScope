@@ -271,7 +271,16 @@ class VideoWorker(Process):
             pad_profiles = np.vstack((t, b, pad_profiles))
 
             # Write the profile data(transposed) to the buffer
-            self._profiles_buffer.write(pad_profiles.T)
+            pad_profiles = pad_profiles.T
+            max_rows = self._profiles_buffer.shape[0]
+            if pad_profiles.shape[0] <= max_rows:
+                self._profiles_buffer.write(pad_profiles)
+            else:
+                for start in range(0, pad_profiles.shape[0], max_rows):
+                    stop = start + max_rows
+                    # ``MatrixBuffer.write`` rejects writes larger than the
+                    # allocated height, so split oversized batches into chunks.
+                    self._profiles_buffer.write(pad_profiles[start:stop])
 
             return tracks, profiles
 
