@@ -35,7 +35,8 @@ from magscope.gui import (
 from magscope.gui.widgets import FlashLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, ScriptManager
-from magscope.utils import AcquisitionMode, crop_stack_to_rois, Message
+from magscope.ipc import Message
+from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:

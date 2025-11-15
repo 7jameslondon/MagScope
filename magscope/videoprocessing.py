@@ -10,9 +10,10 @@ from magscope._logging import get_logger
 from magtrack import auto_conv_multiline_sub_pixel
 
 from magscope.datatypes import VideoBuffer, MatrixBuffer
+from magscope.ipc import Message
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
-from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, Message, PoolVideoFlag
+from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, PoolVideoFlag
 import magtrack
 from magtrack._cupy import cp, is_cupy_available
 
