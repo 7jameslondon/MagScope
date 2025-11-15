@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.utils import AcquisitionMode, Message, registerwithscript
+from magscope.ipc import wait_for_event_and_drain
+from magscope.ipc import Message
+from magscope.utils import AcquisitionMode, registerwithscript
 from magscope._logging import get_logger
 
 
@@ -137,12 +139,14 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._quitting.set()
         self._running = False
         if not self._quit_requested:
+            self._quit_requested = True
             message = Message(ManagerProcessBase, ManagerProcessBase.quit)
             self.send_ipc(message)
         if self._pipe:
-            while not self._magscope_quitting.is_set():
-                if self._pipe.poll():
-                    self._pipe.recv()
+            wait_for_event_and_drain(
+                self._magscope_quitting,
+                self._pipe,
+            )
             self._pipe.close()
             self._pipe = None
         logger.info('%s quit', self.name)

@@ -4,7 +4,8 @@ from time import time
 
 from magscope.gui import WindowManager
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, registerwithscript
+from magscope.ipc import Message
+from magscope.utils import registerwithscript
 
 
 class BeadLockManager(ManagerProcessBase):

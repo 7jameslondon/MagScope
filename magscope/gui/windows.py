@@ -55,7 +55,8 @@ from magscope.gui.panel_layout import (
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope._logging import get_logger
-from magscope.utils import Message, numpy_type_to_qt_image_type
+from magscope.ipc import Message
+from magscope.utils import numpy_type_to_qt_image_type
 
 
 logger = get_logger("gui.windows")

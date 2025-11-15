@@ -8,7 +8,7 @@ stack.  ``MagScope`` is responsible for:
   processing, and optional hardware integrations).
 * Loading configuration from YAML, sharing it across processes, and creating
   the inter-process communication (IPC) primitives required for collaboration.
-* Owning the main event loop that relays :class:`~magscope.utils.Message`
+* Owning the main event loop that relays :class:`~magscope.ipc.Message`
   objects between processes and supervises orderly shutdown.
 
 The class operates as a façade around a fleet of ``multiprocessing``
@@ -56,9 +56,9 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, WindowManager, TimeSeriesPlotBase
 from magscope.hardware import HardwareManagerBase
+from magscope.ipc import Message, relay_message_to_processes
 from magscope.processes import InterprocessValues, ManagerProcessBase
 from magscope.scripting import ScriptManager
-from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
 from magscope._logging import configure_logging, get_logger
 
@@ -178,7 +178,7 @@ class MagScope:
 
             logger.info('%s', message)
 
-            if type(message) is not Message:
+            if not isinstance(message, Message):
                 warn(f'Message is not a Message object: {message}')
                 continue
 
@@ -190,13 +190,12 @@ class MagScope:
                     logger.info('MagScope quitting ...')
                     self._quitting.set()
                     self._running = False
-                for name, pipe2 in self.pipes.items():
-                    if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
-                        pipe2.send(message)
-                        if message.meth == 'quit':
-                            while not self.quitting_events[name].is_set():
-                                if pipe2.poll():
-                                    pipe2.recv()
+                relay_message_to_processes(
+                    message,
+                    self.processes,
+                    self.pipes,
+                    self.quitting_events,
+                )
                 if message.meth == 'quit':
                     break
             elif message.to in self.pipes.keys(): # the message is to one process

@@ -20,7 +20,8 @@ from typing import Callable
 from warnings import warn
 
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, registerwithscript
+from magscope.ipc import Message
+from magscope.utils import registerwithscript
 
 
 class Script:

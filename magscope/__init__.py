@@ -1,8 +1,8 @@
+from magscope.ipc import Message
 from magscope.utils import (
     AcquisitionMode,
     crop_stack_to_rois,
     date_timestamp_str,
-    Message,
     numpy_type_to_qt_image_type,
     PoolVideoFlag,
     registerwithscript,

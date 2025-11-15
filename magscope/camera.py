@@ -8,7 +8,8 @@ from warnings import warn
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, PoolVideoFlag
+from magscope.ipc import Message
+from magscope.utils import PoolVideoFlag
 
 class CameraManager(ManagerProcessBase):
     def __init__(self):
