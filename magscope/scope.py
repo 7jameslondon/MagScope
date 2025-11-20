@@ -47,6 +47,7 @@ import os
 import sys
 import time
 from multiprocessing import Event, Lock, Pipe, freeze_support
+from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
 
@@ -67,7 +68,6 @@ from magscope.videoprocessing import VideoProcessorManager
 logger = get_logger("scope")
 
 if TYPE_CHECKING:
-    from multiprocessing.connection import Connection
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
 
