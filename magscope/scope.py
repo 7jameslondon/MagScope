@@ -303,6 +303,15 @@ class MagScope:
             try:
                 with open(self._settings_path, 'r') as f:
                     settings = yaml.safe_load(f)
+                if settings is None:
+                    warn(f"Settings file {self._settings_path} is empty. Skipping merge.")
+                    return
+                if not isinstance(settings, dict):
+                    warn(
+                        f"Settings file {self._settings_path} must contain a YAML mapping. "
+                        "Skipping merge."
+                    )
+                    return
                 self._settings.update(settings)
             except yaml.YAMLError as e:
                 warn(f"Error loading settings file {self._settings_path}: {e}")
