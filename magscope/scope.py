@@ -273,7 +273,8 @@ class MagScope:
 
     def _setup_locks(self):
         """Instantiate per-buffer locks and make them available to processes."""
-        self.lock_names.extend(self._hardware.keys())
+        lock_targets = list(dict.fromkeys([*self.lock_names, *self._hardware.keys()]))
+        self.lock_names = lock_targets
         for name in self.lock_names:
             self.locks[name] = Lock()
         for proc in self.processes.values():
