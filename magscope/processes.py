@@ -10,6 +10,7 @@ from warnings import warn
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.ipc import drain_pipe_until_quit
 from magscope.utils import AcquisitionMode, Message, registerwithscript
 
 logger = get_logger("processes")
@@ -170,9 +171,9 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             message = Message(ManagerProcessBase, ManagerProcessBase.quit)
             self.send_ipc(message)
         if self._pipe:
-            while not self._magscope_quitting.is_set():
-                if self._pipe.poll():
-                    self._pipe.recv()
+            if self._magscope_quitting is None:
+                raise RuntimeError(f"{self.name} has no magscope_quitting event")
+            drain_pipe_until_quit(self._pipe, self._magscope_quitting)
             self._pipe.close()
             self._pipe = None
         logger.info('%s quit', self.name)

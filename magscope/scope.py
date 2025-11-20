@@ -46,7 +46,7 @@ import logging
 import os
 import sys
 import time
-from multiprocessing import Event, Lock, Pipe, freeze_support
+from multiprocessing import Event, Lock, freeze_support
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -60,6 +60,7 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
+from magscope.ipc import broadcast_message, create_pipes, drain_pipe_until_quit
 from magscope.processes import InterprocessValues, ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
@@ -194,13 +195,15 @@ class MagScope:
                     logger.info('MagScope quitting ...')
                     self._quitting.set()
                     self._running = False
-                for name, pipe2 in self.pipes.items():
-                    if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
-                        pipe2.send(message)
-                        if message.meth == 'quit':
-                            while not self.quitting_events[name].is_set():
-                                if pipe2.poll():
-                                    pipe2.recv()
+                broadcast_message(
+                    message,
+                    pipes=self.pipes,
+                    processes=self.processes,
+                    quitting_events=self.quitting_events,
+                )
+                if message.meth == 'quit':
+                    for name, pipe2 in self.pipes.items():
+                        drain_pipe_until_quit(pipe2, self.quitting_events[name])
                 if message.meth == 'quit':
                     break
             elif message.to in self.pipes.keys(): # the message is to one process
@@ -284,11 +287,8 @@ class MagScope:
 
     def _setup_pipes(self) -> dict[str, Connection]:
         """Create duplex pipes that allow processes to exchange messages."""
-        child_ends: dict[str, Connection] = {}
-        for name, _proc in self.processes.items():
-            pipe = Pipe()
-            self.pipes[name] = pipe[0]
-            child_ends[name] = pipe[1]
+        parent_ends, child_ends = create_pipes(self.processes)
+        self.pipes = parent_ends
         return child_ends
 
     def _register_script_methods(self):
