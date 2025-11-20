@@ -45,6 +45,7 @@ remain synchronized.
 import logging
 import os
 import sys
+import time
 from multiprocessing import Event, Lock, Pipe, freeze_support
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -168,6 +169,7 @@ class MagScope:
 
     def receive_ipc(self):
         """Poll every IPC pipe and relay messages between processes."""
+        handled_message = False
         for pipe in self.pipes.values():
             # Check if this pipe has a message
             if not pipe.poll():
@@ -175,6 +177,8 @@ class MagScope:
 
             # Get the message
             message = pipe.recv()
+
+            handled_message = True
 
             logger.info('%s', message)
 
@@ -204,6 +208,9 @@ class MagScope:
                     self.pipes[message.to].send(message)
             else:
                 warn(f'Unknown pipe {message.to} with {message}')
+
+        if not handled_message:
+            time.sleep(0.001)
 
     def _handle_mag_scope_message(self, message: Message) -> None:
         if message.meth == 'log_exception':
