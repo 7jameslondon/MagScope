@@ -231,15 +231,19 @@ class MagScope:
         # Create and share: locks, pipes, flags, types, etc.
         camera_type = type(self.camera_manager.camera)
         hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
-        for name, proc in self.processes.items():
-            proc.camera_type = camera_type
-            proc.hardware_types = hardware_types
-            proc._magscope_quitting = self._quitting
-            proc.settings = self._settings
-            proc.shared_values = self.shared_values
-            self.quitting_events[name] = proc._quitting
-        self._setup_pipes()
+        child_pipes = self._setup_pipes()
         self._setup_locks()
+        for name, proc in self.processes.items():
+            proc.configure_shared_resources(
+                camera_type=camera_type,
+                hardware_types=hardware_types,
+                quitting_event=self._quitting,
+                settings=self._settings,
+                shared_values=self.shared_values,
+                locks=self.locks,
+                pipe_end=child_pipes[name],
+            )
+            self.quitting_events[name] = proc.quitting_event
 
         # Create the shared buffers
         self.profiles_buffer = MatrixBuffer(
@@ -277,15 +281,15 @@ class MagScope:
         self.lock_names = lock_targets
         for name in self.lock_names:
             self.locks[name] = Lock()
-        for proc in self.processes.values():
-            proc.locks = self.locks
 
-    def _setup_pipes(self):
+    def _setup_pipes(self) -> dict[str, Connection]:
         """Create duplex pipes that allow processes to exchange messages."""
-        for name, proc in self.processes.items():
+        child_ends: dict[str, Connection] = {}
+        for name, _proc in self.processes.items():
             pipe = Pipe()
             self.pipes[name] = pipe[0]
-            proc._pipe = pipe[1]
+            child_ends[name] = pipe[1]
+        return child_ends
 
     def _register_script_methods(self):
         """Expose manager methods to the scripting subsystem."""
