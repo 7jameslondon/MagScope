@@ -76,6 +76,36 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.video_buffer: VideoBuffer | None = None
         self.shared_values: InterprocessValues | None = None
 
+    @property
+    def quitting_event(self) -> EventType:
+        """Event set when this process has begun quitting."""
+        return self._quitting
+
+    def configure_shared_resources(
+        self,
+        *,
+        camera_type: type[CameraBase] | None,
+        hardware_types: dict[str, type[HardwareManagerBase]],
+        quitting_event: EventType,
+        settings: dict,
+        shared_values: InterprocessValues,
+        locks: dict[str, LockType],
+        pipe_end: Connection,
+    ) -> None:
+        """Attach shared references provided by :class:`~magscope.scope.MagScope`.
+
+        This centralizes initialization so callers do not need to mutate
+        underscored attributes directly when preparing processes before
+        ``start()`` is invoked.
+        """
+        self.camera_type = camera_type
+        self.hardware_types = hardware_types
+        self._magscope_quitting = quitting_event
+        self.settings = settings
+        self.shared_values = shared_values
+        self.locks = locks
+        self._pipe = pipe_end
+
     def run(self):
         """ Start the process when 'start()' is called
 
