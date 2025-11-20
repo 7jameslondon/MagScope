@@ -178,7 +178,7 @@ class MagScope:
 
             logger.info('%s', message)
 
-            if type(message) is not Message:
+            if not isinstance(message, Message):
                 warn(f'Message is not a Message object: {message}')
                 continue
 
