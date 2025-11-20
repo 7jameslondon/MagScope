@@ -203,7 +203,8 @@ class MagScope:
                 )
                 if message.meth == 'quit':
                     for name, pipe2 in self.pipes.items():
-                        drain_pipe_until_quit(pipe2, self.quitting_events[name])
+                        if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
+                            drain_pipe_until_quit(pipe2, self.quitting_events[name])
                 if message.meth == 'quit':
                     break
             elif message.to in self.pipes.keys(): # the message is to one process
