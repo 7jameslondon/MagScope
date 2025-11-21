@@ -1,21 +1,19 @@
 """Core orchestration for the MagScope application.
 
-``MagScope`` is the top-level coordinator responsible for preparing shared
-resources (configuration, shared-memory buffers, locks, and IPC pipes),
-constructing manager processes, and relaying messages between them until
-shutdown. Its duties include:
+``MagScope`` is the parent process that builds every other manager process,
+connects them with shared resources, and relays inter-process messages until
+shutdown. Its responsibilities span the full application lifetime:
 
-* Instantiating manager processes (camera, bead lock, GUI, scripting, video
-  processing, and optional hardware integrations).
-* Loading configuration from YAML, merging user overrides, and distributing the
+* Loading YAML configuration, merging user overrides, and distributing the
   result to each process.
-* Owning the main event loop that forwards :class:`~magscope.utils.Message`
-  objects and supervises orderly shutdown.
+* Constructing manager processes (camera, bead lock, GUI, scripting, video
+  processing, and optional hardware integrations) and wiring them to shared
+  locks, buffers, and IPC pipes.
+* Running the main IPC loop that forwards :class:`~magscope.utils.Message`
+  objects between processes and supervises orderly shutdown.
 
-The orchestrator runs as a façade around a fleet of ``multiprocessing``
-``Process`` subclasses.  ``MagScope.start`` prepares shared resources,
-registers available scripting hooks, starts each process, and then loops until
-a quit command is received.
+``MagScope.start`` prepares the shared resources, registers scriptable hooks,
+starts each process, and then loops until a quit command is received.
 
 Example
 -------
@@ -79,33 +77,39 @@ class MagScope:
     ``MagScope`` owns references to every manager process, shared buffer, and
     IPC primitive used by the application. Instances can be customized by
     adding hardware managers, GUI controls, or time-series plots before calling
-    :meth:`start`. Once started, the instance supervises manager lifetimes until
-    it receives a quit signal broadcast over the IPC bus.
+    :meth:`start`. Once started, the instance supervises manager lifetimes,
+    relays messages, and coordinates shutdown when a quit signal is broadcast
+    over the IPC bus.
     """
 
     def __init__(self, *, verbose: bool = False):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
-        self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
+        self.video_processor_manager = VideoProcessorManager()
+        self.window_manager = WindowManager()
+        self.script_manager = ScriptManager()
+
         self._hardware: dict[str, HardwareManagerBase] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
-        self.shared_values: InterprocessValues = InterprocessValues()
+        self.processes: dict[str, ManagerProcessBase] = {}
+
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['ProfilesBuffer', 'TracksBuffer', 'VideoBuffer']
         self.pipes: dict[str, Connection] = {}
-        self.processes: dict[str, ManagerProcessBase] = {}
-        self.profiles_buffer: MatrixBuffer | None = None
-        self._quitting: Event = Event()
         self.quitting_events: dict[str, EventType] = {}
-        self._running: bool = False
-        self.script_manager = ScriptManager()
+        self.shared_values: InterprocessValues = InterprocessValues()
+        self._quitting: Event = Event()
+
+        self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
         self._settings = self._get_default_settings()
         self._settings_path = 'settings.yaml'
+
+        self._running: bool = False
+        self._log_level = logging.INFO if verbose else logging.WARNING
+
+        self.profiles_buffer: MatrixBuffer | None = None
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
-        self.video_processor_manager = VideoProcessorManager()
-        self.window_manager = WindowManager()
-        self._log_level = logging.INFO if verbose else logging.WARNING
         configure_logging(level=self._log_level)
 
     def set_verbose_logging(self, enabled: bool = True) -> None:
@@ -201,27 +205,36 @@ class MagScope:
     def receive_ipc(self):
         """Poll every IPC pipe once and relay any messages that arrive."""
         handled_message = False
-        for _name, pipe in self.pipes.items():
-            # Check if this pipe has a message
-            if not pipe.poll():
+        for pipe in self.pipes.values():
+            message = self._read_message(pipe)
+            if message is None:
                 continue
-
-            # Get the message
-            message = pipe.recv()
 
             handled_message = True
-
-            logger.info('%s', message)
-
-            if not isinstance(message, Message):
-                warn(f'Message is not a Message object: {message}')
-                continue
-
-            if self._route_message(message):
+            if self._process_message(message):
                 break
 
         if not handled_message:
             self._sleep_when_idle()
+
+    def _read_message(self, pipe: Connection) -> Message | object | None:
+        """Retrieve a message from ``pipe`` if one is waiting."""
+
+        if not pipe.poll():
+            return None
+
+        message = pipe.recv()
+        logger.info('%s', message)
+        if not isinstance(message, Message):
+            warn(f'Message is not a Message object: {message}')
+            return None
+
+        return message
+
+    def _process_message(self, message: Message) -> bool:
+        """Route a valid message and indicate whether the IPC loop should break."""
+
+        return self._route_message(message)
 
     def _route_message(self, message: Message) -> bool:
         """Dispatch a message based on its destination.
