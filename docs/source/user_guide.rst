@@ -131,5 +131,5 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
 Coming Soon
 --------------------
 
-* **Hardware integration** – Placeholder for instructions on connecting real microscopes, stages, or cameras.
 * **Data export** – Placeholder for explaining how to save measurements captured through the interface.
+* **Hardware integration** – For camera setup, follow :ref:`connect_camera` to replace the demo feed with your device.
