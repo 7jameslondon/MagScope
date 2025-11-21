@@ -17,6 +17,19 @@ MagScope includes a simulated camera so the interface can be explored without la
 
 This creates the default window layout and begins streaming data from the built-in demo pipeline.
 
+Lifecycle rules
+---------------
+
+MagScope is a singleton. Attempting to create a second :class:`magscope.MagScope` raises a ``TypeError``; the first instance owns
+the entire application lifetime. Call :py:meth:`MagScope.start <magscope.scope.MagScope.start>` once to launch the GUI and manager
+processes. Calling ``start()`` again while the instance is already running only produces a warning because MagScope is already
+active. After MagScope receives a quit request or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`, the instance
+permanently shuts down and cannot be restarted.
+
+Use :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>` to trigger the same orderly shutdown that occurs when any manager
+process requests a quit. ``stop()`` blocks until all manager processes have joined, so you can safely clean up resources after it
+returns.
+
 Windows and Multiple Screens
 --------------
 

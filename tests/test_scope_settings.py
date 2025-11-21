@@ -54,6 +54,7 @@ def test_load_settings_warns_and_skips_empty_file(monkeypatch, tmp_path):
     _install_pyqt_mocks(monkeypatch)
     from magscope.scope import MagScope
 
+    MagScope._reset_singleton_for_testing()
     scope = MagScope()
     settings_path = tmp_path / "settings.yaml"
     settings_path.write_text("")
@@ -64,3 +65,5 @@ def test_load_settings_warns_and_skips_empty_file(monkeypatch, tmp_path):
         scope._load_settings()
 
     assert scope.settings == original_settings
+
+    MagScope._reset_singleton_for_testing()
