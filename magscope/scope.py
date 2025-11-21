@@ -1,20 +1,20 @@
 """Core orchestration for the MagScope application.
 
-This module provides the :class:`MagScope` class, the top-level coordinator that
-bootstraps every subsystem required to run the magnetic tweezer and microscopy
-stack.  ``MagScope`` is responsible for:
+``MagScope`` is the top-level coordinator that prepares shared memory buffers,
+IPC pipes, locks, and configuration, hands those resources to each manager
+process, and then relays messages until shutdown. Its responsibilities include:
 
 * Instantiating each manager process (camera, bead lock, GUI, scripting, video
   processing, and optional hardware integrations).
-* Loading configuration from YAML, sharing it across processes, and creating
-  the inter-process communication (IPC) primitives required for collaboration.
-* Owning the main event loop that relays :class:`~magscope.utils.Message`
+* Loading configuration from YAML, merging user overrides, and sharing the
+  result with every process.
+* Owning the main event loop that forwards :class:`~magscope.utils.Message`
   objects between processes and supervises orderly shutdown.
 
-The class operates as a façade around a fleet of ``multiprocessing``
-``Process`` subclasses.  ``MagScope.start`` prepares shared memory buffers,
-registers available scripting hooks, and then enters a loop forwarding IPC
-messages until a quit command is received.
+The orchestrator runs as a façade around a fleet of ``multiprocessing``
+``Process`` subclasses.  ``MagScope.start`` prepares shared resources,
+registers available scripting hooks, starts each process, and then loops until
+a quit command is received.
 
 Example
 -------
@@ -73,13 +73,13 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
 
 class MagScope:
-    """Main entry point for coordinating all MagScope subsystems.
+    """Coordinate MagScope managers, shared resources, and IPC.
 
-    The class holds references to every manager process, shared buffer, and IPC
-    primitive used by the application.  ``MagScope`` can be instantiated on its
-    own and started immediately, or it can be configured by adding hardware
-    managers, GUI controls, or time-series plots before calling
-    :meth:`start`.
+    The class owns references to every manager process, shared buffer, and IPC
+    primitive used by the application. Instances can be customized by adding
+    hardware managers, GUI controls, or time-series plots before calling
+    :meth:`start`. Once started, the instance supervises manager lifetimes until
+    it receives a quit signal.
     """
 
     def __init__(self, *, verbose: bool = False):
@@ -128,42 +128,63 @@ class MagScope:
         When a quit message is received the method joins every process before
         returning control to the caller.
         """
-        configure_logging(level=self._log_level)
+        self._apply_logging_preferences()
 
         if self._running:
             warn('MagScope is already running')
             return
         self._running = True
 
-        # ===== Collect separate processes in a dictionary =====
+        self._collect_processes()
+        self._initialize_shared_state()
+        self._start_managers()
+        self._main_ipc_loop()
+        self._join_processes()
+
+    def _apply_logging_preferences(self) -> None:
+        """Apply the current verbosity preference to the logging system."""
+        configure_logging(level=self._log_level)
+
+    def _collect_processes(self) -> None:
+        """Assemble the ordered list of manager processes to supervise.
+
+        ScriptManager must remain first so that the ``@registerwithscript``
+        decorator binds correctly before other managers start.
+        """
         proc_list: list[ManagerProcessBase] = [
-            self.script_manager, # ScriptManager must be first in this list for @registerwithscript to work
+            self.script_manager,  # ScriptManager must be first in this list for @registerwithscript to work
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,
-            self.window_manager
+            self.window_manager,
         ]
         proc_list.extend(self._hardware.values())
+
+        self.processes = {}
         for proc in proc_list:
             self.processes[proc.name] = proc
 
-        # ===== Setup and share resources =====
+    def _initialize_shared_state(self) -> None:
+        """Load configuration and prepare shared resources for all managers."""
         freeze_support()  # To prevent recursion in windows executable
         self._load_settings()
         self._setup_shared_resources()
         self._register_script_methods()
 
-        # ===== Start the managers =====
+    def _start_managers(self) -> None:
+        """Start each manager process."""
         for proc in self.processes.values():
-            proc.start() # calls 'run()'
+            proc.start()  # calls 'run()'
 
-        # ===== Wait in loop for inter-process messages =====
+    def _main_ipc_loop(self) -> None:
+        """Forward IPC messages until a quit request is observed."""
         logger.info('MagScope main loop starting ...')
         while self._running:
             self.receive_ipc()
         logger.info('MagScope main loop ended.')
 
-        # ===== End program by joining each process =====
+    def _join_processes(self) -> None:
+        """Join every managed process once shutdown has been requested."""
         for name, proc in self.processes.items():
             proc.join()
             logger.info('%s ended.', name)
@@ -171,7 +192,7 @@ class MagScope:
     def receive_ipc(self):
         """Poll every IPC pipe and relay messages between processes."""
         handled_message = False
-        for pipe in self.pipes.values():
+        for _name, pipe in self.pipes.items():
             # Check if this pipe has a message
             if not pipe.poll():
                 continue
@@ -187,20 +208,32 @@ class MagScope:
                 warn(f'Message is not a Message object: {message}')
                 continue
 
-            # Process the message
-            if message.to == 'MagScope':
-                self._handle_mag_scope_message(message)
-            elif message.to == ManagerProcessBase.__name__: # the message is to all processes
-                if self._handle_broadcast_message(message):
-                    break
-            elif message.to in self.pipes.keys(): # the message is to one process
-                if self.processes[message.to].is_alive() and not self.quitting_events[message.to].is_set():
-                    self.pipes[message.to].send(message)
-            else:
-                warn(f'Unknown pipe {message.to} with {message}')
+            if self._route_message(message):
+                break
 
         if not handled_message:
             time.sleep(0.001)
+
+    def _route_message(self, message: Message) -> bool:
+        """Dispatch a message based on its destination.
+
+        Returns ``True`` when the IPC loop should stop iterating over the
+        current set of pipes (for example, immediately after handling a quit
+        broadcast). This mirrors the previous behavior of breaking out of the
+        ``receive_ipc`` loop once a quit message has been processed.
+        """
+        if message.to == 'MagScope':
+            self._handle_mag_scope_message(message)
+        elif message.to == ManagerProcessBase.__name__:  # the message is to all processes
+            if self._handle_broadcast_message(message):
+                return True
+        elif message.to in self.pipes:  # the message is to one process
+            if self.processes[message.to].is_alive() and not self.quitting_events[message.to].is_set():
+                self.pipes[message.to].send(message)
+        else:
+            warn(f'Unknown pipe {message.to} with {message}')
+
+        return False
 
     def _handle_mag_scope_message(self, message: Message) -> None:
         if message.meth == 'log_exception':
@@ -244,7 +277,11 @@ class MagScope:
 
     def _setup_shared_resources(self):
         """Create and distribute shared locks, pipes, buffers, and metadata."""
-        # Create and share: locks, pipes, flags, types, etc.
+        self._configure_processes_with_shared_resources()
+        self._create_shared_buffers()
+
+    def _configure_processes_with_shared_resources(self):
+        """Share locks, pipes, and configuration with each process."""
         camera_type = type(self.camera_manager.camera)
         hardware_types = {name: type(hardware) for name, hardware in self._hardware.items()}
         child_pipes = self._setup_pipes()
@@ -261,7 +298,8 @@ class MagScope:
             )
             self.quitting_events[name] = proc.quitting_event
 
-        # Create the shared buffers
+    def _create_shared_buffers(self):
+        """Instantiate shared memory buffers used throughout the application."""
         self.profiles_buffer = MatrixBuffer(
             create=True,
             locks=self.locks,
