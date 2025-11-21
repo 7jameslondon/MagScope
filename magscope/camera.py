@@ -1,3 +1,13 @@
+"""Camera manager and dummy camera implementations for MagScope.
+
+This module defines the `CameraManager` process responsible for coordinating
+camera acquisition with the shared `VideoBuffer`, along with several
+simulation-oriented `CameraBase` implementations used when hardware is not
+available. The manager exchanges IPC messages with the GUI to keep camera
+settings synchronized and ensures buffers are properly released as acquisition
+states change.
+"""
+
 import queue
 from abc import ABCMeta, abstractmethod
 from functools import lru_cache
@@ -13,11 +23,27 @@ from magscope.utils import Message, PoolVideoFlag
 
 
 class CameraManager(ManagerProcessBase):
+    """Manager process that feeds frames from a `CameraBase` into shared buffers.
+
+    The manager owns a camera instance (dummy by default), connects it to the
+    shared `VideoBuffer`, relays camera settings to the GUI, and orchestrates
+    buffer lifecycles based on acquisition and processing state. Its main loop
+    reacts to pool flags, drains buffers to avoid overflow, and triggers camera
+    fetches when connected.
+    """
+
     def __init__(self):
         super().__init__()
         self.camera: CameraBase = DummyCameraBeads()
 
     def setup(self):
+        """Connect to the camera and publish its current settings.
+
+        Connection failures are logged as warnings so the rest of the system can
+        continue running in simulation mode. When a connection succeeds,
+        broadcast the initial camera settings to keep the GUI in sync with the
+        camera process.
+        """
         # Attempt to connect to the camera
         try:
             self.camera.connect(self.video_buffer)
@@ -30,6 +56,15 @@ class CameraManager(ManagerProcessBase):
                 self.get_camera_setting(setting)
 
     def do_main_loop(self):
+        """Main process loop handling buffer lifecycle and fetching frames.
+
+        The video processor signals completion through ``video_process_flag``.
+        When processing finishes, return the pooled buffers to the camera and
+        flip the flag back to ``READY``. During acquisition pauses, buffers not
+        attached to a pool slot are released to avoid leaks. The method also
+        guards against video buffer overflows by purging frames when the
+        available capacity falls below roughly one frame.
+        """
         # Check if images are done processing
         if self._acquisition_on:
             if self.shared_values.video_process_flag.value == PoolVideoFlag.FINISHED:
@@ -57,6 +92,7 @@ class CameraManager(ManagerProcessBase):
             self.camera.fetch()
 
     def _release_unattached_buffers(self):
+        """Return buffers that are no longer tracked by the processing pool."""
         if self.video_buffer is None:
             return
 
@@ -68,6 +104,7 @@ class CameraManager(ManagerProcessBase):
             pass
 
     def _purge_buffers(self):
+        """Drain video buffer contents until at least 30% capacity is free."""
         if self.video_buffer is None:
             return
 
@@ -82,6 +119,7 @@ class CameraManager(ManagerProcessBase):
                 break
 
     def _release_pool_buffers(self):
+        """Release buffers that were handed to the video processing pool."""
         if self.video_buffer is None:
             return
 
@@ -89,6 +127,7 @@ class CameraManager(ManagerProcessBase):
             self.camera.release()
 
     def get_camera_setting(self, name: str):
+        """Send a camera setting value to the GUI via IPC."""
         value = self.camera[name]
         # local import to avoid circular imports
         from magscope.gui import WindowManager
@@ -98,6 +137,7 @@ class CameraManager(ManagerProcessBase):
         self.send_ipc(message)
 
     def set_camera_setting(self, name: str, value: str):
+        """Apply a setting to the camera and broadcast the full settings set."""
         try:
             self.camera[name] = value
         except Exception as e:
@@ -110,7 +150,13 @@ class CameraManager(ManagerProcessBase):
 
 
 class CameraBase(metaclass=ABCMeta):
-    """ Abstract base class for camera implementation """
+    """Abstract base class describing the camera interface used by managers.
+
+    Concrete cameras must expose immutable dimensions and dtype metadata, a
+    minimal settings API (`__getitem__`/`__setitem__`), and methods for
+    connecting, fetching frames into a `VideoBuffer`, and releasing buffers back
+    to the device or simulation pool.
+    """
     bits: int
     dtype: np.dtype
     height: int
@@ -204,6 +250,8 @@ class CameraBase(metaclass=ABCMeta):
 
 
 class DummyCameraNoise(CameraBase):
+    """Noise camera that generates random images at a configurable frame rate."""
+
     width = 512
     height = 256
     bits = 8
@@ -281,6 +329,8 @@ class DummyCameraNoise(CameraBase):
 
 
 class DummyCameraFastNoise(CameraBase):
+    """Noise camera that reuses cached random frames for higher throughput."""
+
     width = 1280
     height = 560
     bits = 8
@@ -373,6 +423,8 @@ class DummyCameraFastNoise(CameraBase):
 
 
 class DummyCameraBeads(CameraBase):
+    """Bead simulator producing synthetic frames for testing without hardware."""
+
     width  = 512
     height = 256
     bits   = 8
