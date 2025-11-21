@@ -74,7 +74,7 @@ if TYPE_CHECKING:
 class MagScope(metaclass=SingletonMeta):
     """Coordinate MagScope managers, shared resources, and IPC.
 
-``MagScope`` owns references to every manager process, shared buffer, and
+    ``MagScope`` owns references to every manager process, shared buffer, and
     IPC primitive used by the application. Instances can be customized by
     adding hardware managers, GUI controls, or time-series plots before calling
     :meth:`start`. Once started, the instance supervises manager lifetimes,
@@ -117,20 +117,6 @@ class MagScope(metaclass=SingletonMeta):
         self.profiles_buffer: MatrixBuffer | None = None
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
-        configure_logging(level=self._log_level)
-
-    @classmethod
-    def _reset_singleton_for_testing(cls) -> None:
-        """Clear the singleton registry so tests can create fresh instances."""
-
-        instances = getattr(type(cls), '_instances', None)
-        if isinstance(instances, dict):
-            instances.pop(cls, None)
-
-    def set_verbose_logging(self, enabled: bool = True) -> None:
-        """Toggle informational console output for MagScope internals."""
-
-        self._log_level = logging.INFO if enabled else logging.WARNING
         configure_logging(level=self._log_level)
 
     def start(self):
@@ -179,6 +165,53 @@ class MagScope(metaclass=SingletonMeta):
         self._handle_broadcast_message(quit_message)
         self._join_processes()
         self._mark_terminated()
+
+    def add_hardware(self, hardware: HardwareManagerBase):
+        """Register a hardware manager so its process launches with MagScope."""
+        self._hardware[hardware.name] = hardware
+
+    def add_control(self, control_type: type(ControlPanelBase), column: int):
+        """Schedule a GUI control panel to be added when the window manager starts."""
+        self.window_manager.controls_to_add.append((control_type, column))
+
+    def add_timeplot(self, plot: TimeSeriesPlotBase):
+        """Schedule a time-series plot for inclusion in the GUI at startup."""
+        self.window_manager.plots_to_add.append(plot)
+
+    @property
+    def settings_path(self):
+        return self._settings_path
+
+    @settings_path.setter
+    def settings_path(self, value):
+        if self._running:
+            warn('MagScope is already running')
+        self._settings_path = value
+
+    @property
+    def settings(self):
+        return self._settings
+
+    @settings.setter
+    def settings(self, value):
+        self._settings = value
+        if self._running:
+            for pipe in self.pipes.values():
+                pipe.send(Message(ManagerProcessBase, ManagerProcessBase.set_settings, value))
+
+    @classmethod
+    def _reset_singleton_for_testing(cls) -> None:
+        """Clear the singleton registry so tests can create fresh instances."""
+
+        instances = getattr(type(cls), '_instances', None)
+        if isinstance(instances, dict):
+            instances.pop(cls, None)
+
+    def set_verbose_logging(self, enabled: bool = True) -> None:
+        """Toggle informational console output for MagScope internals."""
+
+        self._log_level = logging.INFO if enabled else logging.WARNING
+        configure_logging(level=self._log_level)
 
     def _mark_running(self) -> bool:
         """Mark the orchestrator as running if it is not already active."""
@@ -439,6 +472,7 @@ class MagScope(metaclass=SingletonMeta):
             settings = yaml.safe_load(f)
         return settings
 
+    # TODO - Settings validation and error reporting. _load_settings quietly returns on malformed YAML.
     def _load_settings(self):
         """Merge user overrides from :attr:`settings_path` into active settings."""
         if not self._settings_path.endswith('.yaml'):
@@ -463,36 +497,3 @@ class MagScope(metaclass=SingletonMeta):
                 self._settings.update(settings)
             except yaml.YAMLError as e:
                 warn(f"Error loading settings file {self._settings_path}: {e}")
-
-    @property
-    def settings_path(self):
-        return self._settings_path
-
-    @settings_path.setter
-    def settings_path(self, value):
-        if self._running:
-            warn('MagScope is already running')
-        self._settings_path = value
-
-    @property
-    def settings(self):
-        return self._settings
-
-    @settings.setter
-    def settings(self, value):
-        self._settings = value
-        if self._running:
-            for pipe in self.pipes.values():
-                pipe.send(Message(ManagerProcessBase, ManagerProcessBase.set_settings, value))
-
-    def add_hardware(self, hardware: HardwareManagerBase):
-        """Register a hardware manager so its process launches with MagScope."""
-        self._hardware[hardware.name] = hardware
-
-    def add_control(self, control_type: type(ControlPanelBase), column: int):
-        """Schedule a GUI control panel to be added when the window manager starts."""
-        self.window_manager.controls_to_add.append((control_type, column))
-
-    def add_timeplot(self, plot: TimeSeriesPlotBase):
-        """Schedule a time-series plot for inclusion in the GUI at startup."""
-        self.window_manager.plots_to_add.append(plot)
