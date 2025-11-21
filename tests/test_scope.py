@@ -33,6 +33,16 @@ def load_scope_with_stubs(monkeypatch):
         def is_alive(self):
             return True
 
+    class StubSingletonMeta(type):
+        _instances = {}
+
+        def __call__(cls, *args, **kwargs):
+            if cls in cls._instances:
+                raise TypeError("MagScope is a singleton")
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+            return instance
+
     stub_classes = {
         "beadlock": {"BeadLockManager": type("BeadLockManager", (), {})},
         "camera": {"CameraManager": type("CameraManager", (), {})},
@@ -49,6 +59,8 @@ def load_scope_with_stubs(monkeypatch):
         "processes": {
             "InterprocessValues": type("InterprocessValues", (), {}),
             "ManagerProcessBase": StubManagerProcessBase,
+            "SingletonMeta": StubSingletonMeta,
+            "SingletonABCMeta": StubSingletonMeta,
         },
         "scripting": {"ScriptManager": type("ScriptManager", (), {})},
         "videoprocessing": {"VideoProcessorManager": type("VideoProcessorManager", (), {})},
@@ -74,7 +86,9 @@ def load_scope_with_stubs(monkeypatch):
 
     if "magscope.scope" in sys.modules:
         del sys.modules["magscope.scope"]
-    return importlib.import_module("magscope.scope"), StubMessage
+    module = importlib.import_module("magscope.scope")
+    module.MagScope._reset_singleton_for_testing()
+    return module, StubMessage
 
 
 class DummyPipe:
@@ -129,3 +143,88 @@ def test_receive_ipc_accepts_message_subclass(monkeypatch):
 
     assert outgoing.sent == [message]
     assert caught_warnings == []
+
+
+def test_start_warns_when_already_running(monkeypatch):
+    scope_module, _ = load_scope_with_stubs(monkeypatch)
+    scope = scope_module.MagScope()
+
+    calls: list[str] = []
+
+    def recorder(label):
+        def _inner():
+            calls.append(label)
+        return _inner
+
+    monkeypatch.setattr(scope, "_collect_processes", recorder("collect"))
+    monkeypatch.setattr(scope, "_initialize_shared_state", recorder("init"))
+    monkeypatch.setattr(scope, "_start_managers", recorder("start"))
+    monkeypatch.setattr(scope, "_main_ipc_loop", recorder("loop"))
+    monkeypatch.setattr(scope, "_join_processes", recorder("join"))
+
+    scope._running = True
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        scope.start()
+
+    assert any("already running" in str(item.message) for item in caught_warnings)
+    assert calls == []
+
+
+def test_start_raises_after_stop(monkeypatch):
+    scope_module, _ = load_scope_with_stubs(monkeypatch)
+    scope = scope_module.MagScope()
+
+    def fake_loop():
+        scope._running = False
+
+    monkeypatch.setattr(scope, "_collect_processes", lambda: None)
+    monkeypatch.setattr(scope, "_initialize_shared_state", lambda: None)
+    monkeypatch.setattr(scope, "_start_managers", lambda: None)
+    monkeypatch.setattr(scope, "_main_ipc_loop", fake_loop)
+    monkeypatch.setattr(scope, "_join_processes", lambda: None)
+
+    scope.start()
+    assert scope._terminated is True
+
+    with pytest.raises(RuntimeError):
+        scope.start()
+
+
+def test_stop_broadcasts_quit_and_joins(monkeypatch):
+    scope_module, base_message_cls = load_scope_with_stubs(monkeypatch)
+    scope = scope_module.MagScope()
+
+    monkeypatch.setattr(scope_module.ManagerProcessBase, "quit", "quit", raising=False)
+
+    sent_messages: list[base_message_cls] = []
+    joined: list[bool] = []
+
+    def fake_broadcast(message):
+        sent_messages.append(message)
+        scope._running = False
+
+    def fake_join():
+        joined.append(True)
+
+    scope._running = True
+
+    monkeypatch.setattr(scope, "_handle_broadcast_message", fake_broadcast)
+    monkeypatch.setattr(scope, "_join_processes", fake_join)
+
+    scope.stop()
+
+    assert sent_messages
+    assert sent_messages[0].meth == "quit"
+    assert joined == [True]
+    assert scope._terminated is True
+
+
+def test_magscope_is_singleton(monkeypatch):
+    scope_module, _ = load_scope_with_stubs(monkeypatch)
+    scope_module.MagScope()
+
+    with pytest.raises(TypeError):
+        scope_module.MagScope()
+
+    scope_module.MagScope._reset_singleton_for_testing()

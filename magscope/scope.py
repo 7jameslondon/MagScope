@@ -60,7 +60,7 @@ from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import broadcast_message, create_pipes, drain_pipe_until_quit
-from magscope.processes import InterprocessValues, ManagerProcessBase
+from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
@@ -71,15 +71,20 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
 
-class MagScope:
+class MagScope(metaclass=SingletonMeta):
     """Coordinate MagScope managers, shared resources, and IPC.
 
-    ``MagScope`` owns references to every manager process, shared buffer, and
+``MagScope`` owns references to every manager process, shared buffer, and
     IPC primitive used by the application. Instances can be customized by
     adding hardware managers, GUI controls, or time-series plots before calling
     :meth:`start`. Once started, the instance supervises manager lifetimes,
     relays messages, and coordinates shutdown when a quit signal is broadcast
-    over the IPC bus.
+    over the IPC bus. The orchestrator is a singleton: attempts to construct a
+    second instance raise ``TypeError``. Each instance is single-use: calling
+    :meth:`start` while an instance is already running logs a warning, and
+    invoking :meth:`start` after the instance has quit raises an error. Use
+    :meth:`stop` to request a graceful shutdown; it blocks until all managers
+    acknowledge the quit sequence and exit.
     """
 
     def __init__(self, *, verbose: bool = False):
@@ -107,10 +112,20 @@ class MagScope:
         self._running: bool = False
         self._log_level = logging.INFO if verbose else logging.WARNING
 
+        self._terminated: bool = False
+
         self.profiles_buffer: MatrixBuffer | None = None
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
         configure_logging(level=self._log_level)
+
+    @classmethod
+    def _reset_singleton_for_testing(cls) -> None:
+        """Clear the singleton registry so tests can create fresh instances."""
+
+        instances = getattr(type(cls), '_instances', None)
+        if isinstance(instances, dict):
+            instances.pop(cls, None)
 
     def set_verbose_logging(self, enabled: bool = True) -> None:
         """Toggle informational console output for MagScope internals."""
@@ -133,6 +148,7 @@ class MagScope:
         When a quit message is received the method joins every process before
         returning control to the caller.
         """
+        self._ensure_not_terminated()
         self._apply_logging_preferences()
 
         if not self._mark_running():
@@ -143,6 +159,26 @@ class MagScope:
         self._start_managers()
         self._main_ipc_loop()
         self._join_processes()
+        self._mark_terminated()
+
+    def stop(self) -> None:
+        """Request a graceful shutdown and wait for every manager to exit.
+
+        ``stop`` mirrors a quit request sent from any manager process: it
+        broadcasts a quit message, drains outstanding IPC, and blocks until all
+        managers have joined. After ``stop`` completes the instance is
+        permanently terminated and cannot be restarted.
+        """
+
+        self._ensure_not_terminated()
+        if not self._running:
+            warn('MagScope is not running')
+            return
+
+        quit_message = Message(ManagerProcessBase, ManagerProcessBase.quit)
+        self._handle_broadcast_message(quit_message)
+        self._join_processes()
+        self._mark_terminated()
 
     def _mark_running(self) -> bool:
         """Mark the orchestrator as running if it is not already active."""
@@ -154,9 +190,20 @@ class MagScope:
         self._running = True
         return True
 
+    def _ensure_not_terminated(self) -> None:
+        """Prevent reusing a MagScope instance after it has been stopped."""
+
+        if self._terminated:
+            raise RuntimeError('MagScope has already been stopped and cannot be restarted')
+
     def _apply_logging_preferences(self) -> None:
         """Apply the current verbosity preference to the logging system."""
         configure_logging(level=self._log_level)
+
+    def _mark_terminated(self) -> None:
+        """Record that this MagScope instance has finished its lifecycle."""
+
+        self._terminated = True
 
     def _collect_processes(self) -> None:
         """Assemble the ordered list of manager processes to supervise.
