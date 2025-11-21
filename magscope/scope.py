@@ -191,21 +191,7 @@ class MagScope:
             if message.to == 'MagScope':
                 self._handle_mag_scope_message(message)
             elif message.to == ManagerProcessBase.__name__: # the message is to all processes
-                if message.meth == 'quit':
-                    logger.info('MagScope quitting ...')
-                    self._quitting.set()
-                    self._running = False
-                broadcast_message(
-                    message,
-                    pipes=self.pipes,
-                    processes=self.processes,
-                    quitting_events=self.quitting_events,
-                )
-                if message.meth == 'quit':
-                    for name, pipe2 in self.pipes.items():
-                        if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
-                            drain_pipe_until_quit(pipe2, self.quitting_events[name])
-                if message.meth == 'quit':
+                if self._handle_broadcast_message(message):
                     break
             elif message.to in self.pipes.keys(): # the message is to one process
                 if self.processes[message.to].is_alive() and not self.quitting_events[message.to].is_set():
@@ -229,6 +215,32 @@ class MagScope:
             )
         else:
             warn(f'Unknown MagScope message {message.meth} with {message.args}')
+
+    def _handle_broadcast_message(self, message: Message) -> bool:
+        """Broadcast a message to all processes and handle quit semantics.
+
+        Returns ``True`` when the caller should stop processing the current
+        IPC loop (e.g., after handling a quit message).
+        """
+        if message.meth == 'quit':
+            logger.info('MagScope quitting ...')
+            self._quitting.set()
+            self._running = False
+
+        broadcast_message(
+            message,
+            pipes=self.pipes,
+            processes=self.processes,
+            quitting_events=self.quitting_events,
+        )
+
+        if message.meth == 'quit':
+            for name, pipe in self.pipes.items():
+                if self.processes[name].is_alive() and not self.quitting_events[name].is_set():
+                    drain_pipe_until_quit(pipe, self.quitting_events[name])
+            return True
+
+        return False
 
     def _setup_shared_resources(self):
         """Create and distribute shared locks, pipes, buffers, and metadata."""
