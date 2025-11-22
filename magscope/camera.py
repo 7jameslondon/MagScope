@@ -434,28 +434,31 @@ class DummyCameraBeads(CameraBase):
     # Exposed settings
     settings = [
         'framerate',
-        'n_static', 'n_tethered',
-        'sigma_xy_px', 'sigma_z_um',
-        'z_static_um', 'z_anchor_um',
-        'electron_gain',
+        'fixed_n',
+        'fixed_z',
+        'tethered_n',
+        'tethered_z',
+        'tethered_z_sigma',
+        'tethered_xy_sigma',
+        'gain',
         'seed'
     ]
 
     def __init__(self):
         super().__init__()
         self._settings = {
-            'framerate'     : 30.0,    # Hz
-            'n_static'      : 2,
-            'n_tethered'    : 4,
-            'sigma_xy_px'   : 3.0,
-            'sigma_z_um'    : 0.3,
-            'z_static_um'   : 0.0,
-            'z_anchor_um'   : 0.0,
-            'electron_gain' : 25000.0,
-            'seed'          : 12345,
+            'framerate'       : 30.0,
+            'fixed_n'         : 4,
+            'fixed_z'         : 0.0,
+            'tethered_n'      : 2,
+            'tethered_z'      : 0.0,
+            'tethered_z_sigma': 0.3,
+            'tethered_xy_sigma'     : 3.0,
+            'gain'            : 25000.0,
+            'seed'            : 12345,
         }
-        self._bead_size_px = 32
-        self._min_sep_px = 32.0
+        self._bead_size_px = 50
+        self._min_sep_px = 50.0
         self._edge_margin_px = 10.0
         self._background = 0.4
         self._radius_nm = 1500.0
@@ -464,9 +467,9 @@ class DummyCameraBeads(CameraBase):
         self._rng = np.random.default_rng(self._settings['seed'])
 
         # placement and bead state
-        self._centers_static = np.empty((0,2), np.float32)
+        self._centers_fixed = np.empty((0,2), np.float32)
         self._centers_teth   = np.empty((0,2), np.float32)
-        self._delta_static   = None  # tapered crop for static beads
+        self._delta_fixed   = None  # tapered crop for fixed beads
         self._xy = np.empty((0,2), np.float32)
         self._z  = np.empty((0,),  np.float32)
 
@@ -479,7 +482,7 @@ class DummyCameraBeads(CameraBase):
     def connect(self, video_buffer):
         super().connect(video_buffer)
         self._rng = np.random.default_rng(int(self._settings['seed']))
-        self._reinit_centers_and_static()
+        self._reinit_centers_and_fixed()
         self._init_tether_state()
         self.is_connected = True
         self.last_time = 0.0
@@ -506,19 +509,19 @@ class DummyCameraBeads(CameraBase):
         # compose frame
         frame = np.full((self.height, self.width), float(self._background), np.float32)
 
-        # static beads
-        if self._delta_static is not None and self._centers_static.size:
-            for cx, cy in self._centers_static:
-                self._accumulate_bilinear(frame, self._delta_static, cx, cy)
+        # fixed beads
+        if self._delta_fixed is not None and self._centers_fixed.size:
+            for cx, cy in self._centers_fixed:
+                self._accumulate_bilinear(frame, self._delta_fixed, cx, cy)
 
         # tethered: update OU and render per bead
         n_t = self._centers_teth.shape[0]
         if n_t:
             th_xy   = float(self._theta_xy)
-            sig_xy  = float(self._settings['sigma_xy_px'])
+            sig_xy  = float(self._settings['tethered_xy_sigma'])
             th_z    = float(self._theta_z)
-            sig_z   = float(self._settings['sigma_z_um'])
-            z_anchor = float(self._settings['z_anchor_um'])
+            sig_z   = float(self._settings['tethered_z_sigma'])
+            z_anchor = float(self._settings['tethered_z'])
             size_px = int(self._bead_size_px)
             nmpp    = float(self.nm_per_px)
             radius  = float(self._radius_nm)
@@ -543,7 +546,7 @@ class DummyCameraBeads(CameraBase):
         np.clip(frame, 0.0, 1.0, out=frame)
 
         # Poisson noise always enabled
-        egain = float(self._settings['electron_gain'])
+        egain = float(self._settings['gain'])
         lam = frame * egain
         frame = self._rng.poisson(lam).astype(np.float32) / egain
 
@@ -578,23 +581,23 @@ class DummyCameraBeads(CameraBase):
             self._settings[name] = v
             return
 
-        if name in ('n_static', 'n_tethered'):
+        if name in ('fixed_n', 'tethered_n'):
             v = i(value)
             if not (0 <= v <= 5000):
-                raise ValueError("n_static and n_tethered must be between 0 and 5000")
+                raise ValueError("fixed_n and tethered_n must be between 0 and 5000")
             self._settings[name] = v
-            self._reinit_centers_and_static()
+            self._reinit_centers_and_fixed()
             self._init_tether_state()
             return
 
-        if name in ('z_static_um', 'z_anchor_um',
-                    'sigma_xy_px', 'sigma_z_um',
-                    'electron_gain'):
+        if name in ('fixed_z', 'tethered_z',
+                    'tethered_xy_sigma', 'tethered_z_sigma',
+                    'gain'):
             v = f(value)
             self._settings[name] = v
-            if name in ('z_static_um',):
-                # refresh static crop
-                self._recompute_static_delta()
+            if name in ('fixed_z',):
+                # refresh fixed crop
+                self._recompute_fixed_delta()
             return
 
         if name == 'seed':
@@ -602,47 +605,47 @@ class DummyCameraBeads(CameraBase):
             self._settings[name] = v
             self._rng = np.random.default_rng(v)
             # reinit states deterministically
-            self._reinit_centers_and_static()
+            self._reinit_centers_and_fixed()
             self._init_tether_state()
             return
 
         raise KeyError(f"Unknown setting {name}")
 
     # ------------------------- internals ----------------------------
-    def _reinit_centers_and_static(self):
+    def _reinit_centers_and_fixed(self):
         w = self.width; h = self.height
         size_px = int(self._bead_size_px)
         base_margin = size_px // 2 + 2
         margin = int(max(base_margin, int(self._edge_margin_px)))
         min_sep = float(self._min_sep_px) if self._min_sep_px else float(size_px)
 
-        n_static   = int(self._settings['n_static'])
-        n_tethered = int(self._settings['n_tethered'])
-        n_total = n_static + n_tethered
+        fixed_n   = int(self._settings['fixed_n'])
+        tethered_n = int(self._settings['tethered_n'])
+        n_total = fixed_n + tethered_n
 
         pts = self._sample_points_uniform_minsep(w, h, n_total, margin, min_sep, self._rng).astype(np.float32)
-        self._centers_static = pts[:n_static]   if n_static   else np.empty((0,2), np.float32)
-        self._centers_teth   = pts[n_static:]   if n_tethered else np.empty((0,2), np.float32)
-        self._recompute_static_delta()
+        self._centers_fixed = pts[:fixed_n]   if fixed_n   else np.empty((0,2), np.float32)
+        self._centers_teth   = pts[fixed_n:]   if tethered_n else np.empty((0,2), np.float32)
+        self._recompute_fixed_delta()
 
-    def _recompute_static_delta(self):
-        n_static = int(self._settings['n_static'])
-        if n_static <= 0:
-            self._delta_static = None
+    def _recompute_fixed_delta(self):
+        fixed_n = int(self._settings['fixed_n'])
+        if fixed_n <= 0:
+            self._delta_fixed = None
             return
         size_px = int(self._bead_size_px)
         nmpp    = float(self.nm_per_px)
         radius  = float(self._radius_nm)
-        z_s     = float(self._settings['z_static_um'])
+        z_s     = float(self._settings['fixed_z'])
         xyz = np.array([[0.0, 0.0, z_s]], np.float32)
         crop_WHT = simulate_beads(xyz, nm_per_px=nmpp, size_px=size_px, radius_nm=radius)  # (w,h,1)
         crop_HW  = crop_WHT[:, :, 0].T
-        self._delta_static = self._delta_for_crop(crop_HW, pad=4)
+        self._delta_fixed = self._delta_for_crop(crop_HW, pad=4)
 
     def _init_tether_state(self):
-        n_t = int(self._settings['n_tethered'])
+        n_t = int(self._settings['tethered_n'])
         self._xy = np.zeros((n_t, 2), np.float32)
-        self._z  = np.full((n_t,), float(self._settings['z_anchor_um']), np.float32)
+        self._z  = np.full((n_t,), float(self._settings['tethered_z']), np.float32)
 
     @staticmethod
     def _blit_add(dst, src, x, y, w=1.0):
