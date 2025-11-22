@@ -5,15 +5,39 @@ Connect Your Camera
 
 MagScope ships with a simulated camera so you can explore the interface immediately, but you can swap in a real camera by providing a small adapter class. This guide shows how to implement a :class:`~magscope.camera.CameraBase` subclass for your hardware and register it with MagScope before launching the GUI.
 
+Note: You may connect your camera to the computer with a simple interface like a USB port. In that case you are just using a camera.
+But in many cases cameras are connected through a specialized frame grabber. This is a card added to the computer to support a special connection interface.
+In that case you are really trying to connect MagScope to the frame grabber but for the purpose of this tutorial we will just refer to everything as the camera.
+
+0. Test your camera with Python
+-------------------------------
+
+Before you try to get your camera to work with MagScope you should just try to create a minimal test of it working with Python.
+Many manufacturers will provide Python bindings for free. This will include a guide on how to get your specific camera working.
+For example:
+
+- `Hamamatsu <https://www.hamamatsu.com/us/en/product/cameras/software/driver-software/dcam-sdk4.html>`_
+- `Basler <https://github.com/basler/pypylon>`_
+- `Allied Vision <https://docs.alliedvision.com/Vimba_DeveloperGuide/pythonAPIManual.html>`_
+- `ThorLabs <https://www.thorlabs.com/software_pages/ViewSoftwarePage.cfm?Code=ThorCam>`_
+
+Alternatively, you can use third party libraries. Many of these will connect to a wide variety of scientific cameras.
+For example:
+
+- `Harvesters <https://harvesters.readthedocs.io/>`_ This work with any camera that supports GenTL.
+- `PyLabLib <https://pylablib.readthedocs.io>`_
+
 1. Implement a camera adapter
 -----------------------------
 
-Every camera must subclass :class:`~magscope.camera.CameraBase` and expose immutable metadata plus a handful of lifecycle methods. At minimum, define the following attributes on the class:
+Once you can get your camera to connect through any Python library you can use that to connect it to MagScope.
+Every camera must subclass :class:`~magscope.camera.CameraBase`.
+At minimum, define the following attributes on the class:
 
 * ``width`` and ``height``: image dimensions in pixels
 * ``dtype``: a ``numpy`` integer dtype (``np.uint8``, ``np.uint16``, ``np.uint32``, or ``np.uint64``)
 * ``bits``: the number of meaningful bits per pixel (must fit inside the dtype)
-* ``nm_per_px``: nanometers represented by each pixel
+* ``nm_per_px``: nanometers represented by each pixel **with out any magnification**
 * ``settings``: list of setting names; must include ``"framerate"`` so the GUI can display and edit it
 
 Implement the methods below to bridge between the device SDK and MagScope’s shared buffers:
