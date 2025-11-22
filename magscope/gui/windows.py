@@ -516,6 +516,9 @@ class WindowManager(ManagerProcessBase):
     def update_xy_lock_max(self, value: float):
         self.controls.xy_lock_panel.update_max(value)
 
+    def update_xy_lock_window(self, value: int):
+        self.controls.xy_lock_panel.update_window(value)
+
     def update_z_lock_enabled(self, value: bool):
         self.controls.z_lock_panel.update_enabled(value)
 

@@ -1,4 +1,4 @@
-from math import copysign, isnan
+from math import copysign
 from time import time
 
 import numpy as np
@@ -16,6 +16,7 @@ class BeadLockManager(ManagerProcessBase):
         self.xy_lock_on: bool = False
         self.xy_lock_interval: float
         self.xy_lock_max: float
+        self.xy_lock_window: int
         self._xy_lock_last_time: float = 0.
         self._xy_lock_pending_moves: list[int] = []
 
@@ -30,6 +31,8 @@ class BeadLockManager(ManagerProcessBase):
     def setup(self):
         self.xy_lock_interval = self.settings['xy-lock default interval']
         self.xy_lock_max = self.settings['xy-lock default max']
+        window_default = self.settings.get('xy-lock default window', 1)
+        self.xy_lock_window = max(1, int(window_default))
         self.z_lock_interval = self.settings['z-lock default interval']
         self.z_lock_max = self.settings['z-lock default max']
 
@@ -67,21 +70,19 @@ class BeadLockManager(ManagerProcessBase):
             if track.shape[0] == 0:
                 continue
 
-            # Get the latest position
-            idx = np.argmax(track[:, 0])
-            t, x, y, roi_x, roi_y = track[idx, [0, 1, 2, 5, 6]].tolist()
+            # Filter to valid positions for this ROI
+            position_mask =  ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
+            valid_track = track[position_mask]
 
-            # Check the position is valid
-            if isnan(t) or isnan(x) or isnan(y):
+            if valid_track.shape[0] == 0:
                 continue
 
-            # Check the position was recent
-            if now - t > 3*self.xy_lock_interval:
-                continue
-
-            # Check the bead-roi is current
-            if roi[0] != int(roi_x) or roi[2] != int(roi_y):
-                continue
+            # Use the most recent valid positions
+            order = np.argsort(valid_track[:, 0])[::-1]
+            recent_track = valid_track[order[: self.xy_lock_window]]
+            _, xs, ys, *_ = recent_track.T
+            x = float(np.mean(xs))
+            y = float(np.mean(ys))
 
             # Check the bead started the last move
             if id in self._xy_lock_pending_moves:
@@ -89,8 +90,8 @@ class BeadLockManager(ManagerProcessBase):
 
             # Calculate the move
             nm_per_px = self.camera_type.nm_per_px / self.settings['magnification']
-            dx = (x / nm_per_px) - half_width - roi_x
-            dy = (y / nm_per_px) - half_width - roi_y
+            dx = (x / nm_per_px) - half_width - roi[0]
+            dy = (y / nm_per_px) - half_width - roi[2]
             if abs(dx) <= 1:
                 dx = 0.
             if abs(dy) <= 1:
@@ -167,6 +168,18 @@ class BeadLockManager(ManagerProcessBase):
             to=WindowManager,
             meth=WindowManager.update_xy_lock_max,
             args=(value,)
+        )
+        self.send_ipc(message)
+
+    @registerwithscript('set_xy_lock_window')
+    def set_xy_lock_window(self, value: int):
+        self.xy_lock_window = max(1, int(value))
+
+        from magscope.gui import WindowManager
+        message = Message(
+            to=WindowManager,
+            meth=WindowManager.update_xy_lock_window,
+            args=(self.xy_lock_window,),
         )
         self.send_ipc(message)
 

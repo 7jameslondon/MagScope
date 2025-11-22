@@ -10,6 +10,7 @@ tracks max datapoints: 1000000
 
 xy-lock default interval: 10
 xy-lock default max: 10
+xy-lock default window: 10
 
 z-lock default interval: 10
 z-lock default max: 1000

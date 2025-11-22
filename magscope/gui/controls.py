@@ -815,6 +815,16 @@ class XYLockPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.max)
 
+        # Window
+        default_window = self.manager.settings.get('xy-lock default window', '')
+        self.window = LabeledLineEditWithValue(
+            label_text='Window',
+            default=str(default_window) + ' window',
+            callback=self.window_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.window)
+
     def enabled_callback(self):
         value = self.enabled.checkbox.isChecked()
 
@@ -879,6 +889,25 @@ class XYLockPanel(ControlPanelBase):
         )
         self.manager.send_ipc(message)
 
+    def window_callback(self):
+        # Get value
+        value = self.window.lineedit.text()
+        self.window.lineedit.setText('')
+
+        # Check value
+        try: value = int(value)
+        except ValueError: return
+        if value <= 0: return
+
+        # Send value
+        from magscope.beadlock import BeadLockManager
+        message = Message(
+            to=BeadLockManager,
+            meth=BeadLockManager.set_xy_lock_window,
+            args=(value,),
+        )
+        self.manager.send_ipc(message)
+
     def update_enabled(self, value: bool):
         # Set checkbox
         self.enabled.checkbox.blockSignals(True)
@@ -900,6 +929,11 @@ class XYLockPanel(ControlPanelBase):
         if value is None:
             value = ''
         self.max.value_label.setText(f'{value} pixels')
+
+    def update_window(self, value: int):
+        if value is None:
+            value = ''
+        self.window.value_label.setText(f'{value} window')
 
 
 class ZLockPanel(ControlPanelBase):
