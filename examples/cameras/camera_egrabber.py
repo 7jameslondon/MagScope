@@ -12,28 +12,13 @@ import numpy as np
 from magscope.camera import CameraBase
 
 
-_SYS_IS_FINALIZING = getattr(sys, "is_finalizing", None)
-_TRACEBACK_PRINT_EXC = getattr(traceback, "print_exc", None)
-
-
 def _call_safely(func):
     if func is None:
         return
     try:
         func()
     except Exception:
-        _safe_traceback_print_exc()
-
-
-def _safe_traceback_print_exc():
-    if _TRACEBACK_PRINT_EXC is None:
-        return
-    try:
-        _TRACEBACK_PRINT_EXC()
-    except Exception:
-        # Avoid raising from __del__ during interpreter shutdown
-        pass
-
+        traceback.print_exc()
 
 
 class EGrabberCamera(CameraBase):
@@ -53,31 +38,17 @@ class EGrabberCamera(CameraBase):
         self._cleanup_done = False
         self._base_del = getattr(super(EGrabberCamera, self), "__del__", None)
         self._stop_callable = None
-        try:
-            atexit.register(self._cleanup)
-        except Exception:
-            # Best-effort registration; fall back to __del__
-            pass
+        atexit.register(self._cleanup)
 
     def __del__(self):
-        if not self._should_cleanup():
+        if sys.is_finalizing():
             return
         self._cleanup()
-
-    def _should_cleanup(self) -> bool:
-        if _SYS_IS_FINALIZING is None:
-            return True
-        try:
-            return not _SYS_IS_FINALIZING()
-        except Exception:
-            # If we cannot determine interpreter state, err on the side of skipping
-            return False
 
     def _cleanup(self):
         if self._cleanup_done:
             return
         self._cleanup_done = True
-
         _call_safely(self._base_del)
         _call_safely(self._stop_callable)
 
