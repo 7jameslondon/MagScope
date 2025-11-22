@@ -70,15 +70,8 @@ class BeadLockManager(ManagerProcessBase):
             if track.shape[0] == 0:
                 continue
 
-            roi_x, roi_y = roi[0], roi[2]
-
             # Filter to valid positions for this ROI
-            position_mask = (
-                ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
-                & (now - track[:, 0] <= 3 * self.xy_lock_interval)
-                & (track[:, 5] == roi_x)
-                & (track[:, 6] == roi_y)
-            )
+            position_mask =  ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
             valid_track = track[position_mask]
 
             if valid_track.shape[0] == 0:
@@ -97,8 +90,8 @@ class BeadLockManager(ManagerProcessBase):
 
             # Calculate the move
             nm_per_px = self.camera_type.nm_per_px / self.settings['magnification']
-            dx = (x / nm_per_px) - half_width - roi_x
-            dy = (y / nm_per_px) - half_width - roi_y
+            dx = (x / nm_per_px) - half_width - roi[0]
+            dy = (y / nm_per_px) - half_width - roi[2]
             if abs(dx) <= 1:
                 dx = 0.
             if abs(dy) <= 1:
