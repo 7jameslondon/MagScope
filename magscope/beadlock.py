@@ -18,6 +18,8 @@ class BeadLockManager(ManagerProcessBase):
         self.xy_lock_max: float
         self.xy_lock_window: int
         self._xy_lock_last_time: float = 0.
+        self._xy_lock_global_cutoff: float = 0.
+        self._xy_lock_bead_cutoff: dict[int, float] = {}
         self._xy_lock_pending_moves: list[int] = []
 
         # Z-Lock Properties
@@ -74,6 +76,13 @@ class BeadLockManager(ManagerProcessBase):
             position_mask =  ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
             valid_track = track[position_mask]
 
+            cutoff = max(
+                self._xy_lock_global_cutoff,
+                self._xy_lock_bead_cutoff.get(id, 0.),
+            )
+            time_mask = valid_track[:, 0] >= cutoff
+            valid_track = valid_track[time_mask]
+
             if valid_track.shape[0] == 0:
                 continue
 
@@ -122,6 +131,7 @@ class BeadLockManager(ManagerProcessBase):
         raise NotImplementedError
 
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
+        previous_bead_rois = getattr(self, 'bead_rois', {}).copy()
         super().set_bead_rois(value)
 
         # Check if any of the beads have been deleted
@@ -130,6 +140,23 @@ class BeadLockManager(ManagerProcessBase):
             if id not in self.bead_rois:
                 self._xy_lock_pending_moves.pop(id)
 
+        # Remove any bead-specific cutoffs for deleted beads
+        bead_cutoff_ids = list(self._xy_lock_bead_cutoff)
+        for bead_id in bead_cutoff_ids:
+            if bead_id not in self.bead_rois:
+                self._xy_lock_bead_cutoff.pop(bead_id, None)
+
+        now = time()
+        for bead_id, roi in self.bead_rois.items():
+            previous_roi = previous_bead_rois.get(bead_id)
+            if previous_roi == roi:
+                continue
+
+            if bead_id in self._xy_lock_pending_moves:
+                continue
+
+            self._xy_lock_bead_cutoff[bead_id] = now
+
     def remove_bead_from_xy_lock_pending_moves(self, id: int):
         if id in self._xy_lock_pending_moves:
             self._xy_lock_pending_moves.remove(id)
@@ -137,6 +164,7 @@ class BeadLockManager(ManagerProcessBase):
     @registerwithscript('set_xy_lock_on')
     def set_xy_lock_on(self, value: bool):
         self.xy_lock_on = value
+        self._xy_lock_global_cutoff = time()
 
         from magscope.gui import WindowManager
         message = Message(
