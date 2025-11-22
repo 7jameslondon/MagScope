@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from multiprocessing import Lock, Process, Queue
 from typing import TYPE_CHECKING
 
 import magtrack
 import numpy as np
 import tifffile
-from magtrack import auto_conv_multiline_sub_pixel
 from magtrack._cupy import cp, is_cupy_available
 
 from magscope._logging import get_logger
@@ -37,7 +37,11 @@ class VideoProcessorManager(ManagerProcessBase):
 
         # TODO: Check implementation
         self._save_profiles = False
-        self._zlut = None
+
+        # TODO: Rework this
+        self._zlut = np.loadtxt(os.path.join(os.path.dirname(__file__), 'simulation_zlut.txt'))
+        if is_cupy_available():
+            self._zlut = cp.asarray(self._zlut)
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
@@ -214,16 +218,9 @@ class VideoWorker(Process):
             with self._gpu_lock:
                 y, x, z, profiles = magtrack.stack_to_xyzp_advanced(
                     stack_rois_reshaped,
-                    zlut,
-                    auto_conv_multiline_sub_pixel={
-                        'n_local': 7,
-                        'line_ratio': 0.1
-                    },
-                    **{'use fft_profile': False},
-                    lookup_z={
-                        'n_local': 7
-                    })
-                # TODO: Might be too slow
+                    zlut
+                )
+                # TODO: There might be a faster more robust solution
                 if is_cupy_available():
                     cp.get_default_memory_pool().free_all_blocks()
 
