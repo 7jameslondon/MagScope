@@ -1,5 +1,6 @@
 import ctypes
 import queue
+import sys
 import time
 import traceback
 
@@ -8,6 +9,9 @@ import egrabber.generated
 import numpy as np
 
 from magscope.camera import CameraBase
+
+
+_SYS_IS_FINALIZING = getattr(sys, "is_finalizing", None)
 
 
 class EGrabberCamera(CameraBase):
@@ -25,9 +29,14 @@ class EGrabberCamera(CameraBase):
         self.timestamp_offset = self.calculate_timestamp_offset()
 
     def __del__(self):
-        super().__del__()
-        if hasattr(self, 'egrabber') and self.egrabber is not None:
-            self.egrabber.stop()
+        if sys.is_finalizing():
+            return
+        try:
+            super().__del__()
+            if hasattr(self, 'egrabber') and self.egrabber is not None:
+                self.egrabber.stop()
+        except Exception:
+            traceback.print_exc()
 
     def connect(self, video_buffer):
         super().connect(video_buffer)
