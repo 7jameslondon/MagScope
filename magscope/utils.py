@@ -7,30 +7,49 @@ from typing import TYPE_CHECKING, Callable, Type
 import numpy as np
 from PyQt6.QtGui import QImage
 
+from magscope.ipc_commands import Command
+
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
     from magscope import ManagerProcessBase
 
 class Message:
-    def __init__(self, to: Type['ManagerProcessBase'] | str, meth: Callable | str, *args, **kwargs):
+    def __init__(self, to: Type['ManagerProcessBase'] | str, meth: Command | Callable | str, *args, **kwargs):
         if isinstance(to, str):
             self.to = to
         else:
             self.to: str = to.__name__
 
-        if isinstance(meth, str):
-            self.meth = meth
+        if isinstance(meth, Command):
+            if args or kwargs:
+                raise ValueError('Command instance cannot be combined with args/kwargs')
+            self.command = meth
         else:
-            self.meth: str = meth.__name__
+            meth_name: str
+            if isinstance(meth, str):
+                meth_name = meth
+            else:
+                meth_name = meth.__name__
 
-        self.args = args
-        if 'args' in kwargs:
-            self.args = self.args + kwargs['args']
-            del kwargs['args']
-        self.kwargs = kwargs
+            if 'args' in kwargs:
+                args = args + kwargs['args']
+                del kwargs['args']
+            self.command = Command(name=meth_name, args=args, kwargs=kwargs)
+
+    @property
+    def meth(self) -> str:
+        return self.command.name
+
+    @property
+    def args(self):
+        return self.command.args
+
+    @property
+    def kwargs(self):
+        return self.command.kwargs
 
     def __str__(self):
-        return f"Message(to={self.to}, func={self.meth}, args={self.args}, kwargs={self.kwargs})"
+        return f"Message(to={self.to}, func={self.command.name}, args={self.command.args}, kwargs={self.command.kwargs})"
 
 class AcquisitionMode(StrEnum):
     """ Enum for the different acquisition modes """

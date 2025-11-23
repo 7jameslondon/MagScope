@@ -19,6 +19,7 @@ from magtrack.simulation import simulate_beads
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
 from magscope.processes import ManagerProcessBase
+from magscope.ipc_commands import command_handler
 from magscope.utils import Message, PoolVideoFlag
 
 
@@ -126,6 +127,7 @@ class CameraManager(ManagerProcessBase):
         for _ in range(self.video_buffer.stack_shape[2]):
             self.camera.release()
 
+    @command_handler()
     def get_camera_setting(self, name: str):
         """Send a camera setting value to the GUI via IPC."""
         value = self.camera[name]
@@ -136,6 +138,7 @@ class CameraManager(ManagerProcessBase):
                           args=(name, value))
         self.send_ipc(message)
 
+    @command_handler()
     def set_camera_setting(self, name: str, value: str):
         """Apply a setting to the camera and broadcast the full settings set."""
         try:

@@ -19,6 +19,7 @@ from time import time
 from typing import Callable
 from warnings import warn
 
+from magscope.ipc_commands import command_handler
 from magscope.processes import ManagerProcessBase
 from magscope.utils import Message, registerwithscript
 
@@ -179,6 +180,7 @@ class ScriptManager(ManagerProcessBase):
             if self._script_index >= self._script_length:
                 self._set_script_status(ScriptStatus.FINISHED)
 
+    @command_handler()
     def start_script(self):
         """Start the currently loaded script from the beginning."""
 
@@ -192,6 +194,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_index = 0
         self._set_script_status(ScriptStatus.RUNNING)
 
+    @command_handler()
     def pause_script(self):
         """Pause the running script."""
 
@@ -200,6 +203,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.PAUSED)
 
+    @command_handler()
     def resume_script(self):
         """Resume a script that was previously paused."""
 
@@ -208,6 +212,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.RUNNING)
 
+    @command_handler()
     def load_script(self, path):
         """Load and validate a script from ``path``.
 
@@ -276,6 +281,7 @@ class ScriptManager(ManagerProcessBase):
         message = Message(cls_name, meth_name, *step_args, **step_kwargs)
         self.send_ipc(message)
 
+    @command_handler()
     def update_waiting(self):
         """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False

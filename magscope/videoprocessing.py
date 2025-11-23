@@ -12,6 +12,7 @@ from magtrack._cupy import cp, is_cupy_available
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.ipc_commands import command_handler
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager
 from magscope.utils import (AcquisitionMode, Message, PoolVideoFlag, crop_stack_to_rois,
@@ -90,6 +91,7 @@ class VideoProcessorManager(ManagerProcessBase):
                 if worker and worker.is_alive():
                     worker.terminate()
 
+    @command_handler()
     def load_zlut_file(self, filepath: str) -> None:
         path = Path(filepath).expanduser()
         self._zlut = None
@@ -108,6 +110,7 @@ class VideoProcessorManager(ManagerProcessBase):
         except Exception as exc:
             logger.exception('Failed to load default Z-LUT: %s', exc)
 
+    @command_handler()
     def unload_zlut(self) -> None:
         self._zlut_path = None
         self._zlut_metadata = None

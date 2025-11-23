@@ -184,7 +184,7 @@ def test_receive_ipc_dispatch_and_quit_flag():
     proc.receive_ipc()
     assert proc._acquisition_on is False
 
-    with pytest.warns(UserWarning, match="Function 'unknown_method' not found"):
+    with pytest.warns(UserWarning, match="Unknown command 'unknown_method' for DummyProcess"):
         proc.receive_ipc()
 
     quit_called = []

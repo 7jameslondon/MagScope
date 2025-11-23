@@ -11,6 +11,7 @@ from warnings import warn
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.ipc import drain_pipe_until_quit
+from magscope.ipc_commands import CommandDispatchError, CommandRegistry, command_handler
 from magscope.utils import AcquisitionMode, Message, registerwithscript
 
 logger = get_logger("processes")
@@ -76,6 +77,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
         self.shared_values: InterprocessValues | None = None
+        self.command_registry: CommandRegistry = self._build_command_registry()
 
     @property
     def quitting_event(self) -> EventType:
@@ -163,6 +165,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def do_main_loop(self):
         pass
 
+    @command_handler()
     def quit(self):
         """ Shutdown the process (and ask the other processes to quit too) """
         self._quitting.set()
@@ -196,30 +199,36 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             self._quit_requested = True
 
         # Dispatch the message
-        if hasattr(self, message.meth):
-            getattr(self, message.meth)(*message.args, **message.kwargs)
-        else:
-            warn(f"Function '{message.meth}' not found in {self.name}")
+        try:
+            self.command_registry.dispatch(message.command)
+        except CommandDispatchError as exc:
+            warn(str(exc))
 
     @registerwithscript('set_acquisition_dir')
+    @command_handler()
     def set_acquisition_dir(self, value: str):
         self._acquisition_dir = value
 
     @registerwithscript('set_acquisition_dir_on')
+    @command_handler()
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
     @registerwithscript('set_acquisition_mode')
+    @command_handler()
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
     @registerwithscript('set_acquisition_on')
+    @command_handler()
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 
+    @command_handler()
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         self.bead_rois = value
 
+    @command_handler()
     def set_settings(self, settings: dict):
         self.settings = settings
 
@@ -232,3 +241,16 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         except Exception:
             # The IPC pipe may already be unavailable; ensure we still surface the error locally.
             pass
+
+    def _build_command_registry(self) -> CommandRegistry:
+        registry = CommandRegistry(self.name)
+        registry.register_all(self._iter_command_handlers())
+        return registry
+
+    def _iter_command_handlers(self):
+        for attribute_name in dir(self):
+            attribute = getattr(self, attribute_name)
+            command_name = getattr(attribute, '_ipc_command', None)
+            if command_name is None:
+                continue
+            yield command_name, attribute

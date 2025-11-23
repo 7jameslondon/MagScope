@@ -60,6 +60,7 @@ from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import broadcast_message, create_pipes, drain_pipe_until_quit
+from magscope.ipc_commands import CommandDispatchError
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
 from magscope.utils import Message
@@ -118,6 +119,7 @@ class MagScope(metaclass=SingletonMeta):
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
         configure_logging(level=self._log_level)
+        self._mag_scope_commands: set[str] = {'log_exception'}
 
     def start(self):
         """Launch all managers and enter the main IPC loop.
@@ -324,6 +326,7 @@ class MagScope(metaclass=SingletonMeta):
         broadcast). This mirrors the previous behavior of breaking out of the
         ``receive_ipc`` loop once a quit message has been processed.
         """
+        self._validate_message(message)
         if message.to == 'MagScope':
             self._handle_mag_scope_message(message)
         elif message.to == ManagerProcessBase.__name__:  # the message is to all processes
@@ -376,6 +379,25 @@ class MagScope(metaclass=SingletonMeta):
             return True
 
         return False
+
+    def _validate_message(self, message: Message) -> None:
+        if message.to == 'MagScope':
+            if message.meth not in self._mag_scope_commands:
+                raise CommandDispatchError(
+                    f"Unknown MagScope command '{message.meth}'"
+                )
+            return
+
+        if message.to == ManagerProcessBase.__name__:
+            for process in self.processes.values():
+                process.command_registry.validate(message.command)
+            return
+
+        if message.to in self.processes:
+            self.processes[message.to].command_registry.validate(message.command)
+            return
+
+        raise CommandDispatchError(f"Unknown pipe {message.to} for command '{message.meth}'")
 
     def _sleep_when_idle(self) -> None:
         """Throttle the IPC loop when no messages were processed."""

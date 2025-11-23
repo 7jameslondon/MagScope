@@ -21,6 +21,7 @@ from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, R
 from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
                                        ReorderableColumn)
 from magscope.gui.widgets import CollapsibleGroupBox
+from magscope.ipc_commands import command_handler
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
@@ -487,16 +488,20 @@ class WindowManager(ManagerProcessBase):
         except Exception as e:
             print(traceback.format_exc())
 
+    @command_handler()
     def update_camera_setting(self, name: str, value: str):
         self.controls.camera_panel.update_camera_setting(name, value)
 
+    @command_handler()
     def update_video_buffer_purge(self, t: float):
         self.controls.status_panel.update_video_buffer_purge(t)
 
+    @command_handler()
     def update_script_status(self, status: ScriptStatus):
         self.controls.script_panel.update_status(status)
 
     @registerwithscript('print')
+    @command_handler()
     def print(self, text: str, details: str | None = None):
         msg = QMessageBox(self.windows[0])
         msg.setIcon(QMessageBox.Icon.Information)
@@ -538,30 +543,39 @@ class WindowManager(ManagerProcessBase):
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
 
+    @command_handler()
     def update_xy_lock_enabled(self, value: bool):
         self.controls.xy_lock_panel.update_enabled(value)
 
+    @command_handler()
     def update_xy_lock_interval(self, value: float):
         self.controls.xy_lock_panel.update_interval(value)
 
+    @command_handler()
     def update_xy_lock_max(self, value: float):
         self.controls.xy_lock_panel.update_max(value)
 
+    @command_handler()
     def update_xy_lock_window(self, value: int):
         self.controls.xy_lock_panel.update_window(value)
 
+    @command_handler()
     def update_z_lock_enabled(self, value: bool):
         self.controls.z_lock_panel.update_enabled(value)
 
+    @command_handler()
     def update_z_lock_bead(self, value: int):
         self.controls.z_lock_panel.update_bead(value)
 
+    @command_handler()
     def update_z_lock_target(self, value: float):
         self.controls.z_lock_panel.update_target(value)
 
+    @command_handler()
     def update_z_lock_interval(self, value: float):
         self.controls.z_lock_panel.update_interval(value)
 
+    @command_handler()
     def update_z_lock_max(self, value: float):
         self.controls.z_lock_panel.update_max(value)
 
@@ -584,6 +598,7 @@ class WindowManager(ManagerProcessBase):
         )
         self.send_ipc(message)
 
+    @command_handler()
     def update_zlut_metadata(self,
                              filepath: str | None = None,
                              z_min: float | None = None,

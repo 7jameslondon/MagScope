@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
 from scipy.interpolate import PchipInterpolator
 
 import magscope
+from magscope.ipc_commands import command_handler
 
 FORCE_CALIBRATION_PATH = r"C:\Users\lond11\Documents\MagScope and MagTrack\MagScope\force_calibrant.txt"
 
@@ -71,6 +72,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
             row = np.array([[now, self._fake_position, self.target, self.speed]])
             self._buffer.write(row)
 
+    @command_handler()
     def move(self, target=None, speed=None):
         if target is not None:
             self.target = target
@@ -84,6 +86,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
 
         self.fake_pvt_on = False
 
+    @command_handler()
     def move_force(self, target_force=None, speed=None):
         if target_force is not None:
             fake_target = self.force_calibration.force2motor(target_force)
@@ -100,6 +103,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
 
         self.fake_pvt_on = False
 
+    @command_handler()
     def force_ramp(self, a_force=None, b_force=None, rate=None, direction=None):
         if direction == 1:
             start = a_force

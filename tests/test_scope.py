@@ -26,9 +26,16 @@ def load_scope_with_stubs(monkeypatch):
     logging_module.get_logger = lambda *args, **kwargs: StubLogger()
     monkeypatch.setitem(sys.modules, "magscope._logging", logging_module)
 
+    class StubCommandRegistry:
+        def validate(self, command):
+            return None
+
+    command_registry = StubCommandRegistry()
+
     class StubManagerProcessBase:
         def __init__(self):
             self._quitting = types.SimpleNamespace(set=lambda: None, is_set=lambda: False)
+            self.command_registry = command_registry
 
         def is_alive(self):
             return True
