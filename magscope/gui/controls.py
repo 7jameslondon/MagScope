@@ -2,21 +2,37 @@ from __future__ import annotations
 
 import datetime
 import os
+import textwrap
 import time
-import traceback
 from typing import TYPE_CHECKING
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt6.QtCore import QSettings, Qt, QUrl, QVariant, pyqtSignal
+from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
-from PyQt6.QtWidgets import (QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                             QLineEdit, QProgressBar, QPushButton, QStackedLayout, QTextEdit,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QProgressBar,
+    QPushButton,
+    QStackedLayout,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
-from magscope.gui import (CollapsibleGroupBox, LabeledCheckbox, LabeledLineEdit,
-                          LabeledLineEditWithValue, LabeledStepperLineEdit)
+from magscope.gui import (
+    CollapsibleGroupBox,
+    LabeledCheckbox,
+    LabeledLineEdit,
+    LabeledLineEditWithValue,
+)
 from magscope.gui.widgets import FlashLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptManager, ScriptStatus
@@ -25,6 +41,7 @@ from magscope.utils import AcquisitionMode, Message, crop_stack_to_rois
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
     from magscope.gui.windows import WindowManager
+
 
 class ControlPanelBase(QWidget):
     def __init__(self, manager: 'WindowManager', title: str):
@@ -116,56 +133,59 @@ class HelpPanel(QFrame):
 
 
 class AcquisitionPanel(ControlPanelBase):
-    no_file_str = 'No directory to save to selected'
+    NO_DIRECTORY_SELECTED_TEXT = 'No save directory selected'
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Acquisition')
         # --- Row 0 ---
-        self.layout_row_0 = QHBoxLayout()
-        self.layout().addLayout(self.layout_row_0)
+        self.row_zero_layout = QHBoxLayout()
+        self.layout().addLayout(self.row_zero_layout)
 
         # Acquisition On Checkbox
         self.acquisition_on_checkbox = LabeledCheckbox(
             label_text='Acquire',
             default=self.manager._acquisition_on,
             callback=self.callback_acquisition_on)
-        self.layout_row_0.addWidget(self.acquisition_on_checkbox)
+        self.row_zero_layout.addWidget(self.acquisition_on_checkbox)
 
         # Mode group selection
         mode_layout = QHBoxLayout()
-        self.layout_row_0.addLayout(mode_layout)
+        self.row_zero_layout.addLayout(mode_layout)
         mode_label = QLabel('Mode:')
         mode_layout.addWidget(mode_label)
         self.acquisition_mode_combobox = QComboBox()
         mode_layout.addWidget(self.acquisition_mode_combobox, stretch=1)
-        modes = [AcquisitionMode.TRACK,
-                 AcquisitionMode.TRACK_AND_CROP_VIDEO,
-                 AcquisitionMode.TRACK_AND_FULL_VIDEO,
-                 AcquisitionMode.CROP_VIDEO,
-                 AcquisitionMode.FULL_VIDEO]
+        modes = [
+            AcquisitionMode.TRACK,
+            AcquisitionMode.TRACK_AND_CROP_VIDEO,
+            AcquisitionMode.TRACK_AND_FULL_VIDEO,
+            AcquisitionMode.CROP_VIDEO,
+            AcquisitionMode.FULL_VIDEO,
+        ]
         for mode in modes:
             self.acquisition_mode_combobox.addItem(mode)
         self.acquisition_mode_combobox.setCurrentText(self.manager._acquisition_mode)
-        self.acquisition_mode_combobox.currentIndexChanged.connect(self.callback_acquisition_mode) # type: ignore
+        self.acquisition_mode_combobox.currentIndexChanged.connect(
+            self.callback_acquisition_mode)  # type: ignore
 
         # --- Row 1 ---
-        self.layout_row_1 = QHBoxLayout()
-        self.layout().addLayout(self.layout_row_1)
+        self.row_one_layout = QHBoxLayout()
+        self.layout().addLayout(self.row_one_layout)
 
         # Acquisition Directory On Checkbox
         self.acquisition_dir_on_checkbox = LabeledCheckbox(
             label_text='Save',
             default=self.manager._acquisition_dir_on,
             callback=self.callback_acquisition_dir_on)
-        self.layout_row_1.addWidget(self.acquisition_dir_on_checkbox)
+        self.row_one_layout.addWidget(self.acquisition_dir_on_checkbox)
 
         # Acquisition - Folder selector
         self.acquisition_dir_button = QPushButton('Select Directory to Save To')
         self.acquisition_dir_button.setMinimumWidth(200)
         self.acquisition_dir_button.clicked.connect(self.callback_acquisition_dir)  # type: ignore
-        self.layout_row_1.addWidget(self.acquisition_dir_button)
+        self.row_one_layout.addWidget(self.acquisition_dir_button)
 
-        self.acquisition_dir_textedit = QTextEdit(self.no_file_str)
+        self.acquisition_dir_textedit = QTextEdit(self.NO_DIRECTORY_SELECTED_TEXT)
         self.acquisition_dir_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.acquisition_dir_textedit.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.acquisition_dir_textedit.setFixedHeight(40)
@@ -175,15 +195,18 @@ class AcquisitionPanel(ControlPanelBase):
 
     def callback_acquisition_on(self):
         value: bool = self.acquisition_on_checkbox.checkbox.isChecked()
-        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
+        self.manager.send_ipc(
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
 
     def callback_acquisition_dir_on(self):
         value: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
-        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
+        self.manager.send_ipc(
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
 
     def callback_acquisition_mode(self):
         value: AcquisitionMode = self.acquisition_mode_combobox.currentText()
-        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
+        self.manager.send_ipc(
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
@@ -192,16 +215,20 @@ class AcquisitionPanel(ControlPanelBase):
             os.path.expanduser("~"),
             type=str
         )
-        value = QFileDialog.getExistingDirectory(None,
-                                                 'Select Folder',
-                                                 last_value)
+        value = QFileDialog.getExistingDirectory(
+            None,
+            'Select Folder',
+            last_value)
+
         if value:
             self.acquisition_dir_textedit.setText(value)
             settings.setValue('last acquisition_dir', QVariant(value))
         else:
             value = None
-            self.acquisition_dir_textedit.setText(self.no_file_str)
-        self.manager.send_ipc(Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
+            self.acquisition_dir_textedit.setText(self.NO_DIRECTORY_SELECTED_TEXT)
+
+        self.manager.send_ipc(
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -210,11 +237,12 @@ class BeadSelectionPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Bead Selection')
 
         # Instructions
-        instructions = """
-        Add a bead: left-click on the video
-        Remove a bead: right-click on the bead
-        """
-        instructions = '\n'.join([l.strip() for l in instructions.splitlines()]).strip()
+        instructions = textwrap.dedent(
+            """
+            Add a bead: left-click on the video
+            Remove a bead: right-click on the bead
+            """
+        ).strip()
         self.layout().addWidget(QLabel(instructions))
 
         # ROI
@@ -267,16 +295,16 @@ class CameraPanel(ControlPanelBase):
             self.settings[name] = LabeledLineEditWithValue(
                 label_text=name,
                 widths=(0, 100, 50),
-                callback=lambda n=name:self.callback_set_camera_setting(n))
+                callback=lambda n=name: self.callback_set_camera_setting(n))
             self.layout().addWidget(self.settings[name])
 
         # Refresh button
         self.refresh_button = QPushButton('↺')
         self.refresh_button.setFlat(True)
         self.refresh_button.setStyleSheet("QPushButton { border: none; background: transparent; padding: 0; }")
-        self.refresh_button.clicked.connect(self.callback_refresh) # noqa PyUnresolvedReferences
-        self.layout().addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignRight) # type: ignore
-            
+        self.refresh_button.clicked.connect(self.callback_refresh)  # noqa PyUnresolvedReferences
+        self.layout().addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignRight)  # type: ignore
+
     def callback_refresh(self):
         for name in self.manager.camera_type.settings:
             from magscope import CameraManager
@@ -287,7 +315,7 @@ class CameraPanel(ControlPanelBase):
 
     def callback_set_camera_setting(self, name):
         value = self.settings[name].lineedit.text()
-        if value == '':
+        if not value:
             return
         self.settings[name].lineedit.setText('')
         self.settings[name].value_label.setText('')
@@ -306,7 +334,7 @@ class HistogramPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Histogram')
 
-        self.update_interval: float = 1 # seconds
+        self.update_interval: float = 1  # seconds
         self._update_last_time: float = 0
 
         # ===== First Row ===== #
@@ -355,17 +383,18 @@ class HistogramPanel(ControlPanelBase):
         self.layout().addWidget(self.canvas)
 
     def update_plot(self, data):
-        # Check if its enabled
+        # Check if it's enabled
         if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
             return
 
         # Check if it has been enough time
-        if (now:=time.time()) - self._update_last_time < self.update_interval:
+        current_time = time.time()
+        if current_time - self._update_last_time < self.update_interval:
             return
-        self._update_last_time = now
+        self._update_last_time = current_time
 
         dtype = self.manager.camera_type.dtype
-        max_int = 2**self.manager.camera_type.bits
+        max_int = 2 ** self.manager.camera_type.bits
         shape = self.manager.video_buffer.image_shape
         image = np.frombuffer(data, dtype).reshape(shape)
 
@@ -437,7 +466,7 @@ class PlotSettingsPanel(ControlPanelBase):
         self.grid_layout.addWidget(QLabel('Max'), r, 2)
 
         # One row for each y-axis
-        for i, plot in enumerate(self.manager.plot_worker.plots):
+        for _, plot in enumerate(self.manager.plot_worker.plots):
             r += 1
             ylabel = plot.ylabel
             self.limits[ylabel] = (QLineEdit(), QLineEdit())
@@ -485,40 +514,45 @@ class PlotSettingsPanel(ControlPanelBase):
         self.layout().addWidget(self.beads_in_view_marker_size)
 
     def selected_bead_callback(self, value):
-        try: value = int(value)
-        except: value = -1
-        self.manager.plot_worker.selected_bead_signal.emit(value)
-        self.manager.selected_bead = value
+        try:
+            bead = int(value)
+        except (TypeError, ValueError):
+            bead = -1
+        self.manager.plot_worker.selected_bead_signal.emit(bead)
+        self.manager.selected_bead = bead
 
     def reference_bead_callback(self, value):
         value = self.reference_bead.lineedit.text()
-        try: value = int(value)
-        except: value = -1
-        self.manager.plot_worker.reference_bead_signal.emit(value)
+        try:
+            bead = int(value)
+        except (TypeError, ValueError):
+            bead = -1
+        self.manager.plot_worker.reference_bead_signal.emit(bead)
 
     def limits_callback(self, _):
-        values = {}
-        for name, limit in self.limits.items():
-            min_max = [limit[0].text(), limit[1].text()]
-            for i in range(2):
-                value = min_max[i]
-                if name == 'Time':
-                    today = datetime.date.today()
+        limits = {}
+        today = datetime.date.today()
+        for axis_label, limit in self.limits.items():
+            raw_values = [limit[0].text(), limit[1].text()]
+            parsed_limits: list[float | None] = []
+            for raw_value in raw_values:
+                if axis_label == 'Time':
                     try:
-                        value = value.replace('.', ':').split(':')
-                        value = datetime.datetime.combine(today, datetime.time(*map(int, value)))
-                        value = value.timestamp()
-                    except:
-                        value = None
-
+                        time_parts = raw_value.replace('.', ':').split(':')
+                        parsed_value = datetime.datetime.combine(
+                            today,
+                            datetime.time(*map(int, time_parts)),
+                        ).timestamp()
+                    except (TypeError, ValueError):
+                        parsed_value = None
                 else:
                     try:
-                        value = float(value)
-                    except:
-                        value = None
-                min_max[i] = value
-            values[name] = tuple(min_max)
-        self.manager.plot_worker.limits_signal.emit(values)
+                        parsed_value = float(raw_value)
+                    except (TypeError, ValueError):
+                        parsed_value = None
+                parsed_limits.append(parsed_value)
+            limits[axis_label] = tuple(parsed_limits)
+        self.manager.plot_worker.limits_signal.emit(limits)
 
     def beads_in_view_on_callback(self):
         value = self.beads_in_view_on.checkbox.isChecked()
@@ -526,15 +560,19 @@ class PlotSettingsPanel(ControlPanelBase):
 
     def beads_in_view_count_callback(self):
         value = self.beads_in_view_count.lineedit.text()
-        try: value = int(value)
-        except ValueError: value = None
-        self.manager.beads_in_view_count = value
+        try:
+            count = int(value)
+        except ValueError:
+            count = None
+        self.manager.beads_in_view_count = count
 
     def beads_in_view_marker_size_callback(self):
         value = self.beads_in_view_marker_size.lineedit.text()
-        try: value = int(value)
-        except ValueError: value = 100
-        self.manager.beads_in_view_marker_size = value
+        try:
+            size = int(value)
+        except ValueError:
+            size = 100
+        self.manager.beads_in_view_marker_size = size
 
 
 class ProfilePanel(ControlPanelBase):
@@ -631,7 +669,7 @@ class ProfilePanel(ControlPanelBase):
 
 
 class ScriptPanel(ControlPanelBase):
-    no_file_str = 'No Script Loaded'
+    NO_SCRIPT_SELECTED_TEXT = 'No script loaded'
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Scripting')
@@ -652,12 +690,12 @@ class ScriptPanel(ControlPanelBase):
         self.button_layout.addWidget(self.load_button)
         self.button_layout.addWidget(self.start_button)
         self.button_layout.addWidget(self.pause_button)
-        self.load_button.clicked.connect(self.callback_load) # type: ignore
-        self.start_button.clicked.connect(self.callback_start) # type: ignore
-        self.pause_button.clicked.connect(self.callback_pause) # type: ignore
+        self.load_button.clicked.connect(self.callback_load)  # type: ignore
+        self.start_button.clicked.connect(self.callback_start)  # type: ignore
+        self.pause_button.clicked.connect(self.callback_pause)  # type: ignore
 
         # Filepath
-        self.filepath_textedit = QTextEdit(self.no_file_str)
+        self.filepath_textedit = QTextEdit(self.NO_SCRIPT_SELECTED_TEXT)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filepath_textedit.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -675,7 +713,7 @@ class ScriptPanel(ControlPanelBase):
             self.pause_button.setText('Pause')
 
         if status == ScriptStatus.EMPTY:
-            self.filepath_textedit.setText(self.no_file_str)
+            self.filepath_textedit.setText(self.NO_SCRIPT_SELECTED_TEXT)
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def callback_load(self):
@@ -694,7 +732,7 @@ class ScriptPanel(ControlPanelBase):
         self.manager.send_ipc(message)
 
         if not path:  # user selected cancel
-            path = self.no_file_str
+            path = self.NO_SCRIPT_SELECTED_TEXT
         else:
             settings.setValue('last script filepath', QVariant(path))
         self.filepath_textedit.setText(path)
@@ -744,7 +782,7 @@ class StatusPanel(ControlPanelBase):
 
     def update_display_rate(self, text):
         self.dot = (self.dot + 1) % 4
-        dot_text = '.'*self.dot
+        dot_text = '.' * self.dot
         self.display_rate_status.setText(f'Display Rate: {text} {dot_text}')
 
     def update_video_processors_status(self, text):
@@ -765,8 +803,8 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_size_status.setText(f'Video Buffer Size: {size_mb:.1f} MB')
 
     def update_video_buffer_purge(self, t: float):
-        string = time.strftime("%I:%M:%S %p", time.localtime(t))
-        self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {string}')
+        timestamp_text = time.strftime("%I:%M:%S %p", time.localtime(t))
+        self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {timestamp_text}')
 
 
 class XYLockPanel(ControlPanelBase):
@@ -774,9 +812,11 @@ class XYLockPanel(ControlPanelBase):
         super().__init__(manager=manager, title='XY-Lock')
 
         # Note
-        note_text = '''
-        Periodically moves the bead-boxes to the center the bead.
-        '''.replace('\n', ' ').replace('  ', '').strip()
+        note_text = textwrap.dedent(
+            """
+            Periodically moves the bead-boxes to center the bead.
+            """
+        ).strip()
         note = QLabel(note_text)
         note.setWordWrap(True)
         self.layout().addWidget(note)
@@ -798,18 +838,20 @@ class XYLockPanel(ControlPanelBase):
         row_1.addWidget(once)
 
         # Interval
+        default_interval = self.manager.settings['xy-lock default interval']
         self.interval = LabeledLineEditWithValue(
             label_text='Interval (sec)',
-            default=str(self.manager.settings['xy-lock default interval']) + ' sec',
+            default=f'{default_interval} sec',
             callback=self.interval_callback,
             widths=(75, 100, 0),
         )
         self.layout().addWidget(self.interval)
 
         # Max
+        default_max = self.manager.settings['xy-lock default max']
         self.max = LabeledLineEditWithValue(
             label_text='Max (pixels)',
-            default=str(self.manager.settings['xy-lock default max']) + ' pixels',
+            default=f'{default_max} pixels',
             callback=self.max_callback,
             widths=(75, 100, 0),
         )
@@ -819,7 +861,7 @@ class XYLockPanel(ControlPanelBase):
         default_window = self.manager.settings.get('xy-lock default window', '')
         self.window = LabeledLineEditWithValue(
             label_text='Window',
-            default=str(default_window) + ' window',
+            default=f'{default_window} window',
             callback=self.window_callback,
             widths=(75, 100, 0),
         )
@@ -857,16 +899,19 @@ class XYLockPanel(ControlPanelBase):
         self.interval.lineedit.setText('')
 
         # Check value
-        try: value = float(value)
-        except ValueError: return
-        if value < 0: return
+        try:
+            interval_seconds = float(value)
+        except ValueError:
+            return
+        if interval_seconds < 0:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_xy_lock_interval,
-            args=(value,),
+            args=(interval_seconds,),
         )
         self.manager.send_ipc(message)
 
@@ -876,16 +921,19 @@ class XYLockPanel(ControlPanelBase):
         self.max.lineedit.setText('')
 
         # Check value
-        try: value = float(value)
-        except ValueError: return
-        if value <= 1: return
+        try:
+            max_distance = float(value)
+        except ValueError:
+            return
+        if max_distance <= 1:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_xy_lock_max,
-            args=(value,),
+            args=(max_distance,),
         )
         self.manager.send_ipc(message)
 
@@ -895,16 +943,19 @@ class XYLockPanel(ControlPanelBase):
         self.window.lineedit.setText('')
 
         # Check value
-        try: value = int(value)
-        except ValueError: return
-        if value <= 0: return
+        try:
+            window_size = int(value)
+        except ValueError:
+            return
+        if window_size <= 0:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_xy_lock_window,
-            args=(value,),
+            args=(window_size,),
         )
         self.manager.send_ipc(message)
 
@@ -941,12 +992,13 @@ class ZLockPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Z-Lock')
 
         # Note
-        note_text = '''
-        When enabled the Z-Lock overrides the "Z motor" target
-        and adjusts the motor target to maintain the chosen
-        bead at a fixed Z value. The adjustment is completed on
-        a timer with the chosen interval between updates.
-        '''.replace('\n', ' ').replace('  ', '').strip()
+        note_text = textwrap.dedent(
+            """
+            When enabled the Z-Lock overrides the "Z motor" target and adjusts the motor
+            target to maintain the chosen bead at a fixed Z value. Adjustments run on a
+            timer using the configured interval.
+            """
+        ).replace('\n', ' ').strip()
         note = QLabel(note_text)
         note.setWordWrap(True)
         self.layout().addWidget(note)
@@ -977,18 +1029,20 @@ class ZLockPanel(ControlPanelBase):
         self.layout().addWidget(self.target)
 
         # Interval
+        default_interval = self.manager.settings['z-lock default interval']
         self.interval = LabeledLineEditWithValue(
             label_text='Interval (sec)',
-            default=str(self.manager.settings['z-lock default interval']) + ' sec',
+            default=f'{default_interval} sec',
             callback=self.interval_callback,
             widths=(75, 100, 0),
         )
         self.layout().addWidget(self.interval)
 
         # Max
+        default_max = self.manager.settings['z-lock default max']
         self.max = LabeledLineEditWithValue(
             label_text='Max (nm)',
-            default=str(self.manager.settings['z-lock default max']) + ' nm',
+            default=f'{default_max} nm',
             callback=self.max_callback,
             widths=(75, 100, 0),
         )
@@ -1019,17 +1073,18 @@ class ZLockPanel(ControlPanelBase):
 
         # Check value
         try:
-            value = int(value)
+            bead_index = int(value)
         except ValueError:
             return
-        if value < 0: return
+        if bead_index < 0:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_z_lock_bead,
-            args=(value,),
+            args=(bead_index,),
         )
         self.manager.send_ipc(message)
 
@@ -1040,7 +1095,7 @@ class ZLockPanel(ControlPanelBase):
 
         # Check value
         try:
-            value = float(value)
+            target_nm = float(value)
         except ValueError:
             return
 
@@ -1049,7 +1104,7 @@ class ZLockPanel(ControlPanelBase):
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_z_lock_target,
-            args=(value,),
+            args=(target_nm,),
         )
         self.manager.send_ipc(message)
 
@@ -1060,17 +1115,18 @@ class ZLockPanel(ControlPanelBase):
 
         # Check value
         try:
-            value = float(value)
+            interval_seconds = float(value)
         except ValueError:
             return
-        if value < 0: return
+        if interval_seconds < 0:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_z_lock_interval,
-            args=(value,),
+            args=(interval_seconds,),
         )
         self.manager.send_ipc(message)
 
@@ -1081,17 +1137,18 @@ class ZLockPanel(ControlPanelBase):
 
         # Check value
         try:
-            value = float(value)
+            max_nm = float(value)
         except ValueError:
             return
-        if value <= 1: return
+        if max_nm <= 1:
+            return
 
         # Send value
         from magscope.beadlock import BeadLockManager
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_z_lock_max,
-            args=(value,),
+            args=(max_nm,),
         )
         self.manager.send_ipc(message)
 
@@ -1161,18 +1218,24 @@ class ZLUTGenerationPanel(ControlPanelBase):
     def generate_callback(self):
         # Start
         start = self.start.lineedit.text()
-        try: start = float(start)
-        except ValueError: return
+        try:
+            start = float(start)
+        except ValueError:
+            return
 
         # Step
         step = self.step.lineedit.text()
-        try: step = float(step)
-        except ValueError: return
+        try:
+            step = float(step)
+        except ValueError:
+            return
 
         # Stop
         stop = self.stop.lineedit.text()
-        try: stop = float(stop)
-        except ValueError: return
+        try:
+            stop = float(stop)
+        except ValueError:
+            return
 
         # Output file name
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
@@ -1186,7 +1249,7 @@ class ZLUTPanel(ControlPanelBase):
     zlut_file_selected = pyqtSignal(str)
     zlut_clear_requested = pyqtSignal()
 
-    no_file_str = 'No Z-LUT file selected'
+    NO_ZLUT_SELECTED_TEXT = 'No Z-LUT file selected'
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Z-LUT')
@@ -1204,7 +1267,7 @@ class ZLUTPanel(ControlPanelBase):
         controls_row.addWidget(self.clear_button)
 
         # Current filepath display
-        self.filepath_textedit = QTextEdit(self.no_file_str)
+        self.filepath_textedit = QTextEdit(self.NO_ZLUT_SELECTED_TEXT)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filepath_textedit.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -1261,7 +1324,7 @@ class ZLUTPanel(ControlPanelBase):
 
     def set_filepath(self, path: str | None):
         if not path:
-            self.filepath_textedit.setText(self.no_file_str)
+            self.filepath_textedit.setText(self.NO_ZLUT_SELECTED_TEXT)
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.clear_metadata()
             return
