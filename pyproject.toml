@@ -35,10 +35,10 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = []
-gpu = ["cupy-cuda12x>=13.0; sys_platform != 'darwin'"]
-zaber = ["zaber_motion"]
-pi = ["PIPython"]
-harvesters = ["harvesters"]
+cu11 = ["cupy-cuda11x>=12.0"]
+cu12 = ["cupy-cuda12x>=13.0"]
+cu13 = ["cupy-cuda13x>=13.0"]
+test = ["pytest"]
 docs = [
     "sphinx>=7",
     "furo",
@@ -61,4 +61,7 @@ include = ["magscope*"]
 exclude = ["tests*", "docs*", "examples*", "assets*"]
 
 [tool.setuptools.package-data]
-"magscope" = ["default_settings.yaml"]
+"magscope" = [
+    "default_settings.yaml", 
+    "simulation_zlut.txt"
+]
