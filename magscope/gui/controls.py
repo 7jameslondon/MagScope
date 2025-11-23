@@ -1290,5 +1290,5 @@ class ZLUTPanel(ControlPanelBase):
         if value is None:
             return ''
         if isinstance(value, float):
-            return f'{value:.3g}{suffix}'
+            return f'{int(value):d}{suffix}'
         return f'{value}{suffix}'
