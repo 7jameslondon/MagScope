@@ -244,8 +244,9 @@ class BeadSelectionPanel(ControlPanelBase):
         # Instructions
         instructions = textwrap.dedent(
             """
-            Add a bead: left-click on the video
-            Remove a bead: right-click on the bead
+            Add a bead: Left-click on the video
+            Remove a bead: Right-click on the bead
+            Lock beads: Click the lock button to prevent yourself from accidentally moving/adding/removing beads. The XYZ-Locks will still function while beads are locked.
             """
         ).strip()
         self.layout().addWidget(QLabel(instructions))
@@ -294,6 +295,8 @@ class CameraPanel(ControlPanelBase):
 
         self.layout().setSpacing(2)
 
+        self._last_settings_update: datetime.datetime | None = None
+
         self.settings = {}
         for setting_name in self.manager.camera_type.settings:
             self.settings[setting_name] = LabeledLineEditWithValue(
@@ -302,11 +305,18 @@ class CameraPanel(ControlPanelBase):
                 callback=lambda n=setting_name: self.callback_set_camera_setting(n))
             self.layout().addWidget(self.settings[setting_name])
 
-        self.refresh_button = QPushButton('↺')
-        self.refresh_button.setFlat(True)
-        self.refresh_button.setStyleSheet("QPushButton { border: none; background: transparent; padding: 0; }")
+        refresh_row = QHBoxLayout()
+        self.layout().addLayout(refresh_row)
+
+        self.refresh_button = QPushButton('Refresh')
         self.refresh_button.clicked.connect(self.callback_refresh)  # noqa PyUnresolvedReferences
-        self.layout().addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignRight)  # type: ignore
+        refresh_row.addWidget(self.refresh_button)
+
+        refresh_row.addStretch(1)
+
+        self.last_update_label = QLabel(self._format_last_update_text())
+        self.last_update_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        refresh_row.addWidget(self.last_update_label)
 
     def callback_refresh(self):
         for name in self.manager.camera_type.settings:
@@ -330,6 +340,13 @@ class CameraPanel(ControlPanelBase):
         
     def update_camera_setting(self, name: str, value: str):
         self.settings[name].value_label.setText(value)
+        self._last_settings_update = datetime.datetime.now()
+        self.last_update_label.setText(self._format_last_update_text())
+
+    def _format_last_update_text(self) -> str:
+        if self._last_settings_update is None:
+            return 'Last updated: not yet'
+        return f"Last updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
 
 class HistogramPanel(ControlPanelBase):
