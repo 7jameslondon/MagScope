@@ -16,12 +16,13 @@ from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, Cam
                           ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
                           ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
 from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, XYLockPanel,
-                                   ZLockPanel, ZLUTGenerationPanel)
+                                   ZLUTGenerationPanel, ZLUTPanel, ZLockPanel)
 from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
                                        ReorderableColumn)
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
+from magscope.videoprocessing import VideoProcessorManager
 
 logger = get_logger("gui.windows")
 
@@ -534,6 +535,38 @@ class WindowManager(ManagerProcessBase):
     def update_z_lock_max(self, value: float):
         self.controls.z_lock_panel.update_max(value)
 
+    def request_zlut_file(self, filepath: str) -> None:
+        if not filepath:
+            return
+
+        message = Message(
+            to=VideoProcessorManager,
+            meth="load_zlut_file",
+            args=(filepath,),
+        )
+        self.send_ipc(message)
+
+    def clear_zlut(self) -> None:
+        message = Message(
+            to=VideoProcessorManager,
+            meth="unload_zlut",
+            args=(),
+        )
+        self.send_ipc(message)
+
+    def update_zlut_metadata(self,
+                             filepath: str | None = None,
+                             z_min: float | None = None,
+                             z_max: float | None = None,
+                             step_size: float | None = None,
+                             profile_length: int | None = None) -> None:
+        if self.controls is None:
+            return
+
+        panel = self.controls.zlut_panel
+        panel.set_filepath(filepath)
+        panel.update_metadata(z_min, z_max, step_size, profile_length)
+
 
 class LoadingWindow(QMainWindow):
 
@@ -719,7 +752,11 @@ class Controls(QWidget):
         self.status_panel = StatusPanel(self.manager)
         self.xy_lock_panel = XYLockPanel(self.manager)
         self.z_lock_panel = ZLockPanel(self.manager)
+        self.zlut_panel = ZLUTPanel(self.manager)
         self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
+
+        self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
+        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("HelpPanel", self.help_panel, "left", False),
@@ -730,6 +767,7 @@ class Controls(QWidget):
             ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
+            ("ZLUTPanel", self.zlut_panel, "right", True),
             ("ZLUTGenerationPanel", self.z_lut_generation_panel, "right", True),
             ("ScriptPanel", self.script_panel, "right", True),
             ("XYLockPanel", self.xy_lock_panel, "right", True),

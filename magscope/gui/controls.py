@@ -1180,3 +1180,115 @@ class ZLUTGenerationPanel(ControlPanelBase):
         filename = f'Z-LUT {timestamp} {roi} {start:.0f} {step:.0f} {stop:.0f}.txt'
 
         raise NotImplementedError
+
+
+class ZLUTPanel(ControlPanelBase):
+    zlut_file_selected = pyqtSignal(str)
+    zlut_clear_requested = pyqtSignal()
+
+    no_file_str = 'No Z-LUT file selected'
+
+    def __init__(self, manager: 'WindowManager'):
+        super().__init__(manager=manager, title='Z-LUT')
+
+        # Controls row
+        controls_row = QHBoxLayout()
+        self.layout().addLayout(controls_row)
+
+        self.select_button = QPushButton('Select Z-LUT File')
+        self.select_button.clicked.connect(self._select_zlut_file)  # type: ignore
+        controls_row.addWidget(self.select_button)
+
+        self.clear_button = QPushButton('Clear Z-LUT')
+        self.clear_button.clicked.connect(self._clear_zlut)  # type: ignore
+        controls_row.addWidget(self.clear_button)
+
+        # Current filepath display
+        self.filepath_textedit = QTextEdit(self.no_file_str)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.filepath_textedit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.filepath_textedit.setFixedHeight(40)
+        self.filepath_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self.filepath_textedit.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.layout().addWidget(self.filepath_textedit)
+
+        # Metadata
+        self._metadata_layout = QVBoxLayout()
+        self.layout().addLayout(self._metadata_layout)
+
+        self.min_value = self._add_metadata_row('Min (nm):')
+        self.max_value = self._add_metadata_row('Max (nm):')
+        self.step_value = self._add_metadata_row('Step (nm):')
+        self.profile_length_value = self._add_metadata_row('Profile Length:')
+
+    def _add_metadata_row(self, label_text: str) -> QLabel:
+        row = QHBoxLayout()
+        label = QLabel(label_text)
+        value = QLabel('')
+        row.addWidget(label)
+        row.addStretch(1)
+        row.addWidget(value, alignment=Qt.AlignmentFlag.AlignRight)
+        self._metadata_layout.addLayout(row)
+        return value
+
+    def _select_zlut_file(self):
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value(
+            'last zlut directory',
+            os.path.expanduser("~"),
+            type=str
+        )
+        path, _ = QFileDialog.getOpenFileName(None,
+                                              'Select Z-LUT File',
+                                              last_value,
+                                              'Text Files (*.txt)')
+        if not path:
+            return
+
+        directory = os.path.dirname(path) or last_value
+        settings.setValue('last zlut directory', QVariant(directory))
+
+        self.filepath_textedit.setText(path)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.clear_metadata()
+        self.zlut_file_selected.emit(path)
+
+    def _clear_zlut(self):
+        self.set_filepath(None)
+        self.zlut_clear_requested.emit()
+
+    def set_filepath(self, path: str | None):
+        if not path:
+            self.filepath_textedit.setText(self.no_file_str)
+            self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.clear_metadata()
+            return
+
+        self.filepath_textedit.setText(path)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        settings = QSettings('MagScope', 'MagScope')
+        settings.setValue('last zlut directory', QVariant(os.path.dirname(path)))
+
+    def update_metadata(self,
+                        z_min: float | None = None,
+                        z_max: float | None = None,
+                        step_size: float | None = None,
+                        profile_length: int | None = None):
+        self.min_value.setText(self._format_number(z_min, suffix=' nm'))
+        self.max_value.setText(self._format_number(z_max, suffix=' nm'))
+        self.step_value.setText(self._format_number(step_size, suffix=' nm'))
+        self.profile_length_value.setText('' if profile_length is None else f'{profile_length}')
+
+    def clear_metadata(self):
+        self.update_metadata(None, None, None, None)
+
+    @staticmethod
+    def _format_number(value: float | int | None, suffix: str = '') -> str:
+        if value is None:
+            return ''
+        if isinstance(value, float):
+            return f'{int(value):d}{suffix}'
+        return f'{value}{suffix}'

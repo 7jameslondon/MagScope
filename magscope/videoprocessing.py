@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
-from multiprocessing import Lock, Process, Queue
 from typing import TYPE_CHECKING
 
 import magtrack
@@ -38,10 +38,10 @@ class VideoProcessorManager(ManagerProcessBase):
         # TODO: Check implementation
         self._save_profiles = False
 
-        # TODO: Rework this
-        self._zlut = np.loadtxt(os.path.join(os.path.dirname(__file__), 'simulation_zlut.txt'))
-        if is_cupy_available():
-            self._zlut = cp.asarray(self._zlut)
+        self._zlut_path: Path | None = Path(__file__).with_name('simulation_zlut.txt')
+        self._zlut_metadata: dict[str, float | int] | None = None
+        self._zlut = None
+        self._load_default_zlut()
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
@@ -59,6 +59,8 @@ class VideoProcessorManager(ManagerProcessBase):
         # Start the workers
         for worker in self._workers:
             worker.start()
+
+        self._broadcast_zlut_metadata()
 
     def do_main_loop(self):
         # Check if images are ready for image processing
@@ -87,6 +89,91 @@ class VideoProcessorManager(ManagerProcessBase):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.terminate()
+
+    def load_zlut_file(self, filepath: str) -> None:
+        path = Path(filepath).expanduser()
+        self._zlut = None
+        try:
+            self._set_zlut_from_path(path)
+        except Exception as exc:
+            logger.exception('Failed to load Z-LUT file: %s', exc)
+            self._notify_zlut_error(path, exc)
+            return
+
+        self._broadcast_zlut_metadata()
+
+    def _load_default_zlut(self) -> None:
+        try:
+            self._set_zlut_from_path(self._zlut_path)
+        except Exception as exc:
+            logger.exception('Failed to load default Z-LUT: %s', exc)
+
+    def unload_zlut(self) -> None:
+        self._zlut_path = None
+        self._zlut_metadata = None
+        self._zlut = None
+        self._broadcast_zlut_metadata()
+
+    def _set_zlut_from_path(self, path: Path) -> None:
+        zlut_array = np.loadtxt(path)
+        metadata = self._extract_zlut_metadata(zlut_array)
+
+        self._zlut_metadata = metadata
+        self._zlut_path = path
+        self._zlut = self._to_processing_array(zlut_array)
+
+    @staticmethod
+    def _extract_zlut_metadata(zlut_array: np.ndarray) -> dict[str, float | int]:
+        if zlut_array.ndim != 2:
+            raise ValueError('Z-LUT must be a 2D array')
+        if zlut_array.shape[0] < 2:
+            raise ValueError('Z-LUT must include at least one profile row')
+        if zlut_array.shape[1] < 2:
+            raise ValueError('Z-LUT must include at least two z-reference values')
+        if not np.all(np.isfinite(zlut_array)):
+            raise ValueError('Z-LUT contains non-finite values')
+
+        z_references = zlut_array[0, :]
+        step_size = float(np.mean(np.diff(z_references)))
+
+        return {
+            'z_min': float(np.min(z_references)),
+            'z_max': float(np.max(z_references)),
+            'step_size': step_size,
+            'profile_length': int(zlut_array.shape[0] - 1),
+        }
+
+    @staticmethod
+    def _to_processing_array(zlut_array: np.ndarray):
+        if is_cupy_available():
+            return cp.asarray(zlut_array)
+        return zlut_array
+
+    def _broadcast_zlut_metadata(self) -> None:
+        message = Message(
+            to='WindowManager',
+            meth='update_zlut_metadata',
+            args=(
+                str(self._zlut_path) if self._zlut_path is not None else None,
+                None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
+                None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
+                None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
+                None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
+            ),
+        )
+        self.send_ipc(message)
+
+    def _notify_zlut_error(self, path: Path, exc: Exception) -> None:
+        reason = str(exc).strip() or repr(exc)
+        message = Message(
+            to='WindowManager',
+            meth='print',
+            args=(
+                'Failed to load Z-LUT file',
+                f'{path}: {reason}',
+            ),
+        )
+        self.send_ipc(message)
 
     def _add_task(self):
         kwargs = {
