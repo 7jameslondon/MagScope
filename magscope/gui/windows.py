@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import sys
 import traceback
 from time import time
@@ -15,8 +16,8 @@ from magscope.datatypes import VideoBuffer
 from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
                           ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
                           ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
-from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, XYLockPanel,
-                                   ZLUTGenerationPanel, ZLUTPanel, ZLockPanel)
+from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, ResetPanel,
+                                   XYLockPanel, ZLUTGenerationPanel, ZLUTPanel, ZLockPanel)
 from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
                                        ReorderableColumn)
 from magscope.processes import ManagerProcessBase
@@ -732,7 +733,7 @@ class Controls(QWidget):
         stored_layout = self.layout_manager.stored_layout()
         self._update_column_counter(stored_layout.keys())
 
-        self._add_column("left", pinned_ids={"HelpPanel"}, index=0)
+        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
         for name in stored_layout.keys():
             if name in self.layout_manager.columns:
                 continue
@@ -742,6 +743,7 @@ class Controls(QWidget):
 
         # Instantiate standard panels
         self.help_panel = HelpPanel(self.manager)
+        self.reset_panel = ResetPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
@@ -760,6 +762,7 @@ class Controls(QWidget):
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("HelpPanel", self.help_panel, "left", False),
+            ("ResetPanel", self.reset_panel, "left", False),
             ("StatusPanel", self.status_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
@@ -915,6 +918,48 @@ class Controls(QWidget):
             self._suppress_layout_callback = False
         self.layout_manager.layout_changed()
         self._add_column_target.refresh_visibility()
+
+    def reset_to_defaults(self) -> None:
+        """Restore panel visibility, order, and columns to defaults."""
+
+        settings = QSettings("MagScope", "MagScope")
+        settings.beginGroup(self.LAYOUT_SETTINGS_GROUP)
+        settings.remove("")
+        settings.endGroup()
+
+        for panel in self.panels.values():
+            groupbox = getattr(panel, "groupbox", None)
+            if isinstance(groupbox, CollapsibleGroupBox):
+                settings.remove(f"{groupbox.title}_Group Box Collapsed")
+                groupbox.toggle_button.setChecked(True)
+
+        for column in list(self.layout_manager.columns.values()):
+            column.clear_placeholder()
+            column.clear_panels()
+
+        for scroll in list(self._column_scrolls.values()):
+            self._columns_layout.removeWidget(scroll)
+            scroll.hide()
+            scroll.deleteLater()
+        self._column_scrolls.clear()
+
+        self.layout_manager.columns = OrderedDict()
+        self._column_counter = 1
+
+        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
+        self._add_column("right")
+
+        for panel_id in self.layout_manager._default_order:
+            wrapper = self.layout_manager.wrapper_for_id(panel_id)
+            if wrapper is None:
+                continue
+            column_name = self.layout_manager._default_columns.get(panel_id, "left")
+            if column_name not in self.layout_manager.columns:
+                self._add_column(column_name)
+            column = self.layout_manager.columns[column_name]
+            column.add_panel(wrapper)
+
+        self.layout_manager.layout_changed()
 
     def has_room_for_new_column(self) -> bool:
         """Return True if a new column can fit beside the existing ones."""
