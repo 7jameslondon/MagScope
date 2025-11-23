@@ -268,7 +268,7 @@ class ReorderableColumn(QWidget):
 
     def _constrain_index(self, wrapper: PanelWrapper, index: int) -> int:
         if wrapper.panel_id in self._pinned_ids:
-            return 0
+            return self._locked_prefix_length()
         return max(index, self._locked_prefix_length())
 
     def _constrained_drop_index(self, wrapper: PanelWrapper, cursor_y: float) -> int:

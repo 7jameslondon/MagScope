@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QStackedLayout,
@@ -129,6 +130,77 @@ class HelpPanel(QFrame):
                 background-color: {background_color};
             }}
             #HelpPanelFrame QLabel {{
+                color: {text_color};
+            }}
+            """
+        )
+
+
+class ResetPanel(QFrame):
+    """Clickable panel that resets the GUI layout to defaults."""
+
+    def __init__(self, manager: "WindowManager"):
+        super().__init__()
+        self.manager = manager
+        self.setObjectName("ResetPanelFrame")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
+        self.setLayout(layout)
+
+        self.title_label = QLabel("Reset the GUI")
+        font = self.title_label.font()
+        font.setPointSize(font.pointSize() + 1)
+        font.setBold(True)
+        self.title_label.setFont(font)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+
+        layout.addWidget(self.title_label)
+
+        self._is_hovered = False
+        self._apply_styles()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.rect().contains(event.pos()):
+                confirmation = QMessageBox.question(
+                    self,
+                    "Reset GUI",
+                    "Reset panels to their default layout and states?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if confirmation == QMessageBox.StandardButton.Yes:
+                    self.manager.controls.reset_to_defaults()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self._apply_styles()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        self._apply_styles()
+        super().leaveEvent(event)
+
+    def _apply_styles(self):
+        text_color = "black" if self._is_hovered else "white"
+        background_color = "white" if self._is_hovered else "transparent"
+        self.setStyleSheet(
+            f"""
+            #ResetPanelFrame {{
+                border: 1px solid #5b5b5b;
+                border-radius: 6px;
+                background-color: {background_color};
+            }}
+            #ResetPanelFrame QLabel {{
                 color: {text_color};
             }}
             """
