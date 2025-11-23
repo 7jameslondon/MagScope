@@ -183,12 +183,12 @@ class CollapsibleGroupBox(QGroupBox):
         super().__init__()
 
         self.title = title
+        self.default_collapsed = collapsed
+        self._settings_key = f"{self.title}_Group Box Collapsed"
 
         # Retrieve last collapse state
         settings = QSettings('MagScope', 'MagScope')
-        collapsed = settings.value(self.title + '_Group Box Collapsed',
-                                   collapsed,
-                                   type=bool)
+        collapsed = settings.value(self._settings_key, collapsed, type=bool)
 
         # Set up the toggle button (will be the groupbox's title)
         self.toggle_button = QPushButton(
@@ -247,23 +247,45 @@ class CollapsibleGroupBox(QGroupBox):
         else:
             self.content_area.setMaximumHeight(16777215)  # QT default maximum
 
+    @property
+    def settings_key(self) -> str:
+        return self._settings_key
+
     def toggle(self, checked):
-        self.collapsed = not checked
-        self.toggle_button.setText(self._get_toggle_text(self.title, checked))
+        self._apply_collapsed_state(not checked, animate=True, persist=True)
 
-        settings = QSettings('MagScope', 'MagScope')
-        settings.setValue(self.title + '_Group Box Collapsed', self.collapsed)
+    def reset_to_default(self) -> None:
+        self._apply_collapsed_state(self.default_collapsed, animate=False, persist=True)
 
-        if checked:
-            # Expand
-            self.animation.setStartValue(0)
-            self.animation.setEndValue(self.content_area.sizeHint().height())
+    def _apply_collapsed_state(self, collapsed: bool, *, animate: bool, persist: bool) -> None:
+        expanded = not collapsed
+        self.collapsed = collapsed
+        self.toggle_button.blockSignals(True)
+        self.toggle_button.setChecked(expanded)
+        self.toggle_button.blockSignals(False)
+        self.toggle_button.setText(self._get_toggle_text(self.title, expanded))
+
+        if persist:
+            settings = QSettings('MagScope', 'MagScope')
+            settings.setValue(self._settings_key, self.collapsed)
+
+        if animate:
+            if expanded:
+                # Expand
+                self.animation.setStartValue(0)
+                self.animation.setEndValue(self.content_area.sizeHint().height())
+            else:
+                # Collapse
+                self.animation.setStartValue(self.content_area.height())
+                self.animation.setEndValue(0)
+
+            self.animation.start()
         else:
-            # Collapse
-            self.animation.setStartValue(self.content_area.height())
-            self.animation.setEndValue(0)
-
-        self.animation.start()
+            self.animation.stop()
+            if collapsed:
+                self.content_area.setMaximumHeight(0)
+            else:
+                self.content_area.setMaximumHeight(16777215)  # QT default maximum
 
     def setContentLayout(self, content_layout):
         wrapper_layout = QVBoxLayout()

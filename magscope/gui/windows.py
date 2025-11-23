@@ -765,10 +765,10 @@ class Controls(QWidget):
             ("HelpPanel", self.help_panel, "left", False),
             ("ResetPanel", self.reset_panel, "left", False),
             ("StatusPanel", self.status_panel, "left", True),
+            ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
             ("HistogramPanel", self.histogram_panel, "left", True),
-            ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
             ("ZLUTPanel", self.zlut_panel, "right", True),
@@ -931,8 +931,8 @@ class Controls(QWidget):
         for panel in self.panels.values():
             groupbox = getattr(panel, "groupbox", None)
             if isinstance(groupbox, CollapsibleGroupBox):
-                settings.remove(f"{groupbox.title}_Group Box Collapsed")
-                groupbox.toggle_button.setChecked(True)
+                settings.remove(groupbox.settings_key)
+                groupbox.reset_to_default()
 
         for column in list(self.layout_manager.columns.values()):
             column.clear_placeholder()

@@ -45,10 +45,13 @@ if TYPE_CHECKING:
 
 
 class ControlPanelBase(QWidget):
-    def __init__(self, manager: 'WindowManager', title: str):
+    def __init__(self, manager: 'WindowManager', title: str, collapsed_by_default: bool = False):
         super().__init__()
         self.manager: WindowManager = manager
-        self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(title=title)
+        self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(
+            title=title,
+            collapsed=collapsed_by_default,
+        )
 
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -211,7 +214,7 @@ class AcquisitionPanel(ControlPanelBase):
     NO_DIRECTORY_SELECTED_TEXT = 'No save directory selected'
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Acquisition')
+        super().__init__(manager=manager, title='Acquisition', collapsed_by_default=True)
         acquisition_controls_row = QHBoxLayout()
         self.layout().addLayout(acquisition_controls_row)
 
@@ -311,7 +314,7 @@ class AcquisitionPanel(ControlPanelBase):
 class BeadSelectionPanel(ControlPanelBase):
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Bead Selection')
+        super().__init__(manager=manager, title='Bead Selection', collapsed_by_default=False)
 
         # Instructions
         instructions = textwrap.dedent(
@@ -363,7 +366,7 @@ class BeadSelectionPanel(ControlPanelBase):
 class CameraPanel(ControlPanelBase):
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Camera Settings')
+        super().__init__(manager=manager, title='Camera Settings', collapsed_by_default=True)
 
         self.layout().setSpacing(2)
 
@@ -424,7 +427,7 @@ class CameraPanel(ControlPanelBase):
 class HistogramPanel(ControlPanelBase):
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Histogram')
+        super().__init__(manager=manager, title='Histogram', collapsed_by_default=True)
 
         self.update_interval: float = 1  # seconds
         self._update_last_time: float = 0
@@ -515,7 +518,7 @@ class HistogramPanel(ControlPanelBase):
 
 class PlotSettingsPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Plot Settings')
+        super().__init__(manager=manager, title='Plot Settings', collapsed_by_default=True)
 
         # Selected Bead
         self.selected_bead = LabeledLineEdit(
@@ -661,7 +664,7 @@ class PlotSettingsPanel(ControlPanelBase):
 
 class ProfilePanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Radial Profile Monitor')
+        super().__init__(manager=manager, title='Radial Profile Monitor', collapsed_by_default=True)
 
         # Enable
         self.enable = LabeledCheckbox(
@@ -742,7 +745,7 @@ class ScriptPanel(ControlPanelBase):
     NO_SCRIPT_SELECTED_TEXT = 'No script loaded'
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Scripting')
+        super().__init__(manager=manager, title='Scripting', collapsed_by_default=True)
 
         self.status_prefix = 'Status'
         self.status_label = QLabel('Status: Empty')
@@ -822,7 +825,7 @@ class ScriptPanel(ControlPanelBase):
 
 class StatusPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Status')
+        super().__init__(manager=manager, title='Status', collapsed_by_default=False)
 
         self.layout().setSpacing(0)
         self.dot_count = 0
@@ -881,7 +884,7 @@ class StatusPanel(ControlPanelBase):
 
 class XYLockPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='XY-Lock')
+        super().__init__(manager=manager, title='XY-Lock', collapsed_by_default=True)
 
         # Note
         note_text = textwrap.dedent(
@@ -1060,7 +1063,7 @@ class XYLockPanel(ControlPanelBase):
 
 class ZLockPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Z-Lock')
+        super().__init__(manager=manager, title='Z-Lock', collapsed_by_default=True)
 
         # Note
         note_text = textwrap.dedent(
@@ -1258,7 +1261,7 @@ class ZLockPanel(ControlPanelBase):
 
 class ZLUTGenerationPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Z-LUT Generation')
+        super().__init__(manager=manager, title='Z-LUT Generation', collapsed_by_default=True)
 
         # ROI
         roi_row = QHBoxLayout()
@@ -1323,7 +1326,7 @@ class ZLUTPanel(ControlPanelBase):
     NO_ZLUT_SELECTED_TEXT = 'No Z-LUT file selected'
 
     def __init__(self, manager: 'WindowManager'):
-        super().__init__(manager=manager, title='Z-LUT')
+        super().__init__(manager=manager, title='Z-LUT', collapsed_by_default=True)
 
         # Controls row
         controls_row = QHBoxLayout()
