@@ -92,6 +92,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def load_zlut_file(self, filepath: str) -> None:
         path = Path(filepath).expanduser()
+        self._zlut = None
         try:
             self._set_zlut_from_path(path)
         except Exception as exc:
