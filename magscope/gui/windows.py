@@ -20,6 +20,7 @@ from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, R
                                    XYLockPanel, ZLUTGenerationPanel, ZLUTPanel, ZLockPanel)
 from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
                                        ReorderableColumn)
+from magscope.gui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, registerwithscript
 from magscope.utils import AcquisitionMode, Message, numpy_type_to_qt_image_type
