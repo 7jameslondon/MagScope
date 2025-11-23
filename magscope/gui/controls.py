@@ -153,18 +153,13 @@ class ResetPanel(QFrame):
 
         self.title_label = QLabel("Reset the GUI")
         font = self.title_label.font()
-        font.setPointSize(font.pointSize() + 2)
+        font.setPointSize(font.pointSize() + 1)
         font.setBold(True)
         self.title_label.setFont(font)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-        self.description_label = QLabel(
-            "Return panels and layout to their default positions and states",
-        )
-        self.description_label.setWordWrap(True)
 
         layout.addWidget(self.title_label)
-        layout.addWidget(self.description_label)
 
         self._is_hovered = False
         self._apply_styles()
