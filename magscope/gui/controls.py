@@ -1184,16 +1184,24 @@ class ZLUTGenerationPanel(ControlPanelBase):
 
 class ZLUTPanel(ControlPanelBase):
     zlut_file_selected = pyqtSignal(str)
+    zlut_clear_requested = pyqtSignal()
 
     no_file_str = 'No Z-LUT file selected'
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Z-LUT')
 
-        # Select button
+        # Controls row
+        controls_row = QHBoxLayout()
+        self.layout().addLayout(controls_row)
+
         self.select_button = QPushButton('Select Z-LUT File')
         self.select_button.clicked.connect(self._select_zlut_file)  # type: ignore
-        self.layout().addWidget(self.select_button)
+        controls_row.addWidget(self.select_button)
+
+        self.clear_button = QPushButton('Clear Z-LUT')
+        self.clear_button.clicked.connect(self._clear_zlut)  # type: ignore
+        controls_row.addWidget(self.clear_button)
 
         # Current filepath display
         self.filepath_textedit = QTextEdit(self.no_file_str)
@@ -1246,6 +1254,10 @@ class ZLUTPanel(ControlPanelBase):
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.clear_metadata()
         self.zlut_file_selected.emit(path)
+
+    def _clear_zlut(self):
+        self.set_filepath(None)
+        self.zlut_clear_requested.emit()
 
     def set_filepath(self, path: str | None):
         if not path:

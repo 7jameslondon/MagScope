@@ -546,6 +546,14 @@ class WindowManager(ManagerProcessBase):
         )
         self.send_ipc(message)
 
+    def clear_zlut(self) -> None:
+        message = Message(
+            to=VideoProcessorManager,
+            meth="unload_zlut",
+            args=(),
+        )
+        self.send_ipc(message)
+
     def update_zlut_metadata(self,
                              filepath: str | None = None,
                              z_min: float | None = None,
@@ -556,9 +564,7 @@ class WindowManager(ManagerProcessBase):
             return
 
         panel = self.controls.zlut_panel
-        if filepath is not None:
-            panel.set_filepath(filepath)
-
+        panel.set_filepath(filepath)
         panel.update_metadata(z_min, z_max, step_size, profile_length)
 
 
@@ -750,6 +756,7 @@ class Controls(QWidget):
         self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
 
         self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
+        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("HelpPanel", self.help_panel, "left", False),

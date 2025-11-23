@@ -38,7 +38,7 @@ class VideoProcessorManager(ManagerProcessBase):
         # TODO: Check implementation
         self._save_profiles = False
 
-        self._zlut_path = Path(__file__).with_name('simulation_zlut.txt')
+        self._zlut_path: Path | None = Path(__file__).with_name('simulation_zlut.txt')
         self._zlut_metadata: dict[str, float | int] | None = None
         self._zlut = None
         self._load_default_zlut()
@@ -107,6 +107,12 @@ class VideoProcessorManager(ManagerProcessBase):
         except Exception as exc:
             logger.exception('Failed to load default Z-LUT: %s', exc)
 
+    def unload_zlut(self) -> None:
+        self._zlut_path = None
+        self._zlut_metadata = None
+        self._zlut = None
+        self._broadcast_zlut_metadata()
+
     def _set_zlut_from_path(self, path: Path) -> None:
         zlut_array = np.loadtxt(path)
         metadata = self._extract_zlut_metadata(zlut_array)
@@ -143,18 +149,15 @@ class VideoProcessorManager(ManagerProcessBase):
         return zlut_array
 
     def _broadcast_zlut_metadata(self) -> None:
-        if self._zlut_metadata is None:
-            return
-
         message = Message(
             to='WindowManager',
             meth='update_zlut_metadata',
             args=(
-                str(self._zlut_path),
-                self._zlut_metadata['z_min'],
-                self._zlut_metadata['z_max'],
-                self._zlut_metadata['step_size'],
-                self._zlut_metadata['profile_length'],
+                str(self._zlut_path) if self._zlut_path is not None else None,
+                None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
+                None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
+                None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
+                None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
             ),
         )
         self.send_ipc(message)
