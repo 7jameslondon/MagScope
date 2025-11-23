@@ -175,10 +175,6 @@ class VideoProcessorManager(ManagerProcessBase):
         self.send_ipc(message)
 
     def _add_task(self):
-        if self._zlut is None:
-            logger.error('No Z-LUT loaded; skipping video processing task')
-            return
-
         kwargs = {
             'acquisition_dir': self._acquisition_dir,
             'acquisition_dir_on': self._acquisition_dir_on,
