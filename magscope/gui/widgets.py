@@ -414,11 +414,14 @@ class BeadGraphic(QGraphicsRectItem):
         self.id: int = id
         self._is_moving: bool = False
         self._locked: bool
+        self._color_state: str = 'default'
         self.scene_rect = None
-        self.border_color_unlocked = (0, 255, 255, 255)
-        self.fill_color_unlocked = (0, 183, 235, 25)
-        self.border_color_locked = (255, 0, 0, 255)
-        self.fill_color_locked = (255, 0, 0, 25)
+        self.border_color_default = (0, 255, 255, 255)
+        self.fill_color_default = (0, 183, 235, 25)
+        self.border_color_selected = (255, 0, 0, 255)
+        self.fill_color_selected = (255, 0, 0, 25)
+        self.border_color_reference = (0, 255, 0, 255)
+        self.fill_color_reference = (0, 255, 0, 25)
         self.pen_width = 0
         self.width = width
 
@@ -468,19 +471,30 @@ class BeadGraphic(QGraphicsRectItem):
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, not locked)
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemSendsScenePositionChanges, not locked)
 
-        # Border
-        if locked:
-            pen = QPen(QColor(*self.border_color_locked))
+        # Color
+        self._apply_color()
+
+    def set_selection_state(self, state: str):
+        """Update the bead overlay color to match selection/reference state."""
+        self._color_state = state
+        self._apply_color()
+
+    def _apply_color(self):
+        if self._color_state == 'selected':
+            border_color = self.border_color_selected
+            fill_color = self.fill_color_selected
+        elif self._color_state == 'reference':
+            border_color = self.border_color_reference
+            fill_color = self.fill_color_reference
         else:
-            pen = QPen(QColor(*self.border_color_unlocked))
+            border_color = self.border_color_default
+            fill_color = self.fill_color_default
+
+        pen = QPen(QColor(*border_color))
         pen.setWidth(self.pen_width)
         self.setPen(pen)
 
-        # Fill
-        if locked:
-            brush = QBrush(QColor(*self.fill_color_locked))
-        else:
-            brush = QBrush(QColor(*self.fill_color_unlocked))
+        brush = QBrush(QColor(*fill_color))
         self.setBrush(brush)
 
     def move(self, dx, dy):

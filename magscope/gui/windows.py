@@ -50,6 +50,7 @@ class WindowManager(ManagerProcessBase):
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
+        self.reference_bead: int | None = None
         self._timer: QTimer | None = None
         self._video_buffer_last_index: int = 0
         self._video_viewer_need_reset: bool = True
@@ -156,6 +157,27 @@ class WindowManager(ManagerProcessBase):
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
             self.receive_ipc()
+
+
+    def set_selected_bead(self, bead: int):
+        self.selected_bead = bead
+        self._update_bead_highlights()
+
+    def set_reference_bead(self, bead: int | None):
+        self.reference_bead = bead
+        self._update_bead_highlights()
+
+    def _update_bead_highlights(self):
+        selected_id = self.selected_bead if self.selected_bead is not None and self.selected_bead >= 0 else None
+        reference_id = self.reference_bead if self.reference_bead is not None and self.reference_bead >= 0 else None
+
+        for bead_id, graphic in self._bead_graphics.items():
+            if bead_id == selected_id:
+                graphic.set_selection_state('selected')
+            elif bead_id == reference_id:
+                graphic.set_selection_state('reference')
+            else:
+                graphic.set_selection_state('default')
 
 
     @property
@@ -376,6 +398,9 @@ class WindowManager(ManagerProcessBase):
         self._bead_graphics[id] = graphic
         self._bead_next_id += 1
 
+        # Update highlight colors to reflect selection/reference
+        self._update_bead_highlights()
+
         # Update the bead ROIs
         self.update_bead_rois()
 
@@ -383,6 +408,9 @@ class WindowManager(ManagerProcessBase):
         # Update graphics
         graphic = self._bead_graphics.pop(id)
         graphic.remove()
+
+        # Update highlight colors to reflect selection/reference
+        self._update_bead_highlights()
 
         # Update bead ROIs
         rois = self._bead_rois

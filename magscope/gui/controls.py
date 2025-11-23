@@ -606,7 +606,7 @@ class PlotSettingsPanel(ControlPanelBase):
         except (TypeError, ValueError):
             bead = -1
         self.manager.plot_worker.selected_bead_signal.emit(bead)
-        self.manager.selected_bead = bead
+        self.manager.set_selected_bead(bead)
 
     def reference_bead_callback(self, value):
         value = self.reference_bead.lineedit.text()
@@ -615,6 +615,7 @@ class PlotSettingsPanel(ControlPanelBase):
         except (TypeError, ValueError):
             bead = -1
         self.manager.plot_worker.reference_bead_signal.emit(bead)
+        self.manager.set_reference_bead(bead)
 
     def limits_callback(self, _):
         limits_payload = {}
