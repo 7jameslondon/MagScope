@@ -48,19 +48,22 @@ class ControlPanelBase(QWidget):
         super().__init__()
         self.manager: WindowManager = manager
         self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(title=title)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.groupbox)
-        super().setLayout(layout)
-        self.setLayout(QVBoxLayout())
 
-    def set_title(self, text: str):
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(self.groupbox)
+        super().setLayout(outer_layout)
+
+        content_layout = QVBoxLayout()
+        self.setLayout(content_layout)
+
+    def set_title(self, text: str) -> None:
         self.groupbox.setTitle(text)
 
-    def setLayout(self, layout):
+    def setLayout(self, layout: QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout) -> None:  # noqa: N802
         self.groupbox.setContentLayout(layout)
 
-    def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:
+    def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:  # type: ignore[override]
         return self.groupbox.content_area.layout()
 
 
@@ -94,7 +97,7 @@ class HelpPanel(QFrame):
         layout.addWidget(self.title_label)
         layout.addWidget(self.description_label)
 
-        self._hovered = False
+        self._is_hovered = False
         self._apply_styles()
 
     def mouseReleaseEvent(self, event):
@@ -106,18 +109,18 @@ class HelpPanel(QFrame):
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
-        self._hovered = True
+        self._is_hovered = True
         self._apply_styles()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._hovered = False
+        self._is_hovered = False
         self._apply_styles()
         super().leaveEvent(event)
 
     def _apply_styles(self):
-        text_color = "black" if self._hovered else "white"
-        background_color = "white" if self._hovered else "transparent"
+        text_color = "black" if self._is_hovered else "white"
+        background_color = "white" if self._is_hovered else "transparent"
         self.setStyleSheet(
             f"""
             #HelpPanelFrame {{
@@ -137,53 +140,47 @@ class AcquisitionPanel(ControlPanelBase):
 
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Acquisition')
-        # --- Row 0 ---
-        self.row_zero_layout = QHBoxLayout()
-        self.layout().addLayout(self.row_zero_layout)
+        acquisition_controls_row = QHBoxLayout()
+        self.layout().addLayout(acquisition_controls_row)
 
-        # Acquisition On Checkbox
         self.acquisition_on_checkbox = LabeledCheckbox(
             label_text='Acquire',
             default=self.manager._acquisition_on,
             callback=self.callback_acquisition_on)
-        self.row_zero_layout.addWidget(self.acquisition_on_checkbox)
+        acquisition_controls_row.addWidget(self.acquisition_on_checkbox)
 
-        # Mode group selection
-        mode_layout = QHBoxLayout()
-        self.row_zero_layout.addLayout(mode_layout)
-        mode_label = QLabel('Mode:')
-        mode_layout.addWidget(mode_label)
+        mode_selection_layout = QHBoxLayout()
+        acquisition_controls_row.addLayout(mode_selection_layout)
+        mode_selection_label = QLabel('Mode:')
+        mode_selection_layout.addWidget(mode_selection_label)
         self.acquisition_mode_combobox = QComboBox()
-        mode_layout.addWidget(self.acquisition_mode_combobox, stretch=1)
-        modes = [
+        mode_selection_layout.addWidget(self.acquisition_mode_combobox, stretch=1)
+        acquisition_modes = [
             AcquisitionMode.TRACK,
             AcquisitionMode.TRACK_AND_CROP_VIDEO,
             AcquisitionMode.TRACK_AND_FULL_VIDEO,
             AcquisitionMode.CROP_VIDEO,
             AcquisitionMode.FULL_VIDEO,
         ]
-        for mode in modes:
+        for mode in acquisition_modes:
             self.acquisition_mode_combobox.addItem(mode)
         self.acquisition_mode_combobox.setCurrentText(self.manager._acquisition_mode)
         self.acquisition_mode_combobox.currentIndexChanged.connect(
             self.callback_acquisition_mode)  # type: ignore
 
-        # --- Row 1 ---
-        self.row_one_layout = QHBoxLayout()
-        self.layout().addLayout(self.row_one_layout)
+        save_controls_row = QHBoxLayout()
+        self.layout().addLayout(save_controls_row)
 
-        # Acquisition Directory On Checkbox
         self.acquisition_dir_on_checkbox = LabeledCheckbox(
             label_text='Save',
             default=self.manager._acquisition_dir_on,
             callback=self.callback_acquisition_dir_on)
-        self.row_one_layout.addWidget(self.acquisition_dir_on_checkbox)
+        save_controls_row.addWidget(self.acquisition_dir_on_checkbox)
 
-        # Acquisition - Folder selector
         self.acquisition_dir_button = QPushButton('Select Directory to Save To')
         self.acquisition_dir_button.setMinimumWidth(200)
         self.acquisition_dir_button.clicked.connect(self.callback_acquisition_dir)  # type: ignore
-        self.row_one_layout.addWidget(self.acquisition_dir_button)
+        save_controls_row.addWidget(self.acquisition_dir_button)
 
         self.acquisition_dir_textedit = QTextEdit(self.NO_DIRECTORY_SELECTED_TEXT)
         self.acquisition_dir_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -194,41 +191,49 @@ class AcquisitionPanel(ControlPanelBase):
         self.layout().addWidget(self.acquisition_dir_textedit)
 
     def callback_acquisition_on(self):
-        value: bool = self.acquisition_on_checkbox.checkbox.isChecked()
+        is_enabled: bool = self.acquisition_on_checkbox.checkbox.isChecked()
         self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, value))
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, is_enabled))
 
     def callback_acquisition_dir_on(self):
-        value: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
+        should_save: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
         self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir_on, value))
+            Message(
+                ManagerProcessBase,
+                ManagerProcessBase.set_acquisition_dir_on,
+                should_save,
+            ))
 
     def callback_acquisition_mode(self):
-        value: AcquisitionMode = self.acquisition_mode_combobox.currentText()
+        selected_mode: AcquisitionMode = self.acquisition_mode_combobox.currentText()
         self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, value))
+            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, selected_mode))
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
-        last_value = settings.value(
+        last_directory = settings.value(
             'last acquisition_dir',
             os.path.expanduser("~"),
             type=str
         )
-        value = QFileDialog.getExistingDirectory(
+        selected_directory = QFileDialog.getExistingDirectory(
             None,
             'Select Folder',
-            last_value)
+            last_directory)
 
-        if value:
-            self.acquisition_dir_textedit.setText(value)
-            settings.setValue('last acquisition_dir', QVariant(value))
+        if selected_directory:
+            self.acquisition_dir_textedit.setText(selected_directory)
+            settings.setValue('last acquisition_dir', QVariant(selected_directory))
         else:
-            value = None
+            selected_directory = None
             self.acquisition_dir_textedit.setText(self.NO_DIRECTORY_SELECTED_TEXT)
 
         self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_dir, value))
+            Message(
+                ManagerProcessBase,
+                ManagerProcessBase.set_acquisition_dir,
+                selected_directory,
+            ))
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -246,40 +251,40 @@ class BeadSelectionPanel(ControlPanelBase):
         self.layout().addWidget(QLabel(instructions))
 
         # ROI
-        row = QHBoxLayout()
-        self.layout().addLayout(row)
-        row.addWidget(QLabel('Current bead-ROI:'))
+        roi_row = QHBoxLayout()
+        self.layout().addLayout(roi_row)
+        roi_row.addWidget(QLabel('Current bead-ROI:'))
         roi = self.manager.settings['bead roi width']
         self.roi_size_label = QLabel(f'{roi} x {roi} pixels')
-        row.addWidget(self.roi_size_label)
-        row.addStretch(1)
+        roi_row.addWidget(self.roi_size_label)
+        roi_row.addStretch(1)
 
         # Row
-        row = QHBoxLayout()
-        self.layout().addLayout(row)
+        button_row = QHBoxLayout()
+        self.layout().addLayout(button_row)
 
         # Lock/Unlock
         self.lock_button = QPushButton('🔓')
         self.lock_button.setCheckable(True)
-        self.lock_button.setStyleSheet("""
+        self.lock_button.setStyleSheet(
+            """
             QPushButton:checked {
             background-color: #333;
             }""")
         self.lock_button.clicked.connect(self.callback_lock)  # type: ignore
-        row.addWidget(self.lock_button)
+        button_row.addWidget(self.lock_button)
 
         # Remove All Beads
         self.clear_button = QPushButton('Remove All Beads')
         self.clear_button.setEnabled(True)
         self.clear_button.clicked.connect(self.manager.clear_beads)  # type: ignore
-        row.addWidget(self.clear_button)
+        button_row.addWidget(self.clear_button)
 
     def callback_lock(self):
-        locked = self.lock_button.isChecked()
-        text = '🔒' if locked else '🔓'
-        self.lock_button.setText(text)
-        self.clear_button.setEnabled(not locked)
-        self.manager.lock_beads(locked)
+        is_locked = self.lock_button.isChecked()
+        self.lock_button.setText('🔒' if is_locked else '🔓')
+        self.clear_button.setEnabled(not is_locked)
+        self.manager.lock_beads(is_locked)
 
 
 class CameraPanel(ControlPanelBase):
@@ -289,16 +294,14 @@ class CameraPanel(ControlPanelBase):
 
         self.layout().setSpacing(2)
 
-        # Individual controls
         self.settings = {}
-        for name in self.manager.camera_type.settings:
-            self.settings[name] = LabeledLineEditWithValue(
-                label_text=name,
+        for setting_name in self.manager.camera_type.settings:
+            self.settings[setting_name] = LabeledLineEditWithValue(
+                label_text=setting_name,
                 widths=(0, 100, 50),
-                callback=lambda n=name: self.callback_set_camera_setting(n))
-            self.layout().addWidget(self.settings[name])
+                callback=lambda n=setting_name: self.callback_set_camera_setting(n))
+            self.layout().addWidget(self.settings[setting_name])
 
-        # Refresh button
         self.refresh_button = QPushButton('↺')
         self.refresh_button.setFlat(True)
         self.refresh_button.setStyleSheet("QPushButton { border: none; background: transparent; padding: 0; }")
@@ -314,15 +317,15 @@ class CameraPanel(ControlPanelBase):
             self.manager.send_ipc(message)
 
     def callback_set_camera_setting(self, name):
-        value = self.settings[name].lineedit.text()
-        if not value:
+        setting_value = self.settings[name].lineedit.text()
+        if not setting_value:
             return
         self.settings[name].lineedit.setText('')
         self.settings[name].value_label.setText('')
         from magscope import CameraManager
         message = Message(to=CameraManager,
                           meth=CameraManager.set_camera_setting,
-                          args=(name, value))
+                          args=(name, setting_value))
         self.manager.send_ipc(message)
         
     def update_camera_setting(self, name: str, value: str):
@@ -338,21 +341,19 @@ class HistogramPanel(ControlPanelBase):
         self._update_last_time: float = 0
 
         # ===== First Row ===== #
-        row_1 = QHBoxLayout()
-        self.layout().addLayout(row_1)
+        controls_row = QHBoxLayout()
+        self.layout().addLayout(controls_row)
 
-        # Enable
-        self.enable = LabeledCheckbox(
+        self.enable_checkbox = LabeledCheckbox(
             label_text='Enabled',
             callback=self.clear,
             widths=(50, 0),
             default=False)
-        row_1.addWidget(self.enable)
+        controls_row.addWidget(self.enable_checkbox)
 
-        # Only beads
-        self.only_beads = LabeledCheckbox(
+        self.only_beads_checkbox = LabeledCheckbox(
             label_text='Only Bead ROIs', default=False)
-        row_1.addWidget(self.only_beads)
+        controls_row.addWidget(self.only_beads_checkbox)
 
         # ===== Plot ===== #
         self.n_bins = 256
@@ -383,22 +384,20 @@ class HistogramPanel(ControlPanelBase):
         self.layout().addWidget(self.canvas)
 
     def update_plot(self, data):
-        # Check if it's enabled
-        if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
+        if not self.enable_checkbox.checkbox.isChecked() or self.groupbox.collapsed:
             return
 
-        # Check if it has been enough time
         current_time = time.time()
         if current_time - self._update_last_time < self.update_interval:
             return
         self._update_last_time = current_time
 
-        dtype = self.manager.camera_type.dtype
-        max_int = 2 ** self.manager.camera_type.bits
-        shape = self.manager.video_buffer.image_shape
-        image = np.frombuffer(data, dtype).reshape(shape)
+        image_dtype = self.manager.camera_type.dtype
+        max_intensity = 2 ** self.manager.camera_type.bits
+        image_shape = self.manager.video_buffer.image_shape
+        image = np.frombuffer(data, image_dtype).reshape(image_shape)
 
-        if self.only_beads.checkbox.isChecked():
+        if self.only_beads_checkbox.checkbox.isChecked():
             bead_rois = self.manager._bead_rois
             if len(bead_rois) > 0:
                 image = crop_stack_to_rois(
@@ -407,20 +406,16 @@ class HistogramPanel(ControlPanelBase):
                 self.clear()
                 return
 
-        # Perform histogram binning
-        counts, _ = np.histogram(image, bins=256, range=(0, max_int))
+        counts, _ = np.histogram(image, bins=256, range=(0, max_intensity))
         # fast safe log to prevent log(0)
         counts = np.log(counts + 1)
 
-        # Update the plot with the new bin counts
         for count, rect in zip(counts, self.bars.patches):
             rect.set_height(count)
 
-        # Update y-limit
         max_count = counts.max() if len(counts) > 0 else 1
         self.axes.set_ylim(0, max_count * 1.1)
 
-        # Re-draw the graphic
         self.canvas.draw()
 
     def clear(self):
@@ -456,38 +451,38 @@ class PlotSettingsPanel(ControlPanelBase):
         self.layout().addLayout(self.grid_layout)
 
         # First row of labels
-        r = 0
+        row_index = 0
         limit_label_font = QFont()
         limit_label_font.setBold(True)
         limit_label = QLabel('Limits')
         limit_label.setFont(limit_label_font)
-        self.grid_layout.addWidget(limit_label, r, 0)
-        self.grid_layout.addWidget(QLabel('Min'), r, 1)
-        self.grid_layout.addWidget(QLabel('Max'), r, 2)
+        self.grid_layout.addWidget(limit_label, row_index, 0)
+        self.grid_layout.addWidget(QLabel('Min'), row_index, 1)
+        self.grid_layout.addWidget(QLabel('Max'), row_index, 2)
 
         # One row for each y-axis
         for _, plot in enumerate(self.manager.plot_worker.plots):
-            r += 1
+            row_index += 1
             ylabel = plot.ylabel
             self.limits[ylabel] = (QLineEdit(), QLineEdit())
             self.limits[ylabel][0].textChanged.connect(self.limits_callback)
             self.limits[ylabel][1].textChanged.connect(self.limits_callback)
             self.limits[ylabel][0].setPlaceholderText('auto')
             self.limits[ylabel][1].setPlaceholderText('auto')
-            self.grid_layout.addWidget(QLabel(ylabel), r, 0)
-            self.grid_layout.addWidget(self.limits[ylabel][0], r, 1)
-            self.grid_layout.addWidget(self.limits[ylabel][1], r, 2)
+            self.grid_layout.addWidget(QLabel(ylabel), row_index, 0)
+            self.grid_layout.addWidget(self.limits[ylabel][0], row_index, 1)
+            self.grid_layout.addWidget(self.limits[ylabel][1], row_index, 2)
 
         # Last row for "Time"
-        r += 1
+        row_index += 1
         self.limits['Time'] = (QLineEdit(), QLineEdit())
         self.limits['Time'][0].textChanged.connect(self.limits_callback)
         self.limits['Time'][1].textChanged.connect(self.limits_callback)
         self.limits['Time'][0].setPlaceholderText('auto')
         self.limits['Time'][1].setPlaceholderText('auto')
-        self.grid_layout.addWidget(QLabel('Time (H:M:S)'), r, 0)
-        self.grid_layout.addWidget(self.limits['Time'][0], r, 1)
-        self.grid_layout.addWidget(self.limits['Time'][1], r, 2)
+        self.grid_layout.addWidget(QLabel('Time (H:M:S)'), row_index, 0)
+        self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
+        self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
 
         # Show beads on view
         self.beads_in_view_on = LabeledCheckbox(
@@ -530,7 +525,7 @@ class PlotSettingsPanel(ControlPanelBase):
         self.manager.plot_worker.reference_bead_signal.emit(bead)
 
     def limits_callback(self, _):
-        limits = {}
+        limits_payload = {}
         today = datetime.date.today()
         for axis_label, limit in self.limits.items():
             raw_values = [limit[0].text(), limit[1].text()]
@@ -551,8 +546,8 @@ class PlotSettingsPanel(ControlPanelBase):
                     except (TypeError, ValueError):
                         parsed_value = None
                 parsed_limits.append(parsed_value)
-            limits[axis_label] = tuple(parsed_limits)
-        self.manager.plot_worker.limits_signal.emit(limits)
+            limits_payload[axis_label] = tuple(parsed_limits)
+        self.manager.plot_worker.limits_signal.emit(limits_payload)
 
     def beads_in_view_on_callback(self):
         value = self.beads_in_view_on.checkbox.isChecked()
@@ -587,11 +582,11 @@ class ProfilePanel(ControlPanelBase):
         self.layout().addWidget(self.enable)
 
         # Selected bead
-        row = QHBoxLayout()
-        self.layout().addLayout(row)
-        row.addWidget(QLabel('Selected bead:'))
+        selected_bead_row = QHBoxLayout()
+        self.layout().addLayout(selected_bead_row)
+        selected_bead_row.addWidget(QLabel('Selected bead:'))
         self.selected_bead_label = QLabel('')
-        row.addWidget(self.selected_bead_label)
+        selected_bead_row.addWidget(self.selected_bead_label)
 
         # Figure
         self.figure = Figure(dpi=100, facecolor='#1e1e1e')
@@ -612,53 +607,39 @@ class ProfilePanel(ControlPanelBase):
         self.line, = self.axes.plot([], [], 'w')
 
     def update_plot(self):
-        # Is enabled?
         if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
             return
 
-        # Get the selected bead
         selected_bead = self.manager.selected_bead
         if selected_bead == -1:
             self.selected_bead_label.setText('')
         else:
             self.selected_bead_label.setText(str(selected_bead))
 
-        # Get timestamps, bead-IDs and profiles from buffer data
-        data = self.manager.profiles_buffer.peak_unsorted()
-        t = data[:, 0]
-        b = data[:, 1]
-        p = data[:, 2:]
+        buffer_data = self.manager.profiles_buffer.peak_unsorted()
+        timestamps = buffer_data[:, 0]
+        bead_ids = buffer_data[:, 1]
+        profiles = buffer_data[:, 2:]
 
-        # Get data from the selected bead
-        sel = b == selected_bead
-        t = t[sel]
-        p = p[sel]
+        bead_selection = bead_ids == selected_bead
+        timestamps = timestamps[bead_selection]
+        profiles = profiles[bead_selection]
 
-        # Check there is data
-        if len(t) > 0:
+        if len(timestamps) > 0:
+            latest_profile = profiles[np.argmax(timestamps), :]
+            cleaned_profile = latest_profile[np.isfinite(latest_profile)]
+            radial_distances = np.arange(len(cleaned_profile))
 
-            # Find the most recent timepoints
-            p = p[np.argmax(t), :]
+            self.line.set_xdata(radial_distances)
+            self.line.set_ydata(cleaned_profile)
 
-            # Remove non-finite values from the profile (such as "nan")
-            p = p[np.isfinite(p)]
-
-            # Create array of radial distances
-            r = np.arange(len(p))
-
-            # Update the plot data
-            self.line.set_xdata(r)
-            self.line.set_ydata(p)
-
-            # Update the plot axis limits (if the plot has data)
-            if len(p) > 0:
-                self.axes.set_xlim(0, max(r))
-                self.axes.set_ylim(0, max(p))
+            if len(cleaned_profile) > 0:
+                self.axes.set_xlim(0, max(radial_distances))
+                self.axes.set_ylim(0, max(cleaned_profile))
         else:
             self.line.set_xdata([])
             self.line.set_ydata([])
 
-        # Re-draw the plot
         self.canvas.draw()
 
     def clear(self):
@@ -674,10 +655,9 @@ class ScriptPanel(ControlPanelBase):
     def __init__(self, manager: 'WindowManager'):
         super().__init__(manager=manager, title='Scripting')
 
-        # Status
-        self.status_base_text = 'Status'
-        self.status = QLabel('Status: Empty')
-        self.layout().addWidget(self.status)
+        self.status_prefix = 'Status'
+        self.status_label = QLabel('Status: Empty')
+        self.layout().addWidget(self.status_label)
 
         # Button Layout
         self.button_layout = QHBoxLayout()
@@ -706,7 +686,7 @@ class ScriptPanel(ControlPanelBase):
         self.layout().addWidget(self.filepath_textedit)
 
     def update_status(self, status: ScriptStatus):
-        self.status.setText(f'{self.status_base_text}: {status}')
+        self.status_label.setText(f'{self.status_prefix}: {status}')
         if status == ScriptStatus.PAUSED:
             self.pause_button.setText('Resume')
         else:
@@ -718,24 +698,24 @@ class ScriptPanel(ControlPanelBase):
 
     def callback_load(self):
         settings = QSettings('MagScope', 'MagScope')
-        last_value = settings.value(
+        last_script_path = settings.value(
             'last script filepath',
             os.path.expanduser("~"),
             type=str
         )
-        path, _ = QFileDialog.getOpenFileName(None,
-                                              'Select Script File',
-                                              last_value,
-                                              'Script (*.py)')
+        script_path, _ = QFileDialog.getOpenFileName(None,
+                                                     'Select Script File',
+                                                     last_script_path,
+                                                     'Script (*.py)')
 
-        message = Message(ScriptManager, ScriptManager.load_script, path)
+        message = Message(ScriptManager, ScriptManager.load_script, script_path)
         self.manager.send_ipc(message)
 
-        if not path:  # user selected cancel
-            path = self.NO_SCRIPT_SELECTED_TEXT
+        if not script_path:  # user selected cancel
+            script_path = self.NO_SCRIPT_SELECTED_TEXT
         else:
-            settings.setValue('last script filepath', QVariant(path))
-        self.filepath_textedit.setText(path)
+            settings.setValue('last script filepath', QVariant(script_path))
+        self.filepath_textedit.setText(script_path)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def callback_start(self):
@@ -756,7 +736,7 @@ class StatusPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Status')
 
         self.layout().setSpacing(0)
-        self.dot = 0
+        self.dot_count = 0
 
         # GUI display rate
         self.display_rate_status = QLabel()
@@ -781,17 +761,20 @@ class StatusPanel(ControlPanelBase):
         self.layout().addWidget(self.video_buffer_purge_label)
 
     def update_display_rate(self, text):
-        self.dot = (self.dot + 1) % 4
-        dot_text = '.' * self.dot
+        self.dot_count = (self.dot_count + 1) % 4
+        dot_text = '.' * self.dot_count
         self.display_rate_status.setText(f'Display Rate: {text} {dot_text}')
 
-    def update_video_processors_status(self, text):
-        self.video_processors_status.setText(f'Video Processors: {text}')
+    def update_video_processors_status(self, status_text: str):
+        self.video_processors_status.setText(f'Video Processors: {status_text}')
 
-    def update_video_buffer_status(self, text):
-        self.video_buffer_status.setText(f'Video Buffer: {text}')
-        value = int(text.split('%')[0])
-        self.video_buffer_status_bar.setValue(value)
+    def update_video_buffer_status(self, status_text: str):
+        self.video_buffer_status.setText(f'Video Buffer: {status_text}')
+        try:
+            percent_full = int(status_text.split('%')[0])
+        except (ValueError, IndexError):
+            percent_full = 0
+        self.video_buffer_status_bar.setValue(percent_full)
 
     def _update_video_buffer_size_label(self) -> None:
         video_buffer = getattr(self.manager, 'video_buffer', None)
@@ -802,8 +785,8 @@ class StatusPanel(ControlPanelBase):
         size_mb = video_buffer.buffer_size / 1e6
         self.video_buffer_size_status.setText(f'Video Buffer Size: {size_mb:.1f} MB')
 
-    def update_video_buffer_purge(self, t: float):
-        timestamp_text = time.strftime("%I:%M:%S %p", time.localtime(t))
+    def update_video_buffer_purge(self, timestamp: float):
+        timestamp_text = time.strftime("%I:%M:%S %p", time.localtime(timestamp))
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {timestamp_text}')
 
 
@@ -821,21 +804,20 @@ class XYLockPanel(ControlPanelBase):
         note.setWordWrap(True)
         self.layout().addWidget(note)
 
-        # Row 1
-        row_1 = QHBoxLayout()
-        self.layout().addLayout(row_1)
+        controls_row = QHBoxLayout()
+        self.layout().addLayout(controls_row)
 
         # Enabled
         self.enabled = LabeledCheckbox(
             label_text='Enabled',
             callback=self.enabled_callback,
         )
-        row_1.addWidget(self.enabled)
+        controls_row.addWidget(self.enabled)
 
         # Once
         once = QPushButton('Once')
         once.clicked.connect(self.once_callback)
-        row_1.addWidget(once)
+        controls_row.addWidget(once)
 
         # Interval
         default_interval = self.manager.settings['xy-lock default interval']
@@ -868,10 +850,10 @@ class XYLockPanel(ControlPanelBase):
         self.layout().addWidget(self.window)
 
     def enabled_callback(self):
-        value = self.enabled.checkbox.isChecked()
+        is_enabled = self.enabled.checkbox.isChecked()
 
         # Change panel background color
-        if value:
+        if is_enabled:
             self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
         else:
             self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
@@ -881,7 +863,7 @@ class XYLockPanel(ControlPanelBase):
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_xy_lock_on,
-            args=(value,),
+            args=(is_enabled,),
         )
         self.manager.send_ipc(message)
 
@@ -1049,10 +1031,10 @@ class ZLockPanel(ControlPanelBase):
         self.layout().addWidget(self.max)
 
     def enabled_callback(self):
-        value = self.enabled.checkbox.isChecked()
+        is_enabled = self.enabled.checkbox.isChecked()
 
         # Change panel background color
-        if value:
+        if is_enabled:
             self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
         else:
             self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
@@ -1062,7 +1044,7 @@ class ZLockPanel(ControlPanelBase):
         message = Message(
             to=BeadLockManager,
             meth=BeadLockManager.set_z_lock_on,
-            args=(value,),
+            args=(is_enabled,),
         )
         self.manager.send_ipc(message)
 
@@ -1190,25 +1172,25 @@ class ZLUTGenerationPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Z-LUT Generation')
 
         # ROI
-        row = QHBoxLayout()
-        self.layout().addLayout(row)
-        row.addWidget(QLabel('Current bead-ROI:'))
+        roi_row = QHBoxLayout()
+        self.layout().addLayout(roi_row)
+        roi_row.addWidget(QLabel('Current bead-ROI:'))
         roi = self.manager.settings['bead roi width']
         self.roi_size_label = QLabel(f'{roi} x {roi} pixels')
-        row.addWidget(self.roi_size_label)
-        row.addStretch(1)
+        roi_row.addWidget(self.roi_size_label)
+        roi_row.addStretch(1)
 
         # Start
-        self.start = LabeledLineEdit(label_text='Start (nm):')
-        self.layout().addWidget(self.start)
+        self.start_input = LabeledLineEdit(label_text='Start (nm):')
+        self.layout().addWidget(self.start_input)
 
         # Step
-        self.step = LabeledLineEdit(label_text='Step (nm):')
-        self.layout().addWidget(self.step)
+        self.step_input = LabeledLineEdit(label_text='Step (nm):')
+        self.layout().addWidget(self.step_input)
 
         # Stop
-        self.stop = LabeledLineEdit(label_text='Stop (nm):')
-        self.layout().addWidget(self.stop)
+        self.stop_input = LabeledLineEdit(label_text='Stop (nm):')
+        self.layout().addWidget(self.stop_input)
 
         # Generate button
         button = QPushButton('Generate')
@@ -1217,30 +1199,30 @@ class ZLUTGenerationPanel(ControlPanelBase):
 
     def generate_callback(self):
         # Start
-        start = self.start.lineedit.text()
+        start_text = self.start_input.lineedit.text()
         try:
-            start = float(start)
+            start_nm = float(start_text)
         except ValueError:
             return
 
         # Step
-        step = self.step.lineedit.text()
+        step_text = self.step_input.lineedit.text()
         try:
-            step = float(step)
+            step_nm = float(step_text)
         except ValueError:
             return
 
         # Stop
-        stop = self.stop.lineedit.text()
+        stop_text = self.stop_input.lineedit.text()
         try:
-            stop = float(stop)
+            stop_nm = float(stop_text)
         except ValueError:
             return
 
         # Output file name
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
         roi = self.manager.settings['bead roi width']
-        filename = f'Z-LUT {timestamp} {roi} {start:.0f} {step:.0f} {stop:.0f}.txt'
+        filename = f'Z-LUT {timestamp} {roi} {start_nm:.0f} {step_nm:.0f} {stop_nm:.0f}.txt'
 
         raise NotImplementedError
 
