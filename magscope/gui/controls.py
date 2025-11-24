@@ -35,9 +35,16 @@ from magscope.gui import (
     LabeledLineEditWithValue,
 )
 from magscope.gui.widgets import FlashLabel
-from magscope.processes import ManagerProcessBase
-from magscope.scripting import ScriptManager, ScriptStatus
-from magscope.utils import AcquisitionMode, Message, crop_stack_to_rois
+from magscope.ipc_commands import (ExecuteXYLockCommand, GetCameraSettingCommand,
+                                   LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
+                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
+                                   SetAcquisitionModeCommand, SetAcquisitionOnCommand,
+                                   SetCameraSettingCommand, SetXYLockIntervalCommand,
+                                   SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
+                                   SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
+                                   SetZLockOnCommand, SetZLockTargetCommand, StartScriptCommand)
+from magscope.scripting import ScriptStatus
+from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
@@ -267,22 +274,18 @@ class AcquisitionPanel(ControlPanelBase):
 
     def callback_acquisition_on(self):
         is_enabled: bool = self.acquisition_on_checkbox.checkbox.isChecked()
-        self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_on, is_enabled))
+        command = SetAcquisitionOnCommand(value=is_enabled)
+        self.manager.send_ipc(command)
 
     def callback_acquisition_dir_on(self):
         should_save: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
-        self.manager.send_ipc(
-            Message(
-                ManagerProcessBase,
-                ManagerProcessBase.set_acquisition_dir_on,
-                should_save,
-            ))
+        command = SetAcquisitionDirOnCommand(value=should_save)
+        self.manager.send_ipc(command)
 
     def callback_acquisition_mode(self):
         selected_mode: AcquisitionMode = self.acquisition_mode_combobox.currentText()
-        self.manager.send_ipc(
-            Message(ManagerProcessBase, ManagerProcessBase.set_acquisition_mode, selected_mode))
+        command = SetAcquisitionModeCommand(mode=selected_mode)
+        self.manager.send_ipc(command)
 
     def callback_acquisition_dir(self):
         settings = QSettings('MagScope', 'MagScope')
@@ -303,12 +306,8 @@ class AcquisitionPanel(ControlPanelBase):
             selected_directory = None
             self.acquisition_dir_textedit.setText(self.NO_DIRECTORY_SELECTED_TEXT)
 
-        self.manager.send_ipc(
-            Message(
-                ManagerProcessBase,
-                ManagerProcessBase.set_acquisition_dir,
-                selected_directory,
-            ))
+        command = SetAcquisitionDirCommand(value=selected_directory)
+        self.manager.send_ipc(command)
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -395,11 +394,8 @@ class CameraPanel(ControlPanelBase):
 
     def callback_refresh(self):
         for name in self.manager.camera_type.settings:
-            from magscope import CameraManager
-            message = Message(to=CameraManager,
-                              meth=CameraManager.get_camera_setting,
-                              args=(name,))
-            self.manager.send_ipc(message)
+            command = GetCameraSettingCommand(name=name)
+            self.manager.send_ipc(command)
 
     def callback_set_camera_setting(self, name):
         setting_value = self.settings[name].lineedit.text()
@@ -407,11 +403,8 @@ class CameraPanel(ControlPanelBase):
             return
         self.settings[name].lineedit.setText('')
         self.settings[name].value_label.setText('')
-        from magscope import CameraManager
-        message = Message(to=CameraManager,
-                          meth=CameraManager.set_camera_setting,
-                          args=(name, setting_value))
-        self.manager.send_ipc(message)
+        command = SetCameraSettingCommand(name=name, value=setting_value)
+        self.manager.send_ipc(command)
         
     def update_camera_setting(self, name: str, value: str):
         self.settings[name].value_label.setText(value)
@@ -801,8 +794,8 @@ class ScriptPanel(ControlPanelBase):
                                                      last_script_path,
                                                      'Script (*.py)')
 
-        message = Message(ScriptManager, ScriptManager.load_script, script_path)
-        self.manager.send_ipc(message)
+        command = LoadScriptCommand(path=script_path)
+        self.manager.send_ipc(command)
 
         if not script_path:  # user selected cancel
             script_path = self.NO_SCRIPT_SELECTED_TEXT
@@ -812,16 +805,16 @@ class ScriptPanel(ControlPanelBase):
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def callback_start(self):
-        message = Message(ScriptManager, ScriptManager.start_script)
-        self.manager.send_ipc(message)
+        command = StartScriptCommand()
+        self.manager.send_ipc(command)
 
     def callback_pause(self):
         if self.pause_button.text() == 'Pause':
-            message = Message(ScriptManager, ScriptManager.pause_script)
-            self.manager.send_ipc(message)
+            command = PauseScriptCommand()
+            self.manager.send_ipc(command)
         else:
-            message = Message(ScriptManager, ScriptManager.resume_script)
-            self.manager.send_ipc(message)
+            command = ResumeScriptCommand()
+            self.manager.send_ipc(command)
 
 
 class StatusPanel(ControlPanelBase):
@@ -952,21 +945,12 @@ class XYLockPanel(ControlPanelBase):
             self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_xy_lock_on,
-            args=(is_enabled,),
-        )
-        self.manager.send_ipc(message)
+        command = SetXYLockOnCommand(value=is_enabled)
+        self.manager.send_ipc(command)
 
     def once_callback(self):
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.do_xy_lock,
-        )
-        self.manager.send_ipc(message)
+        command = ExecuteXYLockCommand()
+        self.manager.send_ipc(command)
 
     def interval_callback(self):
         # Get value
@@ -982,13 +966,8 @@ class XYLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_xy_lock_interval,
-            args=(interval_seconds,),
-        )
-        self.manager.send_ipc(message)
+        command = SetXYLockIntervalCommand(value=interval_seconds)
+        self.manager.send_ipc(command)
 
     def max_callback(self):
         # Get value
@@ -1004,13 +983,8 @@ class XYLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_xy_lock_max,
-            args=(max_distance,),
-        )
-        self.manager.send_ipc(message)
+        command = SetXYLockMaxCommand(value=max_distance)
+        self.manager.send_ipc(command)
 
     def window_callback(self):
         # Get value
@@ -1026,13 +1000,8 @@ class XYLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_xy_lock_window,
-            args=(window_size,),
-        )
-        self.manager.send_ipc(message)
+        command = SetXYLockWindowCommand(value=window_size)
+        self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
         # Set checkbox
@@ -1133,13 +1102,8 @@ class ZLockPanel(ControlPanelBase):
             self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_z_lock_on,
-            args=(is_enabled,),
-        )
-        self.manager.send_ipc(message)
+        command = SetZLockOnCommand(value=is_enabled)
+        self.manager.send_ipc(command)
 
     def bead_callback(self):
         # Get value
@@ -1155,13 +1119,8 @@ class ZLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_z_lock_bead,
-            args=(bead_index,),
-        )
-        self.manager.send_ipc(message)
+        command = SetZLockBeadCommand(value=bead_index)
+        self.manager.send_ipc(command)
 
     def target_callback(self):
         # Get value
@@ -1175,13 +1134,8 @@ class ZLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_z_lock_target,
-            args=(target_nm,),
-        )
-        self.manager.send_ipc(message)
+        command = SetZLockTargetCommand(value=target_nm)
+        self.manager.send_ipc(command)
 
     def interval_callback(self):
         # Get value
@@ -1197,13 +1151,8 @@ class ZLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_z_lock_interval,
-            args=(interval_seconds,),
-        )
-        self.manager.send_ipc(message)
+        command = SetZLockIntervalCommand(value=interval_seconds)
+        self.manager.send_ipc(command)
 
     def max_callback(self):
         # Get value
@@ -1219,13 +1168,8 @@ class ZLockPanel(ControlPanelBase):
             return
 
         # Send value
-        from magscope.beadlock import BeadLockManager
-        message = Message(
-            to=BeadLockManager,
-            meth=BeadLockManager.set_z_lock_max,
-            args=(max_nm,),
-        )
-        self.manager.send_ipc(message)
+        command = SetZLockMaxCommand(value=max_nm)
+        self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
         # Set checkbox

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from math import copysign
 from time import time
@@ -10,6 +11,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
 from scipy.interpolate import PchipInterpolator
 
 import magscope
+from magscope.ipc_commands import Command, command_handler
 
 FORCE_CALIBRATION_PATH = r"C:\Users\lond11\Documents\MagScope and MagTrack\MagScope\force_calibrant.txt"
 
@@ -34,6 +36,26 @@ class ForceCalibration:
 
 
 force_calibration = ForceCalibration()
+
+
+@dataclass(frozen=True)
+class MoveLinearMotorCommand(Command):
+    target: float | None = None
+    speed: float | None = None
+
+
+@dataclass(frozen=True)
+class MoveLinearMotorForceCommand(Command):
+    target_force: float | None = None
+    speed: float | None = None
+
+
+@dataclass(frozen=True)
+class ForceRampCommand(Command):
+    a_force: float | None = None
+    b_force: float | None = None
+    rate: float | None = None
+    direction: int | None = None
 
 
 class FakeLinearMotor(magscope.HardwareManagerBase):
@@ -71,6 +93,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
             row = np.array([[now, self._fake_position, self.target, self.speed]])
             self._buffer.write(row)
 
+    @command_handler(MoveLinearMotorCommand)
     def move(self, target=None, speed=None):
         if target is not None:
             self.target = target
@@ -84,6 +107,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
 
         self.fake_pvt_on = False
 
+    @command_handler(MoveLinearMotorForceCommand)
     def move_force(self, target_force=None, speed=None):
         if target_force is not None:
             fake_target = self.force_calibration.force2motor(target_force)
@@ -100,6 +124,7 @@ class FakeLinearMotor(magscope.HardwareManagerBase):
 
         self.fake_pvt_on = False
 
+    @command_handler(ForceRampCommand)
     def force_ramp(self, a_force=None, b_force=None, rate=None, direction=None):
         if direction == 1:
             start = a_force
@@ -365,14 +390,9 @@ class LinearMotorControls(magscope.ControlPanelBase):
                 warn(f'Speed {speed} outside of range {FakeLinearMotor.speed_min_max}')
                 return
 
-        # Send inter-process message to motor
-        message = magscope.Message(
-            to=FakeLinearMotor,
-            meth=FakeLinearMotor.move,
-            target=target,
-            speed=speed,
-        )
-        self.manager.send_ipc(message)
+        # Send inter-process command to motor
+        command = MoveLinearMotorCommand(target=target, speed=speed)
+        self.manager.send_ipc(command)
 
     def callback_move_force(self):
         # Try to get target
@@ -391,14 +411,9 @@ class LinearMotorControls(magscope.ControlPanelBase):
                 warn(f'Speed {speed} outside of range {FakeLinearMotor.speed_min_max}')
                 return
 
-        # Send inter-process message to motor
-        message = magscope.Message(
-            to=FakeLinearMotor,
-            meth=FakeLinearMotor.move_force,
-            target_force=target_force,
-            speed=speed,
-        )
-        self.manager.send_ipc(message)
+        # Send inter-process command to motor
+        command = MoveLinearMotorForceCommand(target_force=target_force, speed=speed)
+        self.manager.send_ipc(command)
 
     def callback_force_ramp(self, direction: str):
         # Direction
@@ -419,16 +434,14 @@ class LinearMotorControls(magscope.ControlPanelBase):
         try: rate = float(rate)
         except ValueError: return
 
-        # Send inter-process message to motor
-        message = magscope.Message(
-            to=FakeLinearMotor,
-            meth=FakeLinearMotor.force_ramp,
+        # Send inter-process command to motor
+        command = ForceRampCommand(
             a_force=a_force,
             b_force=b_force,
             rate=rate,
             direction=direction,
         )
-        self.manager.send_ipc(message)
+        self.manager.send_ipc(command)
 
 
 class LinearMotorPlot(magscope.TimeSeriesPlotBase):

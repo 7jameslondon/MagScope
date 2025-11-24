@@ -19,8 +19,11 @@ from time import time
 from typing import Callable
 from warnings import warn
 
+from magscope.ipc_commands import (LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
+                                   StartScriptCommand, StartSleepCommand,
+                                   UpdateScriptStatusCommand, UpdateWaitingCommand, command_handler)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, registerwithscript
+from magscope.utils import registerwithscript
 
 
 class Script:
@@ -107,11 +110,13 @@ class ScriptRegistry:
             # Test is the method will be called with the correct arguments
             cls_name, meth_name, meth = self._methods[step_meth]
             try:
+                bind_kwargs = dict(step_kwargs)
+                bind_kwargs.pop('wait', None)
                 if inspect.ismethod(meth):
-                    inspect.signature(meth).bind(*step_args, **step_kwargs)
+                    inspect.signature(meth).bind(*step_args, **bind_kwargs)
                 else:
                     # "None" is used in place of "self" for unbound functions of class methods
-                    inspect.signature(meth).bind(None, *step_args, **step_kwargs)
+                    inspect.signature(meth).bind(None, *step_args, **bind_kwargs)
             except TypeError as e:
                 raise TypeError(f"Invalid arguments for {meth.__name__} to call {cls_name}.{meth_name}: {e}")
 
@@ -179,6 +184,7 @@ class ScriptManager(ManagerProcessBase):
             if self._script_index >= self._script_length:
                 self._set_script_status(ScriptStatus.FINISHED)
 
+    @command_handler(StartScriptCommand)
     def start_script(self):
         """Start the currently loaded script from the beginning."""
 
@@ -192,6 +198,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_index = 0
         self._set_script_status(ScriptStatus.RUNNING)
 
+    @command_handler(PauseScriptCommand)
     def pause_script(self):
         """Pause the running script."""
 
@@ -200,6 +207,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.PAUSED)
 
+    @command_handler(ResumeScriptCommand)
     def resume_script(self):
         """Resume a script that was previously paused."""
 
@@ -208,6 +216,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.RUNNING)
 
+    @command_handler(LoadScriptCommand)
     def load_script(self, path):
         """Load and validate a script from ``path``.
 
@@ -260,26 +269,31 @@ class ScriptManager(ManagerProcessBase):
     def _execute_script_step(self, step: tuple[str, tuple, dict]):
         """Dispatch a single script step to its owning manager."""
 
+        if self._command_registry is None:
+            raise RuntimeError("ScriptManager cannot dispatch commands without a registry")
+
         step_name: str = step[0]
         step_args: tuple = step[1]
-        step_kwargs: dict = step[2]
+        step_kwargs: dict = dict(step[2])
 
         cls_name, meth_name, meth = self.script_registry(step_name)
 
-        if wait := step_kwargs.get('wait', False):
+        if wait := step_kwargs.pop('wait', False):
             self._script_waiting = wait
 
-        # Special case
         if step_name == 'sleep':
             self._script_waiting = True
 
-        message = Message(cls_name, meth_name, *step_args, **step_kwargs)
-        self.send_ipc(message)
+        command_type = self._command_registry.command_for_handler(cls_name, meth_name)
+        command = command_type(*step_args, **step_kwargs)
+        self.send_ipc(command)
 
+    @command_handler(UpdateWaitingCommand)
     def update_waiting(self):
         """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False
 
+    @command_handler(StartSleepCommand)
     @registerwithscript('sleep')
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""
@@ -294,12 +308,6 @@ class ScriptManager(ManagerProcessBase):
 
     def _set_script_status(self, status):
         """Notify the GUI that the script status has changed."""
-        # local import to avoid circular imports
-        from magscope.gui import WindowManager
         self._script_status = status
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_script_status,
-            args=(status,)
-        )
-        self.send_ipc(message)
+        command = UpdateScriptStatusCommand(status=status)
+        self.send_ipc(command)

@@ -18,8 +18,11 @@ import numpy as np
 from magtrack.simulation import simulate_beads
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
+from magscope.ipc_commands import (GetCameraSettingCommand, SetCameraSettingCommand,
+                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand,
+                                   command_handler)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, PoolVideoFlag
+from magscope.utils import PoolVideoFlag
 
 
 class CameraManager(ManagerProcessBase):
@@ -77,15 +80,13 @@ class CameraManager(ManagerProcessBase):
                 self._release_pool_buffers()
                 self.shared_values.video_process_flag.value = PoolVideoFlag.READY
 
-        # Check if the video buffer is about to overflow
+            # Check if the video buffer is about to overflow
         fraction_available = (1 - self.video_buffer.get_level())
         frames_available = fraction_available * self.video_buffer.n_total_images
         if frames_available <= 1:
             self._purge_buffers()
-            # local import to avoid circular imports
-            from magscope.gui import WindowManager
-            message = Message(WindowManager, WindowManager.update_video_buffer_purge, time())
-            self.send_ipc(message)
+            command = UpdateVideoBufferPurgeCommand(t=time())
+            self.send_ipc(command)
 
         # Check for new images from the camera
         if self.camera.is_connected:
@@ -126,16 +127,14 @@ class CameraManager(ManagerProcessBase):
         for _ in range(self.video_buffer.stack_shape[2]):
             self.camera.release()
 
+    @command_handler(GetCameraSettingCommand)
     def get_camera_setting(self, name: str):
         """Send a camera setting value to the GUI via IPC."""
         value = self.camera[name]
-        # local import to avoid circular imports
-        from magscope.gui import WindowManager
-        message = Message(to=WindowManager,
-                          meth=WindowManager.update_camera_setting,
-                          args=(name, value))
-        self.send_ipc(message)
+        command = UpdateCameraSettingCommand(name=name, value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetCameraSettingCommand)
     def set_camera_setting(self, name: str, value: str):
         """Apply a setting to the camera and broadcast the full settings set."""
         try:

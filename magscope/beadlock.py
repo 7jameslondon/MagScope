@@ -3,9 +3,18 @@ from time import time
 
 import numpy as np
 
-from magscope.gui import WindowManager
+from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
+                                   RemoveBeadFromPendingMovesCommand, SetXYLockIntervalCommand,
+                                   SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
+                                   SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
+                                   SetZLockOnCommand, SetZLockTargetCommand,
+                                   UpdateXYLockEnabledCommand, UpdateXYLockIntervalCommand,
+                                   UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
+                                   UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
+                                   UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
+                                   UpdateZLockTargetCommand, command_handler)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import Message, registerwithscript
+from magscope.utils import registerwithscript
 
 
 class BeadLockManager(ManagerProcessBase):
@@ -51,6 +60,7 @@ class BeadLockManager(ManagerProcessBase):
             if (now:=time()) - self._z_lock_last_time > self.z_lock_interval:
                 self.do_z_lock(now=now)
 
+    @command_handler(ExecuteXYLockCommand)
     @registerwithscript('do_xy_lock')
     def do_xy_lock(self, now=None):
         """ Centers the bead-rois based on their tracked position """
@@ -115,12 +125,8 @@ class BeadLockManager(ManagerProcessBase):
             # Move the bead as needed
             if abs(dx) > 0. or abs(dy) > 0.:
                 self._xy_lock_pending_moves.append(id)
-                message = Message(
-                    to=WindowManager,
-                    meth=WindowManager.move_bead,
-                    args=(id, dx, dy)
-                )
-                self.send_ipc(message)
+                command = MoveBeadCommand(id=id, dx=dx, dy=dy)
+                self.send_ipc(command)
 
     @registerwithscript('do_z_lock')
     def do_z_lock(self, now=None):
@@ -157,117 +163,82 @@ class BeadLockManager(ManagerProcessBase):
 
             self._xy_lock_bead_cutoff[bead_id] = now
 
+    @command_handler(RemoveBeadFromPendingMovesCommand)
     def remove_bead_from_xy_lock_pending_moves(self, id: int):
         if id in self._xy_lock_pending_moves:
             self._xy_lock_pending_moves.remove(id)
 
+    @command_handler(SetXYLockOnCommand)
     @registerwithscript('set_xy_lock_on')
     def set_xy_lock_on(self, value: bool):
         self.xy_lock_on = value
         self._xy_lock_global_cutoff = time()
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_xy_lock_enabled,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateXYLockEnabledCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetXYLockIntervalCommand)
     @registerwithscript('set_xy_lock_interval')
     def set_xy_lock_interval(self, value: float):
         self.xy_lock_interval = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_xy_lock_interval,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateXYLockIntervalCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetXYLockMaxCommand)
     @registerwithscript('set_xy_lock_max')
     def set_xy_lock_max(self, value: float):
         value = max(1, round(value))
         self.xy_lock_max = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_xy_lock_max,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateXYLockMaxCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetXYLockWindowCommand)
     @registerwithscript('set_xy_lock_window')
     def set_xy_lock_window(self, value: int):
         self.xy_lock_window = max(1, int(value))
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_xy_lock_window,
-            args=(self.xy_lock_window,),
-        )
-        self.send_ipc(message)
+        command = UpdateXYLockWindowCommand(value=self.xy_lock_window)
+        self.send_ipc(command)
 
+    @command_handler(SetZLockOnCommand)
     @registerwithscript('set_z_lock_on')
     def set_z_lock_on(self, value: bool):
         self.z_lock_on = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_z_lock_enabled,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateZLockEnabledCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetZLockBeadCommand)
     @registerwithscript('set_z_lock_bead')
     def set_z_lock_bead(self, value: int):
         value = int(value)
         self.z_lock_bead = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_z_lock_bead,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateZLockBeadCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetZLockTargetCommand)
     @registerwithscript('set_z_lock_target')
     def set_z_lock_target(self, value: float):
         self.z_lock_target = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_z_lock_target,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateZLockTargetCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetZLockIntervalCommand)
     @registerwithscript('set_z_lock_interval')
     def set_z_lock_interval(self, value: float):
         self.z_lock_interval = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_z_lock_interval,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateZLockIntervalCommand(value=value)
+        self.send_ipc(command)
 
+    @command_handler(SetZLockMaxCommand)
     @registerwithscript('set_z_lock_max')
     def set_z_lock_max(self, value: float):
         self.z_lock_max = value
 
-        from magscope.gui import WindowManager
-        message = Message(
-            to=WindowManager,
-            meth=WindowManager.update_z_lock_max,
-            args=(value,)
-        )
-        self.send_ipc(message)
+        command = UpdateZLockMaxCommand(value=value)
+        self.send_ipc(command)

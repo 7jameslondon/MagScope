@@ -9,8 +9,8 @@ shutdown. Its responsibilities span the full application lifetime:
 * Constructing manager processes (camera, bead lock, GUI, scripting, video
   processing, and optional hardware integrations) and wiring them to shared
   locks, buffers, and IPC pipes.
-* Running the main IPC loop that forwards :class:`~magscope.utils.Message`
-  objects between processes and supervises orderly shutdown.
+* Running the main IPC loop that forwards typed IPC commands between processes
+  and supervises orderly shutdown.
 
 ``MagScope.start`` prepares the shared resources, registers scriptable hooks,
 starts each process, and then loops until a quit command is received.
@@ -59,10 +59,12 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
-from magscope.ipc import broadcast_message, create_pipes, drain_pipe_until_quit
+from magscope.ipc import broadcast_command, create_pipes, drain_pipe_until_quit
+from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
+                                   QuitCommand, SetSettingsCommand, command_handler,
+                                   command_kwargs)
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
-from magscope.utils import Message
 from magscope.videoprocessing import VideoProcessorManager
 
 logger = get_logger("scope")
@@ -97,6 +99,7 @@ class MagScope(metaclass=SingletonMeta):
         self._hardware: dict[str, HardwareManagerBase] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
         self.processes: dict[str, ManagerProcessBase] = {}
+        self.command_registry: CommandRegistry = CommandRegistry()
 
         self.locks: dict[str, LockType] = {}
         self.lock_names: list[str] = ['ProfilesBuffer', 'TracksBuffer', 'VideoBuffer']
@@ -161,14 +164,15 @@ class MagScope(metaclass=SingletonMeta):
             warn('MagScope is not running')
             return
 
-        quit_message = Message(ManagerProcessBase, ManagerProcessBase.quit)
-        self._handle_broadcast_message(quit_message)
+        quit_command = QuitCommand()
+        self._handle_broadcast_command(quit_command)
         self._join_processes()
         self._mark_terminated()
 
     def add_hardware(self, hardware: HardwareManagerBase):
         """Register a hardware manager so its process launches with MagScope."""
         self._hardware[hardware.name] = hardware
+        self.command_registry.register_manager(hardware)
 
     def add_control(self, control_type: type(ControlPanelBase), column: int):
         """Schedule a GUI control panel to be added when the window manager starts."""
@@ -196,8 +200,8 @@ class MagScope(metaclass=SingletonMeta):
     def settings(self, value):
         self._settings = value
         if self._running:
-            for pipe in self.pipes.values():
-                pipe.send(Message(ManagerProcessBase, ManagerProcessBase.set_settings, value))
+            command = SetSettingsCommand(settings=value)
+            self._handle_broadcast_command(command)
 
     @classmethod
     def _reset_singleton_for_testing(cls) -> None:
@@ -257,10 +261,18 @@ class MagScope(metaclass=SingletonMeta):
         for proc in proc_list:
             self.processes[proc.name] = proc
 
+    def _setup_command_registry(self) -> None:
+        """Register all command handlers and validate destinations."""
+        self.command_registry.register_object(self, target='MagScope')
+        for proc in self.processes.values():
+            self.command_registry.register_manager(proc)
+        self.command_registry.validate_targets(self.processes)
+
     def _initialize_shared_state(self) -> None:
         """Load configuration and prepare shared resources for all managers."""
         freeze_support()  # To prevent recursion in windows executable
         self._load_settings()
+        self._setup_command_registry()
         self._setup_shared_resources()
         self._register_script_methods()
 
@@ -283,99 +295,105 @@ class MagScope(metaclass=SingletonMeta):
             logger.info('%s ended.', name)
 
     def receive_ipc(self):
-        """Poll every IPC pipe once and relay any messages that arrive."""
-        handled_message = False
+        """Poll every IPC pipe once and relay any commands that arrive."""
+        handled_command = False
         for pipe in self.pipes.values():
-            message = self._read_message(pipe)
-            if message is None:
+            command = self._read_command(pipe)
+            if command is None:
                 continue
 
-            handled_message = True
-            if self._process_message(message):
+            handled_command = True
+            if self._process_command(command):
                 break
 
-        if not handled_message:
+        if not handled_command:
             self._sleep_when_idle()
 
-    def _read_message(self, pipe: Connection) -> Message | object | None:
-        """Retrieve a message from ``pipe`` if one is waiting."""
+    def _read_command(self, pipe: Connection) -> Command | object | None:
+        """Retrieve a command from ``pipe`` if one is waiting."""
 
         if not pipe.poll():
             return None
 
-        message = pipe.recv()
-        logger.info('%s', message)
-        if not isinstance(message, Message):
-            warn(f'Message is not a Message object: {message}')
+        command = pipe.recv()
+        logger.info('%s', command)
+        if not isinstance(command, Command):
+            warn(f'IPC payload is not a Command: {command}')
             return None
 
-        return message
+        return command
 
-    def _process_message(self, message: Message) -> bool:
-        """Route a valid message and indicate whether the IPC loop should break."""
+    def _process_command(self, command: Command) -> bool:
+        """Route a valid command and indicate whether the IPC loop should break."""
 
-        return self._route_message(message)
+        return self._route_command(command)
 
-    def _route_message(self, message: Message) -> bool:
-        """Dispatch a message based on its destination.
+    def _route_command(self, command: Command) -> bool:
+        """Dispatch a command based on its destination.
 
         Returns ``True`` when the IPC loop should stop iterating over the
         current set of pipes (for example, immediately after handling a quit
         broadcast). This mirrors the previous behavior of breaking out of the
-        ``receive_ipc`` loop once a quit message has been processed.
+        ``receive_ipc`` loop once a quit command has been processed.
         """
-        if message.to == 'MagScope':
-            self._handle_mag_scope_message(message)
-        elif message.to == ManagerProcessBase.__name__:  # the message is to all processes
-            if self._handle_broadcast_message(message):
+        spec = self.command_registry.route_for(command)
+        if spec.delivery == Delivery.MAG_SCOPE:
+            self._dispatch_mag_scope_command(command, spec)
+        elif spec.delivery == Delivery.BROADCAST:
+            if self._handle_broadcast_command(command, spec):
                 return True
-        elif message.to in self.pipes:  # the message is to one process
-            if self.processes[message.to].is_alive() and not self.quitting_events[message.to].is_set():
-                self.pipes[message.to].send(message)
+        elif spec.target in self.pipes:  # the command is to one process
+            if self.processes[spec.target].is_alive() and not self.quitting_events[spec.target].is_set():
+                self.pipes[spec.target].send(command)
         else:
-            warn(f'Unknown pipe {message.to} with {message}')
+            warn(f'Unknown pipe {spec.target} for {command}')
 
         return False
 
-    def _handle_mag_scope_message(self, message: Message) -> None:
-        """Handle messages whose destination is the MagScope orchestrator."""
+    def _dispatch_mag_scope_command(self, command: Command, spec) -> None:
+        """Handle commands destined for the MagScope orchestrator."""
 
-        if message.meth == 'log_exception':
-            if len(message.args) >= 2:
-                proc_name, details = message.args[:2]
-            else:
-                proc_name, details = ('<unknown>', '')
-            print(
-                f'[{proc_name}] Unhandled exception in child process:\n{details}',
-                file=sys.stderr,
-                flush=True,
-            )
-        else:
-            warn(f'Unknown MagScope message {message.meth} with {message.args}')
+        handler = getattr(self, spec.handler, None)
+        if handler is None:
+            raise RuntimeError(f'No MagScope handler for {type(command).__name__}')
+        handler(**command_kwargs(command))
 
-    def _handle_broadcast_message(self, message: Message) -> bool:
-        """Broadcast a message to all processes and handle quit semantics.
+    def _handle_broadcast_command(self, command: Command, spec=None) -> bool:
+        """Broadcast a command to all processes and handle quit semantics.
 
         Returns ``True`` when the caller should stop processing the current
-        IPC loop (e.g., after handling a quit message).
+        IPC loop (e.g., after handling a quit command).
         """
-        if message.meth == 'quit':
+        if spec is None:
+            spec = self.command_registry.route_for(command)
+
+        if isinstance(command, QuitCommand):
             logger.info('MagScope quitting ...')
             self._quitting.set()
             self._running = False
 
-        broadcast_message(
-            message,
+        broadcast_command(
+            command,
             pipes=self.pipes,
             processes=self.processes,
             quitting_events=self.quitting_events,
         )
 
-        if message.meth == 'quit':
+        if isinstance(command, QuitCommand):
             self._drain_child_pipes_after_quit()
             return True
 
         return False
+
+    @command_handler(LogExceptionCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
+    def log_exception(self, process_name: str, details: str) -> None:
+        """Surface an exception raised in a managed process."""
+
+        print(
+            f'[{process_name}] Unhandled exception in child process:\n{details}',
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _sleep_when_idle(self) -> None:
         """Throttle the IPC loop when no messages were processed."""
@@ -413,6 +431,7 @@ class MagScope(metaclass=SingletonMeta):
                 shared_values=self.shared_values,
                 locks=self.locks,
                 pipe_end=child_pipes[name],
+                command_registry=self.command_registry,
             )
             self.quitting_events[name] = proc.quitting_event
 

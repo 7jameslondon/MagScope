@@ -5,7 +5,7 @@ from multiprocessing import Pipe
 from multiprocessing.connection import Connection
 from typing import Mapping, TYPE_CHECKING
 
-from magscope.utils import Message
+from magscope.ipc_commands import Command
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as EventType
@@ -31,17 +31,17 @@ def create_pipes(
     return parent_ends, child_ends
 
 
-def broadcast_message(
-    message: Message,
+def broadcast_command(
+    command: Command,
     *,
     pipes: Mapping[str, Connection],
     processes: Mapping[str, "ManagerProcessBase"],
     quitting_events: Mapping[str, "EventType"],
 ) -> None:
-    """Send a message to all running, non-quitting processes."""
+    """Send a command to all running, non-quitting processes."""
     for name, pipe in pipes.items():
         if processes[name].is_alive() and not quitting_events[name].is_set():
-            pipe.send(message)
+            pipe.send(command)
 
 
 def drain_pipe_until_quit(

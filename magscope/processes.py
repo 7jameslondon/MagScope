@@ -11,7 +11,13 @@ from warnings import warn
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.ipc import drain_pipe_until_quit
-from magscope.utils import AcquisitionMode, Message, registerwithscript
+from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
+                                   QuitCommand, SetAcquisitionDirCommand,
+                                   SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
+                                   SetAcquisitionOnCommand, SetBeadRoisCommand,
+                                   SetSettingsCommand, UnknownCommandError, command_handler,
+                                   command_kwargs)
+from magscope.utils import AcquisitionMode, registerwithscript
 
 logger = get_logger("processes")
 
@@ -76,6 +82,8 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
         self.shared_values: InterprocessValues | None = None
+        self._command_registry: CommandRegistry | None = None
+        self._command_handlers: dict[type[Command], str] = {}
 
     @property
     def quitting_event(self) -> EventType:
@@ -92,6 +100,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         shared_values: InterprocessValues,
         locks: dict[str, LockType],
         pipe_end: Connection,
+        command_registry: CommandRegistry,
     ) -> None:
         """Attach shared references provided by :class:`~magscope.scope.MagScope`.
 
@@ -106,6 +115,11 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.shared_values = shared_values
         self.locks = locks
         self._pipe = pipe_end
+        self._command_registry = command_registry
+        self._command_handlers = {
+            command_type: spec.handler
+            for command_type, spec in command_registry.handlers_for_target(self.name).items()
+        }
 
     def run(self):
         """ Start the process when 'start()' is called
@@ -129,6 +143,8 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                 raise RuntimeError(f'{self.name} has no locks')
             if self._magscope_quitting is None:
                 raise RuntimeError(f'{self.name} has no magscope_quitting event')
+            if self._command_registry is None:
+                raise RuntimeError(f'{self.name} has no command registry')
 
             self.profiles_buffer = MatrixBuffer(
                 create=False,
@@ -163,13 +179,13 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def do_main_loop(self):
         pass
 
+    @command_handler(QuitCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def quit(self):
-        """ Shutdown the process (and ask the other processes to quit too) """
+        """Shutdown the process (and ask the other processes to quit too)."""
         self._quitting.set()
         self._running = False
         if not self._quit_requested:
-            message = Message(ManagerProcessBase, ManagerProcessBase.quit)
-            self.send_ipc(message)
+            self.send_ipc(QuitCommand())
         if self._pipe:
             if self._magscope_quitting is None:
                 raise RuntimeError(f"{self.name} has no magscope_quitting event")
@@ -178,48 +194,76 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             self._pipe = None
         logger.info('%s quit', self.name)
 
-    def send_ipc(self, message: Message):
-        if self._pipe and not self._magscope_quitting.is_set():
-            self._pipe.send(message)
+    def send_ipc(self, command: Command):
+        if self._command_registry is None:
+            raise RuntimeError(f"{self.name} cannot send IPC without a command registry")
+        if self._magscope_quitting is None:
+            raise RuntimeError(f"{self.name} has no magscope_quitting event")
+        self._command_registry.route_for(command)  # Validate registration early
+        if self._pipe and self._magscope_quitting is not None and not self._magscope_quitting.is_set():
+            self._pipe.send(command)
 
     def receive_ipc(self):
         # Check pipe for new messages
         if self._pipe is None or not self._pipe.poll():
             return
 
-        # Get the message
-        message = self._pipe.recv()
+        # Get the command
+        command = self._pipe.recv()
 
-        # Special case: if the message is 'quit'
-        # then set a flag to prevent this message repeating
-        if message.meth == 'quit':
+        if not isinstance(command, Command):
+            warn(f"Received unknown IPC payload {command!r}")
+            return
+
+        if isinstance(command, QuitCommand):
             self._quit_requested = True
 
-        # Dispatch the message
-        if hasattr(self, message.meth):
-            getattr(self, message.meth)(*message.args, **message.kwargs)
-        else:
-            warn(f"Function '{message.meth}' not found in {self.name}")
+        if self._command_registry is None:
+            raise RuntimeError(f"{self.name} cannot handle IPC without a command registry")
 
+        handler_name = self._command_handlers.get(type(command))
+        if handler_name is None:
+            spec = self._command_registry.route_for(command)
+            if spec.delivery != Delivery.BROADCAST:
+                raise UnknownCommandError(
+                    f"{self.name} has no handler for command {type(command).__name__}"
+                )
+            handler_name = spec.handler
+
+        handler = getattr(self, handler_name, None)
+        if handler is None:
+            raise UnknownCommandError(
+                f"{self.name} is missing handler {handler_name} "
+                f"for command {type(command).__name__}"
+            )
+
+        handler(**command_kwargs(command))
+
+    @command_handler(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_dir')
-    def set_acquisition_dir(self, value: str):
+    def set_acquisition_dir(self, value: str | None):
         self._acquisition_dir = value
 
+    @command_handler(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_dir_on')
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
+    @command_handler(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_mode')
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
+    @command_handler(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_on')
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 
+    @command_handler(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         self.bead_rois = value
 
+    @command_handler(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_settings(self, settings: dict):
         self.settings = settings
 
@@ -228,7 +272,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         error_message = f"{self.name} encountered an unhandled exception:\n{error_details}"
         print(error_message, file=sys.stderr, flush=True)
         try:
-            self.send_ipc(Message('MagScope', 'log_exception', self.name, error_details))
+            self.send_ipc(LogExceptionCommand(process_name=self.name, details=error_details))
         except Exception:
             # The IPC pipe may already be unavailable; ensure we still surface the error locally.
             pass

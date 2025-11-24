@@ -12,10 +12,11 @@ from magtrack._cupy import cp, is_cupy_available
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.ipc_commands import (LoadZLUTCommand, ShowMessageCommand, UnloadZLUTCommand,
+                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
+                                   command_handler)
 from magscope.processes import ManagerProcessBase
-from magscope.scripting import ScriptManager
-from magscope.utils import (AcquisitionMode, Message, PoolVideoFlag, crop_stack_to_rois,
-                            date_timestamp_str)
+from magscope.utils import AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str
 
 if TYPE_CHECKING:
     from multiprocessing.queues import Queue as QueueType
@@ -90,6 +91,7 @@ class VideoProcessorManager(ManagerProcessBase):
                 if worker and worker.is_alive():
                     worker.terminate()
 
+    @command_handler(LoadZLUTCommand)
     def load_zlut_file(self, filepath: str) -> None:
         path = Path(filepath).expanduser()
         self._zlut = None
@@ -108,6 +110,7 @@ class VideoProcessorManager(ManagerProcessBase):
         except Exception as exc:
             logger.exception('Failed to load default Z-LUT: %s', exc)
 
+    @command_handler(UnloadZLUTCommand)
     def unload_zlut(self) -> None:
         self._zlut_path = None
         self._zlut_metadata = None
@@ -150,30 +153,22 @@ class VideoProcessorManager(ManagerProcessBase):
         return zlut_array
 
     def _broadcast_zlut_metadata(self) -> None:
-        message = Message(
-            to='WindowManager',
-            meth='update_zlut_metadata',
-            args=(
-                str(self._zlut_path) if self._zlut_path is not None else None,
-                None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
-                None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
-                None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
-                None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
-            ),
+        command = UpdateZLUTMetadataCommand(
+            filepath=str(self._zlut_path) if self._zlut_path is not None else None,
+            z_min=None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
+            z_max=None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
+            step_size=None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
+            profile_length=None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
         )
-        self.send_ipc(message)
+        self.send_ipc(command)
 
     def _notify_zlut_error(self, path: Path, exc: Exception) -> None:
         reason = str(exc).strip() or repr(exc)
-        message = Message(
-            to='WindowManager',
-            meth='print',
-            args=(
-                'Failed to load Z-LUT file',
-                f'{path}: {reason}',
-            ),
+        command = ShowMessageCommand(
+            text='Failed to load Z-LUT file',
+            details=f'{path}: {reason}',
         )
-        self.send_ipc(message)
+        self.send_ipc(command)
 
     def _add_task(self):
         kwargs = {
@@ -192,11 +187,8 @@ class VideoProcessorManager(ManagerProcessBase):
     def script_wait_unitl_acquisition_on(self, value: bool):
         while self._acquisition_on != value:
             self.do_main_loop()
-        message = Message(
-            to=ScriptManager,
-            meth=ScriptManager.update_waiting
-        )
-        self.send_ipc(message)
+        command = UpdateWaitingCommand()
+        self.send_ipc(command)
 
 class VideoWorker(Process):
     def __init__(self,

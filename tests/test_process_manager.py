@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,6 @@ utils_spec = importlib.util.spec_from_file_location(
 utils = importlib.util.module_from_spec(utils_spec)
 sys.modules["magscope.utils"] = utils
 utils_spec.loader.exec_module(utils)
-Message = utils.Message
 
 processes_spec = importlib.util.spec_from_file_location(
     "magscope.processes", ROOT / "magscope" / "processes.py"
@@ -49,6 +49,9 @@ processes_spec = importlib.util.spec_from_file_location(
 processes = importlib.util.module_from_spec(processes_spec)
 sys.modules["magscope.processes"] = processes
 processes_spec.loader.exec_module(processes)
+import magscope.ipc_commands as ipc_commands
+from magscope.ipc_commands import (CommandRegistry, Delivery, LogExceptionCommand, QuitCommand,
+                                   SetAcquisitionOnCommand, UnknownCommandError)
 
 
 class FakeEvent:
@@ -163,6 +166,21 @@ def test_run_validates_dependencies(fake_buffers):
     proc._magscope_quitting = FakeEvent()
     proc._pipe = FakePipe()
     proc.locks = {"ProfilesBuffer": object()}
+    with pytest.raises(RuntimeError, match="DummyProcess has no command registry"):
+        proc.run()
+
+    registry = CommandRegistry()
+    registry.register_manager(proc)
+    proc.configure_shared_resources(
+        camera_type=None,
+        hardware_types={},
+        quitting_event=FakeEvent(),
+        settings={},
+        shared_values=processes.InterprocessValues(),
+        locks={"ProfilesBuffer": object()},
+        pipe_end=FakePipe(),
+        command_registry=registry,
+    )
     proc.run()
 
     assert proc.setup_called
@@ -174,18 +192,27 @@ def test_run_validates_dependencies(fake_buffers):
 
 def test_receive_ipc_dispatch_and_quit_flag():
     proc = DummyProcess()
-    proc._pipe = FakePipe([
-        Message("MagScope", "set_acquisition_on", False),
-        Message("MagScope", "unknown_method"),
-        Message("MagScope", "quit"),
+    registry = CommandRegistry()
+    registry.register_manager(proc)
+    quit_event = FakeEvent()
+    pipe = FakePipe([
+        SetAcquisitionOnCommand(value=False),
+        QuitCommand(),
     ])
+    proc.configure_shared_resources(
+        camera_type=None,
+        hardware_types={},
+        quitting_event=quit_event,
+        settings={},
+        shared_values=processes.InterprocessValues(),
+        locks={"ProfilesBuffer": object()},
+        pipe_end=pipe,
+        command_registry=registry,
+    )
 
     proc._acquisition_on = True
     proc.receive_ipc()
     assert proc._acquisition_on is False
-
-    with pytest.warns(UserWarning, match="Function 'unknown_method' not found"):
-        proc.receive_ipc()
 
     quit_called = []
 
@@ -199,14 +226,46 @@ def test_receive_ipc_dispatch_and_quit_flag():
     assert quit_called == [True]
 
 
+def test_receive_ipc_errors_on_unknown_command():
+    @dataclass(frozen=True)
+    class Unknown(ipc_commands.Command):
+        value: int = 0
+
+    proc = DummyProcess()
+    registry = CommandRegistry()
+    registry.register_manager(proc)
+    proc.configure_shared_resources(
+        camera_type=None,
+        hardware_types={},
+        quitting_event=FakeEvent(),
+        settings={},
+        shared_values=processes.InterprocessValues(),
+        locks={"ProfilesBuffer": object()},
+        pipe_end=FakePipe([Unknown()]),
+        command_registry=registry,
+    )
+
+    with pytest.raises(UnknownCommandError):
+        proc.receive_ipc()
+
+
 def test_quit_broadcasts_and_drains_pipe():
     proc = DummyProcess()
     quitting_event = FakeEvent()
-    proc._magscope_quitting = quitting_event
-    incoming = [Message("MagScope", "noop"), Message("MagScope", "noop2")]
+    incoming = [SetAcquisitionOnCommand(value=True), SetAcquisitionOnCommand(value=False)]
     pipe = FakePipe(incoming=incoming, drain_event=quitting_event)
-    proc._pipe = pipe
-    proc.locks = {"ProfilesBuffer": object()}
+    registry = CommandRegistry()
+    registry.register_manager(proc)
+    proc.configure_shared_resources(
+        camera_type=None,
+        hardware_types={},
+        quitting_event=quitting_event,
+        settings={},
+        shared_values=processes.InterprocessValues(),
+        locks={"ProfilesBuffer": object()},
+        pipe_end=pipe,
+        command_registry=registry,
+    )
     proc._running = True
     proc._quit_requested = False
 
@@ -214,8 +273,7 @@ def test_quit_broadcasts_and_drains_pipe():
 
     assert len(pipe.sent) == 1
     broadcast = pipe.sent[0]
-    assert broadcast.to == "ManagerProcessBase"
-    assert broadcast.meth == "quit"
+    assert isinstance(broadcast, QuitCommand)
     assert pipe.drained_messages == incoming
     assert pipe.closed
     assert proc._pipe is None
@@ -224,28 +282,42 @@ def test_quit_broadcasts_and_drains_pipe():
 
 def test_run_reports_exception(monkeypatch):
     proc = DummyProcess()
-    proc._pipe = FakePipe()
-    proc.locks = {"ProfilesBuffer": object()}
-    proc._magscope_quitting = FakeEvent()
+    registry = CommandRegistry()
+    registry.register_manager(proc)
+
+    class MagScopeStub:
+        def log_exception(self, process_name: str, details: str):
+            return None
+
+    registry.register(
+        command_type=LogExceptionCommand,
+        handler="log_exception",
+        owner=MagScopeStub,
+        delivery=Delivery.MAG_SCOPE,
+        target="MagScope",
+    )
+    pipe = FakePipe()
+    proc.configure_shared_resources(
+        camera_type=None,
+        hardware_types={},
+        quitting_event=FakeEvent(),
+        settings={},
+        shared_values=processes.InterprocessValues(),
+        locks={"ProfilesBuffer": object()},
+        pipe_end=pipe,
+        command_registry=registry,
+    )
 
     def raising_loop(self):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(proc, "do_main_loop", types.MethodType(raising_loop, proc))
 
-    sent_messages = []
-
-    def capture_send(self, message):
-        sent_messages.append(message)
-
-    monkeypatch.setattr(proc, "send_ipc", types.MethodType(capture_send, proc))
-
     with pytest.raises(RuntimeError, match="boom"):
         proc.run()
 
-    assert len(sent_messages) == 1
-    exception_message = sent_messages[0]
-    assert exception_message.to == "MagScope"
-    assert exception_message.meth == "log_exception"
-    assert exception_message.args[0] == proc.name
-    assert "boom" in exception_message.args[1]
+    assert len(pipe.sent) == 1
+    exception_message = pipe.sent[0]
+    assert isinstance(exception_message, LogExceptionCommand)
+    assert exception_message.process_name == proc.name
+    assert "boom" in exception_message.details
