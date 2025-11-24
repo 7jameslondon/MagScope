@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sys
-import traceback
 from abc import ABC, ABCMeta, abstractmethod
 from ctypes import c_uint8
+import inspect
 from multiprocessing import Event, Process, Value
+import sys
+import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
@@ -248,9 +249,14 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         return registry
 
     def _iter_command_handlers(self):
-        for attribute_name in dir(self):
-            attribute = getattr(self, attribute_name)
-            command_name = getattr(attribute, '_ipc_command', None)
+        for attribute_name, attribute in inspect.getmembers_static(type(self)):
+            command_name = getattr(attribute, "_ipc_command", None)
             if command_name is None:
                 continue
-            yield command_name, attribute
+            yield command_name, self._bind_command(attribute_name)
+
+    def _bind_command(self, attribute_name: str):
+        def handler(*args, **kwargs):
+            getattr(self, attribute_name)(*args, **kwargs)
+
+        return handler
