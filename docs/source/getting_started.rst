@@ -3,58 +3,53 @@
 Getting Started
 ===============
 
-This guide walks through installing MagScope, verifying the installation, and running the demo microscope so you can explore the
-interface in minutes.
+This guide will walk you through installing MagScope, verifying the installation, and running the demo so you can explore the interface in minutes.
 
-.. contents::
-   :local:
-   :depth: 2
+(1) Install Python
+------------------
+MagScope requires Python *3.11 or newer* . I would **recommend using 3.13**.
+If you are new to Python, I would recommend following `a guide for beginners such as this one from w3schools <https://www.w3schools.com/python/python_getstarted.asp>`_.
+If you do not have Python there are many ways to install it. If you have a preferred method that works for you, feel free to use that.
+You can always download Python for free from the official website: `python.org <https://www.python.org/downloads/>`_.
 
-System Requirements
--------------------
+(2) Setup a Virtual Environment
+------------------------------
+You can run Python directly without a virtual environment, but it is not recommended.
+If this is your first time using virtual environments, I recommend following `this guide from w3schools <https://docs.python.org/3/tutorial/venv.html>`_.
 
-MagScope targets Python 3.11 or newer on Windows, macOS, and Linux. The desktop application relies on `PyQt6 <https://pypi.org/project/PyQt6/>`_,
-so make sure your environment can install Qt dependencies (on Linux, that usually means system packages such as ``libxcb`` and ``libGL``).
-A CUDA-enabled GPU can accelerate certain processing pipelines but is **not** required to run the demo.
+You can create a virtual environment using the built-in ``venv`` module.
+Create the virtual environment in a new folder and activate it.
 
-Install MagScope
-----------------
+(3) Install MagScope
+--------------------
+With your virtual environment active, you can install the latest version of MagScope using ``pip``.
+If you are new to ``pip``, I recommend following `this guide from w3schools <https://www.w3schools.com/python/python_pip.asp>`_.
+Run the following command in your terminal or command prompt:
 
-You can install MagScope from the Python Package Index (PyPI) with ``pip``. Create and activate a virtual environment if desired, then run::
+.. code-block:: bash
 
    pip install magscope
 
-If you are working from a cloned repository and want an editable install for development, run::
+Note: This will install a CPU-only version of MagScope. Once we have that working we will add support for GPU acceleration.
 
-   pip install -e .[dev]
+(4) Run MagScope
+-----------------
 
-This command installs MagScope along with the development extras defined in ``pyproject.toml``.
+MagScope ships with a simulated camera so you can try the interface without connecting hardware.
+To launch the demo run Python, import MagScope, and run the start command:
 
-Verify the Installation
------------------------
+.. code-block:: python
 
-Launch Python and confirm that MagScope can be imported::
-
-   python - <<'PY'
+   python
    import magscope
-   print(magscope.__version__)
-   PY
+   magscope.MagScope().start()
 
-You should see the installed version printed in the terminal. If the import fails, double-check that your virtual environment is activated and that
-``pip`` installed MagScope into the same interpreter.
-
-Run the Demo Application
-------------------------
-
-MagScope ships with a simulated camera so you can try the interface without connecting hardware. After installing the package, launch the demo GUI with::
-
-   python -m magscope.demo
-
-This command opens the MagScope window and begins streaming data from the built-in ``DummyBeadCamera``. Close the window to exit the application.
+This command opens the MagScope window and begins streaming data.
 
 Next Steps
 ----------
 
 * Read the :doc:`user_guide` for an overview of the interface and built-in tools.
-* Explore the ``example_script.py`` in the repository to see how to embed MagScope in automation scripts.
-* When you are ready to integrate laboratory hardware, consult the customization and developer guides (coming soon).
+
+TODO: Add link to GPU install
+TODO: Add link to add camera, hardware
