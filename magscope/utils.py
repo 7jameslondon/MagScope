@@ -4,6 +4,7 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Callable, Type
 
+import magtrack
 import numpy as np
 from PyQt6.QtGui import QImage
 
@@ -118,3 +119,7 @@ def registerwithscript(meth_str: str):
         return meth
 
     return decorator
+
+def check_cupy() -> bool:
+    """Return ``True`` when the CuPy package is usable."""
+    return magtrack.check_cupy()
