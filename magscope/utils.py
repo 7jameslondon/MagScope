@@ -8,30 +8,6 @@ import magtrack
 import numpy as np
 from PyQt6.QtGui import QImage
 
-# Import only for the type check to avoid circular import
-if TYPE_CHECKING:
-    from magscope import ManagerProcessBase
-
-class Message:
-    def __init__(self, to: Type['ManagerProcessBase'] | str, meth: Callable | str, *args, **kwargs):
-        if isinstance(to, str):
-            self.to = to
-        else:
-            self.to: str = to.__name__
-
-        if isinstance(meth, str):
-            self.meth = meth
-        else:
-            self.meth: str = meth.__name__
-
-        self.args = args
-        if 'args' in kwargs:
-            self.args = self.args + kwargs['args']
-            del kwargs['args']
-        self.kwargs = kwargs
-
-    def __str__(self):
-        return f"Message(to={self.to}, func={self.meth}, args={self.args}, kwargs={self.kwargs})"
 
 class AcquisitionMode(StrEnum):
     """ Enum for the different acquisition modes """
