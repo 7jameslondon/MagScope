@@ -62,7 +62,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       :octicon:`device-camera-video;3rem;sd-text-secondary`
 
-      Swap the demo feed for your lab hardware
+      Swap the simulated camera for your lab's camera
 
    .. grid-item-card:: Customization Guide
       :link: custom_guide
