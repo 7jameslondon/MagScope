@@ -245,11 +245,11 @@ class MagScope(metaclass=SingletonMeta):
     def _collect_processes(self) -> None:
         """Assemble the ordered list of manager processes to supervise.
 
-        ScriptManager must remain first so that the ``@registerwithscript``
+        ScriptManager must remain first so that the ``@register_script_command``
         decorator binds correctly before other managers start.
         """
         proc_list: list[ManagerProcessBase] = [
-            self.script_manager,  # ScriptManager must be first in this list for @registerwithscript to work
+            self.script_manager,  # ScriptManager must be first in this list for @register_script_command to work
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,

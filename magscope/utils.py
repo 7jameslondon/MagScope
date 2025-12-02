@@ -8,6 +8,8 @@ import magtrack
 import numpy as np
 from PyQt6.QtGui import QImage
 
+from magscope.ipc_commands import Command
+
 
 class AcquisitionMode(StrEnum):
     """ Enum for the different acquisition modes """
@@ -87,11 +89,18 @@ class Units:
     clockwise = cw = 1.
     counterclockwise = ccw = -1.
 
-def registerwithscript(meth_str: str):
+def register_script_command(command_type: type[Command]):
+    """Decorator marking a method as callable from a MagScope script.
+
+    Each script command must be paired with the IPC :class:`~magscope.ipc_commands.Command`
+    that will be dispatched when the script executes that step. The decorator mirrors
+    :func:`magscope.ipc_commands.command_handler` by attaching metadata to the wrapped
+    function without constraining how it is collected.
+    """
+
     def decorator(meth: callable):
         meth._scriptable = True
-        meth._script_str = meth_str
-        meth._script_cls = meth.__qualname__.split('.')[0]
+        meth._script_command_type = command_type
         return meth
 
     return decorator
