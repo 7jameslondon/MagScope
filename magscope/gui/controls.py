@@ -938,7 +938,7 @@ class XYLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
+        # Update panel highlight styling
         self._apply_enabled_style(is_enabled)
 
         # Send value
@@ -1006,14 +1006,24 @@ class XYLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
+        # Update panel highlight styling
         self._apply_enabled_style(value)
 
     def _apply_enabled_style(self, is_enabled: bool) -> None:
-        background_color = "palette(highlight)" if is_enabled else "none"
-        self.groupbox.setStyleSheet(
-            f"QGroupBox {{ background-color: {background_color}; }}"
-        )
+        if is_enabled:
+            self.groupbox.setStyleSheet(
+                """
+                QGroupBox {
+                    border: 1px solid palette(highlight);
+                    border-radius: 4px;
+                }
+                QGroupBox::title {
+                    color: palette(highlighted-text);
+                }
+                """
+            )
+        else:
+            self.groupbox.setStyleSheet("")
 
     def update_interval(self, value: float):
         if value is None:
@@ -1095,7 +1105,7 @@ class ZLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
+        # Update panel highlight styling
         self._apply_enabled_style(is_enabled)
 
         # Send value
@@ -1174,14 +1184,24 @@ class ZLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
+        # Update panel highlight styling
         self._apply_enabled_style(value)
 
     def _apply_enabled_style(self, is_enabled: bool) -> None:
-        background_color = "palette(highlight)" if is_enabled else "none"
-        self.groupbox.setStyleSheet(
-            f"QGroupBox {{ background-color: {background_color}; }}"
-        )
+        if is_enabled:
+            self.groupbox.setStyleSheet(
+                """
+                QGroupBox {
+                    border: 1px solid palette(highlight);
+                    border-radius: 4px;
+                }
+                QGroupBox::title {
+                    color: palette(highlighted-text);
+                }
+                """
+            )
+        else:
+            self.groupbox.setStyleSheet("")
 
     def update_bead(self, value: int):
         if value is None:
