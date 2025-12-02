@@ -21,7 +21,7 @@ from warnings import warn
 
 from magscope.ipc_commands import (LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
                                    StartScriptCommand, StartSleepCommand,
-                                   UpdateScriptStatusCommand, UpdateWaitingCommand, register_command)
+                                   UpdateScriptStatusCommand, UpdateWaitingCommand, register_ipc_command)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import registerwithscript
 
@@ -184,7 +184,7 @@ class ScriptManager(ManagerProcessBase):
             if self._script_index >= self._script_length:
                 self._set_script_status(ScriptStatus.FINISHED)
 
-    @register_command(StartScriptCommand)
+    @register_ipc_command(StartScriptCommand)
     def start_script(self):
         """Start the currently loaded script from the beginning."""
 
@@ -198,7 +198,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_index = 0
         self._set_script_status(ScriptStatus.RUNNING)
 
-    @register_command(PauseScriptCommand)
+    @register_ipc_command(PauseScriptCommand)
     def pause_script(self):
         """Pause the running script."""
 
@@ -207,7 +207,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.PAUSED)
 
-    @register_command(ResumeScriptCommand)
+    @register_ipc_command(ResumeScriptCommand)
     def resume_script(self):
         """Resume a script that was previously paused."""
 
@@ -216,7 +216,7 @@ class ScriptManager(ManagerProcessBase):
             return
         self._set_script_status(ScriptStatus.RUNNING)
 
-    @register_command(LoadScriptCommand)
+    @register_ipc_command(LoadScriptCommand)
     def load_script(self, path):
         """Load and validate a script from ``path``.
 
@@ -288,12 +288,12 @@ class ScriptManager(ManagerProcessBase):
         command = command_type(*step_args, **step_kwargs)
         self.send_ipc(command)
 
-    @register_command(UpdateWaitingCommand)
+    @register_ipc_command(UpdateWaitingCommand)
     def update_waiting(self):
         """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False
 
-    @register_command(StartSleepCommand)
+    @register_ipc_command(StartSleepCommand)
     @registerwithscript('sleep')
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""

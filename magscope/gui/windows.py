@@ -24,7 +24,7 @@ from magscope.ipc_commands import (Delivery, LoadZLUTCommand, MoveBeadCommand,
                                    UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
                                    UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
                                    UpdateZLockTargetCommand, UpdateZLUTMetadataCommand,
-                                   register_command)
+                                   register_ipc_command)
 from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
                           ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
                           ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
@@ -365,7 +365,7 @@ class WindowManager(ManagerProcessBase):
         if not self.controls.bead_selection_panel.lock_button.isChecked():
             self.add_bead(pos)
 
-    @register_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_bead_rois(self, value):
         pass
 
@@ -383,7 +383,7 @@ class WindowManager(ManagerProcessBase):
         command = SetBeadRoisCommand(value=bead_rois)
         self.send_ipc(command)
 
-    @register_command(MoveBeadCommand)
+    @register_ipc_command(MoveBeadCommand)
     def move_bead(self, id: int, dx, dy):
         # Move the bead
         self._bead_graphics[id].move(dx, dy)
@@ -497,19 +497,19 @@ class WindowManager(ManagerProcessBase):
         except Exception as e:
             print(traceback.format_exc())
 
-    @register_command(UpdateCameraSettingCommand)
+    @register_ipc_command(UpdateCameraSettingCommand)
     def update_camera_setting(self, name: str, value: str):
         self.controls.camera_panel.update_camera_setting(name, value)
 
-    @register_command(UpdateVideoBufferPurgeCommand)
+    @register_ipc_command(UpdateVideoBufferPurgeCommand)
     def update_video_buffer_purge(self, t: float):
         self.controls.status_panel.update_video_buffer_purge(t)
 
-    @register_command(UpdateScriptStatusCommand)
+    @register_ipc_command(UpdateScriptStatusCommand)
     def update_script_status(self, status: ScriptStatus):
         self.controls.script_panel.update_status(status)
 
-    @register_command(ShowMessageCommand)
+    @register_ipc_command(ShowMessageCommand)
     @registerwithscript('print')
     def print(self, text: str, details: str | None = None):
         msg = QMessageBox(self.windows[0])
@@ -524,7 +524,7 @@ class WindowManager(ManagerProcessBase):
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 
-    @register_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_on(self, value: bool):
         super().set_acquisition_on(value)
         checkbox = self.controls.acquisition_panel.acquisition_on_checkbox.checkbox
@@ -532,7 +532,7 @@ class WindowManager(ManagerProcessBase):
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
-    @register_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_dir(self, value: str | None):
         super().set_acquisition_dir(value)
         textedit = self.controls.acquisition_panel.acquisition_dir_textedit
@@ -540,7 +540,7 @@ class WindowManager(ManagerProcessBase):
         textedit.setText(value or '')
         textedit.blockSignals(False)
 
-    @register_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_dir_on(self, value: bool):
         super().set_acquisition_dir_on(value)
         checkbox = self.controls.acquisition_panel.acquisition_dir_on_checkbox.checkbox
@@ -548,7 +548,7 @@ class WindowManager(ManagerProcessBase):
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
 
-    @register_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_mode(self, value: AcquisitionMode):
         super().set_acquisition_mode(value)
         combobox = self.controls.acquisition_panel.acquisition_mode_combobox
@@ -556,39 +556,39 @@ class WindowManager(ManagerProcessBase):
         combobox.setCurrentText(value)
         combobox.blockSignals(False)
 
-    @register_command(UpdateXYLockEnabledCommand)
+    @register_ipc_command(UpdateXYLockEnabledCommand)
     def update_xy_lock_enabled(self, value: bool):
         self.controls.xy_lock_panel.update_enabled(value)
 
-    @register_command(UpdateXYLockIntervalCommand)
+    @register_ipc_command(UpdateXYLockIntervalCommand)
     def update_xy_lock_interval(self, value: float):
         self.controls.xy_lock_panel.update_interval(value)
 
-    @register_command(UpdateXYLockMaxCommand)
+    @register_ipc_command(UpdateXYLockMaxCommand)
     def update_xy_lock_max(self, value: float):
         self.controls.xy_lock_panel.update_max(value)
 
-    @register_command(UpdateXYLockWindowCommand)
+    @register_ipc_command(UpdateXYLockWindowCommand)
     def update_xy_lock_window(self, value: int):
         self.controls.xy_lock_panel.update_window(value)
 
-    @register_command(UpdateZLockEnabledCommand)
+    @register_ipc_command(UpdateZLockEnabledCommand)
     def update_z_lock_enabled(self, value: bool):
         self.controls.z_lock_panel.update_enabled(value)
 
-    @register_command(UpdateZLockBeadCommand)
+    @register_ipc_command(UpdateZLockBeadCommand)
     def update_z_lock_bead(self, value: int):
         self.controls.z_lock_panel.update_bead(value)
 
-    @register_command(UpdateZLockTargetCommand)
+    @register_ipc_command(UpdateZLockTargetCommand)
     def update_z_lock_target(self, value: float):
         self.controls.z_lock_panel.update_target(value)
 
-    @register_command(UpdateZLockIntervalCommand)
+    @register_ipc_command(UpdateZLockIntervalCommand)
     def update_z_lock_interval(self, value: float):
         self.controls.z_lock_panel.update_interval(value)
 
-    @register_command(UpdateZLockMaxCommand)
+    @register_ipc_command(UpdateZLockMaxCommand)
     def update_z_lock_max(self, value: float):
         self.controls.z_lock_panel.update_max(value)
 
@@ -603,7 +603,7 @@ class WindowManager(ManagerProcessBase):
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
-    @register_command(UpdateZLUTMetadataCommand)
+    @register_ipc_command(UpdateZLUTMetadataCommand)
     def update_zlut_metadata(self,
                              filepath: str | None = None,
                              z_min: float | None = None,

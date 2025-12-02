@@ -53,7 +53,7 @@ class HandlerRegistration:
     target_override: str | None = None
 
 
-def register_command(
+def register_ipc_command(
     command_type: type[Command],
     *,
     delivery: Delivery = Delivery.DIRECT,

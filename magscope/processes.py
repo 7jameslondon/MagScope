@@ -16,7 +16,7 @@ from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExcept
                                    SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
                                    SetAcquisitionOnCommand, SetBeadRoisCommand,
                                    SetSettingsCommand, UnknownCommandError, command_kwargs,
-                                   register_command)
+                                   register_ipc_command)
 from magscope.utils import AcquisitionMode, registerwithscript
 
 logger = get_logger("processes")
@@ -179,7 +179,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def do_main_loop(self):
         pass
 
-    @register_command(QuitCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(QuitCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def quit(self):
         """Shutdown the process (and ask the other processes to quit too)."""
         self._quitting.set()
@@ -239,31 +239,31 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
 
         handler(**command_kwargs(command))
 
-    @register_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_dir')
     def set_acquisition_dir(self, value: str | None):
         self._acquisition_dir = value
 
-    @register_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_dir_on')
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
-    @register_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_mode')
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
-    @register_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_on')
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 
-    @register_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         self.bead_rois = value
 
-    @register_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_settings(self, settings: dict):
         self.settings = settings
 

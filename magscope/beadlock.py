@@ -12,7 +12,7 @@ from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
                                    UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
                                    UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
                                    UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
-                                   UpdateZLockTargetCommand, register_command)
+                                   UpdateZLockTargetCommand, register_ipc_command)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import registerwithscript
 
@@ -60,7 +60,7 @@ class BeadLockManager(ManagerProcessBase):
             if (now:=time()) - self._z_lock_last_time > self.z_lock_interval:
                 self.do_z_lock(now=now)
 
-    @register_command(ExecuteXYLockCommand)
+    @register_ipc_command(ExecuteXYLockCommand)
     @registerwithscript('do_xy_lock')
     def do_xy_lock(self, now=None):
         """ Centers the bead-rois based on their tracked position """
@@ -163,12 +163,12 @@ class BeadLockManager(ManagerProcessBase):
 
             self._xy_lock_bead_cutoff[bead_id] = now
 
-    @register_command(RemoveBeadFromPendingMovesCommand)
+    @register_ipc_command(RemoveBeadFromPendingMovesCommand)
     def remove_bead_from_xy_lock_pending_moves(self, id: int):
         if id in self._xy_lock_pending_moves:
             self._xy_lock_pending_moves.remove(id)
 
-    @register_command(SetXYLockOnCommand)
+    @register_ipc_command(SetXYLockOnCommand)
     @registerwithscript('set_xy_lock_on')
     def set_xy_lock_on(self, value: bool):
         self.xy_lock_on = value
@@ -177,7 +177,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateXYLockEnabledCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetXYLockIntervalCommand)
+    @register_ipc_command(SetXYLockIntervalCommand)
     @registerwithscript('set_xy_lock_interval')
     def set_xy_lock_interval(self, value: float):
         self.xy_lock_interval = value
@@ -185,7 +185,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateXYLockIntervalCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetXYLockMaxCommand)
+    @register_ipc_command(SetXYLockMaxCommand)
     @registerwithscript('set_xy_lock_max')
     def set_xy_lock_max(self, value: float):
         value = max(1, round(value))
@@ -194,7 +194,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateXYLockMaxCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetXYLockWindowCommand)
+    @register_ipc_command(SetXYLockWindowCommand)
     @registerwithscript('set_xy_lock_window')
     def set_xy_lock_window(self, value: int):
         self.xy_lock_window = max(1, int(value))
@@ -202,7 +202,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateXYLockWindowCommand(value=self.xy_lock_window)
         self.send_ipc(command)
 
-    @register_command(SetZLockOnCommand)
+    @register_ipc_command(SetZLockOnCommand)
     @registerwithscript('set_z_lock_on')
     def set_z_lock_on(self, value: bool):
         self.z_lock_on = value
@@ -210,7 +210,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateZLockEnabledCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetZLockBeadCommand)
+    @register_ipc_command(SetZLockBeadCommand)
     @registerwithscript('set_z_lock_bead')
     def set_z_lock_bead(self, value: int):
         value = int(value)
@@ -219,7 +219,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateZLockBeadCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetZLockTargetCommand)
+    @register_ipc_command(SetZLockTargetCommand)
     @registerwithscript('set_z_lock_target')
     def set_z_lock_target(self, value: float):
         self.z_lock_target = value
@@ -227,7 +227,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateZLockTargetCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetZLockIntervalCommand)
+    @register_ipc_command(SetZLockIntervalCommand)
     @registerwithscript('set_z_lock_interval')
     def set_z_lock_interval(self, value: float):
         self.z_lock_interval = value
@@ -235,7 +235,7 @@ class BeadLockManager(ManagerProcessBase):
         command = UpdateZLockIntervalCommand(value=value)
         self.send_ipc(command)
 
-    @register_command(SetZLockMaxCommand)
+    @register_ipc_command(SetZLockMaxCommand)
     @registerwithscript('set_z_lock_max')
     def set_z_lock_max(self, value: float):
         self.z_lock_max = value
