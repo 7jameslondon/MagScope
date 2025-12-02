@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import time
 from multiprocessing import Pipe
 from multiprocessing.connection import Connection
+import time
 from typing import Mapping, TYPE_CHECKING
+from warnings import warn
 
+from magscope._logging import get_logger
 from magscope.ipc_commands import Command
 
 if TYPE_CHECKING:
@@ -39,9 +41,14 @@ def broadcast_command(
     quitting_events: Mapping[str, "EventType"],
 ) -> None:
     """Send a command to all running, non-quitting processes."""
+    logger = get_logger("ipc")
     for name, pipe in pipes.items():
         if processes[name].is_alive() and not quitting_events[name].is_set():
-            pipe.send(command)
+            try:
+                pipe.send(command)
+            except (BrokenPipeError, EOFError, OSError) as exc:
+                warn(f"Failed to send {type(command).__name__} to {name}: {exc!r}")
+                logger.debug("Dropping command %s for %s after send error", command, name)
 
 
 def drain_pipe_until_quit(

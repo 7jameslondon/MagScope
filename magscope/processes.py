@@ -84,6 +84,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.shared_values: InterprocessValues | None = None
         self._command_registry: CommandRegistry | None = None
         self._command_handlers: dict[type[Command], str] = {}
+        self._max_ipc_batch: int = 10
 
     @property
     def quitting_event(self) -> EventType:
@@ -204,40 +205,42 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             self._pipe.send(command)
 
     def receive_ipc(self):
-        # Check pipe for new messages
-        if self._pipe is None or not self._pipe.poll():
+        if self._pipe is None:
             return
 
-        # Get the command
-        command = self._pipe.recv()
+        processed = 0
+        while self._pipe.poll() and processed < self._max_ipc_batch:
+            command = self._pipe.recv()
 
-        if not isinstance(command, Command):
-            warn(f"Received unknown IPC payload {command!r}")
-            return
+            if not isinstance(command, Command):
+                warn(f"Received unknown IPC payload {command!r}")
+                processed += 1
+                continue
 
-        if isinstance(command, QuitCommand):
-            self._quit_requested = True
+            if isinstance(command, QuitCommand):
+                self._quit_requested = True
 
-        if self._command_registry is None:
-            raise RuntimeError(f"{self.name} cannot handle IPC without a command registry")
+            if self._command_registry is None:
+                raise RuntimeError(f"{self.name} cannot handle IPC without a command registry")
 
-        handler_name = self._command_handlers.get(type(command))
-        if handler_name is None:
-            spec = self._command_registry.route_for(command)
-            if spec.delivery != Delivery.BROADCAST:
+            handler_name = self._command_handlers.get(type(command))
+            if handler_name is None:
+                spec = self._command_registry.route_for(command)
+                if spec.delivery != Delivery.BROADCAST:
+                    raise UnknownCommandError(
+                        f"{self.name} has no handler for command {type(command).__name__}"
+                    )
+                handler_name = spec.handler
+
+            handler = getattr(self, handler_name, None)
+            if handler is None:
                 raise UnknownCommandError(
-                    f"{self.name} has no handler for command {type(command).__name__}"
+                    f"{self.name} is missing handler {handler_name} "
+                    f"for command {type(command).__name__}"
                 )
-            handler_name = spec.handler
 
-        handler = getattr(self, handler_name, None)
-        if handler is None:
-            raise UnknownCommandError(
-                f"{self.name} is missing handler {handler_name} "
-                f"for command {type(command).__name__}"
-            )
-
-        handler(**command_kwargs(command))
+            handler(**command_kwargs(command))
+            processed += 1
 
     @command_handler(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @registerwithscript('set_acquisition_dir')
