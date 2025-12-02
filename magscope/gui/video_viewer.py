@@ -74,7 +74,7 @@ class VideoViewer(QGraphicsView):
         self._lock_overlay = QLabel(self.viewport())
         self._lock_overlay.setText("🔒")
         lock_font = self._lock_overlay.font()
-        lock_font.setPointSize(28)
+        lock_font.setPointSize(36)
         self._lock_overlay.setFont(lock_font)
         self._lock_overlay.setStyleSheet(
             "color: rgba(255, 255, 255, 128);"
