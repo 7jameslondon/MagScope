@@ -53,7 +53,7 @@ class HandlerRegistration:
     target_override: str | None = None
 
 
-def command_handler(
+def register_command(
     command_type: type[Command],
     *,
     delivery: Delivery = Delivery.DIRECT,
