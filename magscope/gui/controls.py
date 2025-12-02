@@ -367,6 +367,7 @@ class BeadSelectionPanel(ControlPanelBase):
         is_locked = self.lock_button.isChecked()
         self.lock_button.setText('🔒' if is_locked else '🔓')
         self.clear_button.setEnabled(not is_locked)
+        self.set_highlighted(is_locked)
         self.manager.lock_beads(is_locked)
 
 
