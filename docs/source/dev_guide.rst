@@ -165,7 +165,7 @@ class MyNewControlPanel(magscope.ControlPanelBase):
 
 MagScope now routes typed command dataclasses instead of string-based messages.
 Each command subclasses :class:`magscope.ipc_commands.Command` and is paired
-with a handler decorated by :func:`magscope.command_handler`. MagScope
+with a handler decorated by :func:`magscope.register_ipc_command`. MagScope
 automatically registers every decorated handler during startup (and whenever a
 hardware manager is added via :meth:`MagScope.add_hardware`) and validates that
 no commands are missing or conflicting. :meth:`ManagerProcessBase.send_ipc`
@@ -177,7 +177,7 @@ Built-in commands are available for common operations (for example
 ```
 from dataclasses import dataclass
 
-from magscope import Command, HardwareManagerBase, command_handler
+from magscope import Command, HardwareManagerBase, register_ipc_command
 from magscope.ipc_commands import SetCameraSettingCommand
 
 
@@ -187,7 +187,7 @@ class ToggleLaserCommand(Command):
 
 
 class LaserManager(HardwareManagerBase):
-    @command_handler(ToggleLaserCommand)
+    @register_ipc_command(ToggleLaserCommand)
     def toggle_laser(self, enabled: bool) -> None:
         ...
 

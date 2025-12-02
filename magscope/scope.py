@@ -61,8 +61,8 @@ from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import broadcast_command, create_pipes, drain_pipe_until_quit
 from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
-                                   QuitCommand, SetSettingsCommand, command_handler,
-                                   command_kwargs)
+                                   QuitCommand, SetSettingsCommand, command_kwargs,
+                                   register_ipc_command)
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
 from magscope.videoprocessing import VideoProcessorManager
@@ -385,7 +385,7 @@ class MagScope(metaclass=SingletonMeta):
 
         return False
 
-    @command_handler(LogExceptionCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
+    @register_ipc_command(LogExceptionCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
     def log_exception(self, process_name: str, details: str) -> None:
         """Surface an exception raised in a managed process."""
 
