@@ -440,8 +440,10 @@ class BeadGraphic(QGraphicsRectItem):
         self.label.setFont(QFont('Arial', int(view_scene.width() / 100)))
 
         # In-overlay selection controls
-        self.select_control = QGraphicsSimpleTextItem('S', self)
-        self.reference_control = QGraphicsSimpleTextItem('R', self)
+        self.select_control_bg = QGraphicsRectItem(self)
+        self.select_control = QGraphicsSimpleTextItem('S', self.select_control_bg)
+        self.reference_control_bg = QGraphicsRectItem(self)
+        self.reference_control = QGraphicsSimpleTextItem('R', self.reference_control_bg)
         self._configure_selection_controls(view_scene)
 
         self.locked = False # initializes colors/text
@@ -580,39 +582,62 @@ class BeadGraphic(QGraphicsRectItem):
     def _configure_selection_controls(self, view_scene):
         font_size = max(8, int(view_scene.width() / 120))
         font = QFont('Arial', font_size)
+
         self.select_control.setFont(font)
         self.reference_control.setFont(font)
+        self.select_control.setBrush(QColor(255, 255, 255))
+        self.reference_control.setBrush(QColor(255, 255, 255))
+        self.select_control_bg.setZValue(-0.1)
+        self.reference_control_bg.setZValue(-0.1)
+        self.select_control_bg.setPen(Qt.PenStyle.NoPen)
+        self.reference_control_bg.setPen(Qt.PenStyle.NoPen)
+
         self._layout_selection_controls()
         self._update_selection_control_colors()
 
     def _layout_selection_controls(self):
         rect = self.rect()
         margin = self._selection_control_margin
+        padding = 2
 
-        select_rect = self.select_control.boundingRect()
-        self.select_control.setPos(rect.left() + margin, rect.top() + margin)
+        select_text_rect = self.select_control.boundingRect()
+        select_bg_rect = QRectF(0, 0,
+                                select_text_rect.width() + 2 * padding,
+                                select_text_rect.height() + 2 * padding)
+        self.select_control_bg.setRect(select_bg_rect)
+        self.select_control_bg.setPos(rect.left() + margin, rect.top() + margin)
+        self.select_control.setPos(padding, padding)
 
-        reference_rect = self.reference_control.boundingRect()
-        reference_x = rect.right() - reference_rect.width() - margin
-        self.reference_control.setPos(reference_x, rect.top() + margin)
+        reference_text_rect = self.reference_control.boundingRect()
+        reference_bg_rect = QRectF(0, 0,
+                                   reference_text_rect.width() + 2 * padding,
+                                   reference_text_rect.height() + 2 * padding)
+        reference_x = rect.right() - reference_bg_rect.width() - margin
+        self.reference_control_bg.setRect(reference_bg_rect)
+        self.reference_control_bg.setPos(reference_x, rect.top() + margin)
+        self.reference_control.setPos(padding, padding)
 
     def _update_selection_control_colors(self):
-        default_color = QColor(255, 255, 255, 200)
-        selected_color = QColor(*self.border_color_selected)
-        reference_color = QColor(*self.border_color_reference)
+        default_text_color = QColor(255, 255, 255)
+        default_bg_color = QColor(0, 0, 0, 160)
+        selected_bg_color = QColor(*self.border_color_selected[:3], 200)
+        reference_bg_color = QColor(*self.border_color_reference[:3], 200)
+
+        self.select_control.setBrush(default_text_color)
+        self.reference_control.setBrush(default_text_color)
 
         if self._color_state == 'selected':
-            self.select_control.setBrush(selected_color)
-            self.reference_control.setBrush(default_color)
+            self.select_control_bg.setBrush(QBrush(selected_bg_color))
+            self.reference_control_bg.setBrush(QBrush(default_bg_color))
         elif self._color_state == 'reference':
-            self.select_control.setBrush(default_color)
-            self.reference_control.setBrush(reference_color)
+            self.select_control_bg.setBrush(QBrush(default_bg_color))
+            self.reference_control_bg.setBrush(QBrush(reference_bg_color))
         else:
-            self.select_control.setBrush(default_color)
-            self.reference_control.setBrush(default_color)
+            self.select_control_bg.setBrush(QBrush(default_bg_color))
+            self.reference_control_bg.setBrush(QBrush(default_bg_color))
 
     def _handle_selection_control_click(self, event):
-        if self._hit_selection_control(self.select_control, event.pos()):
+        if self._hit_selection_control(self.select_control_bg, event.pos()):
             bead_id = self.id
             self._parent.set_selected_bead(bead_id)
             self._parent.plot_worker.selected_bead_signal.emit(bead_id)
@@ -620,7 +645,7 @@ class BeadGraphic(QGraphicsRectItem):
             event.accept()
             return True
 
-        if self._hit_selection_control(self.reference_control, event.pos()):
+        if self._hit_selection_control(self.reference_control_bg, event.pos()):
             bead_id = self.id
             self._parent.set_reference_bead(bead_id)
             self._parent.plot_worker.reference_bead_signal.emit(bead_id)
@@ -630,7 +655,7 @@ class BeadGraphic(QGraphicsRectItem):
 
         return False
 
-    def _hit_selection_control(self, control: QGraphicsSimpleTextItem, pos: QPointF) -> bool:
+    def _hit_selection_control(self, control: QGraphicsRectItem, pos: QPointF) -> bool:
         local_pos = control.mapFromItem(self, pos)
         return control.boundingRect().contains(local_pos)
 
