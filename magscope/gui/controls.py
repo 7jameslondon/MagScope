@@ -324,14 +324,16 @@ class BeadSelectionPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Bead Selection', collapsed_by_default=False)
 
         # Instructions
-        instructions = textwrap.dedent(
+        note_text = textwrap.dedent(
             """
-            Add a bead: Left-click on the video
-            Remove a bead: Right-click on the bead
-            Lock beads: Click the lock button to prevent yourself from accidentally moving/adding/removing beads. The XYZ-Locks will still function while beads are locked.
+            <b>Add a bead:</b> Left-click on the video<br>
+            <b>Remove a bead:</b> Right-click on the bead<br>
+            <b>Lock beads:</b> Click the lock button to prevent accidentally moving/adding/removing beads.
             """
         ).strip()
-        self.layout().addWidget(QLabel(instructions))
+        note = QLabel(note_text)
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
 
         # ROI
         roi_row = QHBoxLayout()
@@ -349,11 +351,6 @@ class BeadSelectionPanel(ControlPanelBase):
         # Lock/Unlock
         self.lock_button = QPushButton('🔓')
         self.lock_button.setCheckable(True)
-        self.lock_button.setStyleSheet(
-            """
-            QPushButton:checked {
-            background-color: #333;
-            }""")
         self.lock_button.clicked.connect(self.callback_lock)  # type: ignore
         button_row.addWidget(self.lock_button)
 
