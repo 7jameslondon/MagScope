@@ -3,7 +3,8 @@ from magscope.camera import CameraBase, CameraManager
 from magscope.datatypes import MatrixBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
-from magscope.ipc_commands import Command, CommandRegistry, Delivery, register_ipc_command
+from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
+from magscope.ipc_commands import Command
 from magscope.processes import ManagerProcessBase
 from magscope.scope import MagScope
 from magscope.scripting import Script

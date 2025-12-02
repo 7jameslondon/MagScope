@@ -1,7 +1,7 @@
 from collections import OrderedDict
 import sys
-import traceback
 from time import time
+import traceback
 from typing import Iterable
 from warnings import warn
 
@@ -13,7 +13,8 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout,
 
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
-from magscope.ipc_commands import (Delivery, LoadZLUTCommand, MoveBeadCommand,
+from magscope.ipc import Delivery, register_ipc_command
+from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand,
                                    RemoveBeadFromPendingMovesCommand, SetAcquisitionDirCommand,
                                    SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
                                    SetAcquisitionOnCommand, SetBeadRoisCommand, ShowMessageCommand,
@@ -23,8 +24,7 @@ from magscope.ipc_commands import (Delivery, LoadZLUTCommand, MoveBeadCommand,
                                    UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
                                    UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
                                    UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
-                                   UpdateZLockTargetCommand, UpdateZLUTMetadataCommand,
-                                   register_ipc_command)
+                                   UpdateZLockTargetCommand, UpdateZLUTMetadataCommand)
 from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
                           ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
                           ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
