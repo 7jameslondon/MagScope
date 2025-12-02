@@ -589,8 +589,8 @@ class BeadGraphic(QGraphicsRectItem):
         self.reference_control.setBrush(QColor(255, 255, 255))
         self.select_control_bg.setZValue(-0.1)
         self.reference_control_bg.setZValue(-0.1)
-        self.select_control_bg.setPen(Qt.PenStyle.NoPen)
-        self.reference_control_bg.setPen(Qt.PenStyle.NoPen)
+        self.select_control_bg.setPen(QPen(Qt.PenStyle.NoPen))
+        self.reference_control_bg.setPen(QPen(Qt.PenStyle.NoPen))
 
         self._layout_selection_controls()
         self._update_selection_control_colors()
