@@ -3,6 +3,7 @@ from time import time
 
 import numpy as np
 
+from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
                                    RemoveBeadFromPendingMovesCommand, SetXYLockIntervalCommand,
                                    SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
@@ -12,7 +13,7 @@ from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
                                    UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
                                    UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
                                    UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
-                                   UpdateZLockTargetCommand, register_ipc_command)
+                                   UpdateZLockTargetCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import registerwithscript
 

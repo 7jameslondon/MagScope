@@ -8,9 +8,9 @@ settings synchronized and ensures buffers are properly released as acquisition
 states change.
 """
 
-import queue
 from abc import ABCMeta, abstractmethod
 from functools import lru_cache
+import queue
 from time import time
 from warnings import warn
 
@@ -18,9 +18,9 @@ import numpy as np
 from magtrack.simulation import simulate_beads
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
+from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (GetCameraSettingCommand, SetCameraSettingCommand,
-                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand,
-                                   register_ipc_command)
+                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import PoolVideoFlag
 

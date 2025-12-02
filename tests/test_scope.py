@@ -6,7 +6,8 @@ import types
 
 import pytest
 
-from magscope.ipc_commands import Command, CommandRegistry, Delivery, QuitCommand, register_ipc_command
+from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
+from magscope.ipc_commands import Command, QuitCommand
 
 
 class DummyEvent:

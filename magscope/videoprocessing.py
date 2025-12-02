@@ -12,9 +12,9 @@ from magtrack._cupy import cp, is_cupy_available
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (LoadZLUTCommand, ShowMessageCommand, UnloadZLUTCommand,
-                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
-                                   register_ipc_command)
+                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str
 

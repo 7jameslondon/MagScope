@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-import sys
-import traceback
 from abc import ABC, ABCMeta, abstractmethod
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
+import sys
+import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.ipc import drain_pipe_until_quit
-from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
-                                   QuitCommand, SetAcquisitionDirCommand,
-                                   SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
-                                   SetAcquisitionOnCommand, SetBeadRoisCommand,
-                                   SetSettingsCommand, UnknownCommandError, command_kwargs,
-                                   register_ipc_command)
+from magscope.ipc import (CommandRegistry, Delivery, UnknownCommandError, command_kwargs,
+                          drain_pipe_until_quit, register_ipc_command)
+from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
+                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
+                                   SetAcquisitionModeCommand, SetAcquisitionOnCommand,
+                                   SetBeadRoisCommand, SetSettingsCommand)
 from magscope.utils import AcquisitionMode, registerwithscript
 
 logger = get_logger("processes")

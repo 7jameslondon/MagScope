@@ -59,10 +59,9 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
-from magscope.ipc import broadcast_command, create_pipes, drain_pipe_until_quit
-from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
-                                   QuitCommand, SetSettingsCommand, command_kwargs,
-                                   register_ipc_command)
+from magscope.ipc import (CommandRegistry, Delivery, broadcast_command, command_kwargs,
+                          create_pipes, drain_pipe_until_quit, register_ipc_command)
+from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
 from magscope.videoprocessing import VideoProcessorManager

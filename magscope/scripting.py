@@ -19,9 +19,10 @@ from time import time
 from typing import Callable
 from warnings import warn
 
+from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
                                    StartScriptCommand, StartSleepCommand,
-                                   UpdateScriptStatusCommand, UpdateWaitingCommand, register_ipc_command)
+                                   UpdateScriptStatusCommand, UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import registerwithscript
 
