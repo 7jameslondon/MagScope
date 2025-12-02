@@ -438,6 +438,8 @@ class WindowManager(ManagerProcessBase):
         self.send_ipc(command)
 
     def lock_beads(self, locked: bool):
+        if self.video_viewer is not None:
+            self.video_viewer.set_locked_overlay(locked)
         for graphic in self._bead_graphics.values():
             graphic.locked = locked
 
