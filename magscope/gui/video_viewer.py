@@ -71,6 +71,20 @@ class VideoViewer(QGraphicsView):
         self._minimap_reset_button.clicked.connect(lambda: self.reset_view())
         self._minimap_reset_button.hide()
 
+        self._lock_overlay = QLabel(self.viewport())
+        self._lock_overlay.setText("🔒")
+        lock_font = self._lock_overlay.font()
+        lock_font.setPointSize(28)
+        self._lock_overlay.setFont(lock_font)
+        self._lock_overlay.setStyleSheet(
+            "color: rgba(255, 255, 255, 128);"
+            "background-color: transparent;"
+        )
+        self._lock_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._lock_overlay.hide()
+
         self._minimap_base = QPixmap()
         self._fit_scale = 1.0
 
@@ -151,6 +165,13 @@ class VideoViewer(QGraphicsView):
             self._minimap_base = pixmap
         self._refresh_minimap()
 
+    def set_locked_overlay(self, locked: bool):
+        if locked:
+            self._lock_overlay.show()
+        else:
+            self._lock_overlay.hide()
+        self._layout_lock_overlay()
+
     def zoom_level(self):
         return self._zoom
 
@@ -176,6 +197,7 @@ class VideoViewer(QGraphicsView):
         super().resizeEvent(event)
         self.reset_view()
         self._refresh_minimap()
+        self._layout_lock_overlay()
 
     def toggle_drag_mode(self):
         if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -223,6 +245,20 @@ class VideoViewer(QGraphicsView):
     def scrollContentsBy(self, dx, dy):
         super().scrollContentsBy(dx, dy)
         self._refresh_minimap()
+
+    def _layout_lock_overlay(self):
+        if self._lock_overlay.isHidden():
+            return
+
+        margin = 10
+        size_hint = self._lock_overlay.sizeHint()
+        self._lock_overlay.setGeometry(
+            margin,
+            margin,
+            size_hint.width(),
+            size_hint.height(),
+        )
+        self._lock_overlay.raise_()
 
     def _refresh_minimap(self):
         if self._minimap_base.isNull() or self._zoom <= 0:
@@ -286,6 +322,8 @@ class VideoViewer(QGraphicsView):
         else:
             self._minimap_zoom_label.hide()
             self._minimap_reset_button.hide()
+
+        self._layout_lock_overlay()
 
     def _layout_minimap(self):
         viewport_size = self.viewport().size()
