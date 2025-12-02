@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
                           QRectF, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
-                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsSimpleTextItem,
+                             QGraphicsTextItem, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                             QScrollArea, QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.gui.windows import WindowManager
@@ -425,6 +425,8 @@ class BeadGraphic(QGraphicsRectItem):
         self.pen_width = 0
         self.width = width
 
+        self._selection_control_margin = 2
+
         # Calculate shape of rect (accounting for pen/border width)
         offset_pos = self.pen_width / 2
         offset_width = self.width - self.pen_width
@@ -436,6 +438,11 @@ class BeadGraphic(QGraphicsRectItem):
         # Label
         self.label = QGraphicsTextItem('', self)
         self.label.setFont(QFont('Arial', int(view_scene.width() / 100)))
+
+        # In-overlay selection controls
+        self.select_control = QGraphicsSimpleTextItem('S', self)
+        self.reference_control = QGraphicsSimpleTextItem('R', self)
+        self._configure_selection_controls(view_scene)
 
         self.locked = False # initializes colors/text
 
@@ -451,6 +458,8 @@ class BeadGraphic(QGraphicsRectItem):
 
         # Configure scene
         self.scene_rect = self.scene().sceneRect()
+
+        self.move_label()
 
     def remove(self):
         self.view_scene.removeItem(self)
@@ -496,6 +505,8 @@ class BeadGraphic(QGraphicsRectItem):
         brush = QBrush(QColor(*fill_color))
         self.setBrush(brush)
 
+        self._update_selection_control_colors()
+
     def move(self, dx, dy):
         value = self.pos()
         value.setX(value.x() + dx)
@@ -531,6 +542,7 @@ class BeadGraphic(QGraphicsRectItem):
         x = rect.x() + 10
         y = rect.y() + 1
         self.label.setPos(x, y)
+        self._layout_selection_controls()
 
     def itemChange(self, change, value):
         # Constrain the item's movement within the scene
@@ -543,8 +555,11 @@ class BeadGraphic(QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         # Left click - Maybe move
-        if event.button() == Qt.MouseButton.LeftButton and not self.locked:
-            self._is_moving = True
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._handle_selection_control_click(event):
+                return
+            if not self.locked:
+                self._is_moving = True
         # Right Click - Delete self
         elif event.button() == Qt.MouseButton.RightButton:
             if not self.locked:
@@ -561,6 +576,82 @@ class BeadGraphic(QGraphicsRectItem):
 
     def on_move_completed(self):
         self._parent.update_bead_rois()
+
+    def _configure_selection_controls(self, view_scene):
+        font_size = max(8, int(view_scene.width() / 120))
+        font = QFont('Arial', font_size)
+        self.select_control.setFont(font)
+        self.reference_control.setFont(font)
+        self._layout_selection_controls()
+        self._update_selection_control_colors()
+
+    def _layout_selection_controls(self):
+        rect = self.rect()
+        margin = self._selection_control_margin
+
+        select_rect = self.select_control.boundingRect()
+        self.select_control.setPos(rect.left() + margin, rect.top() + margin)
+
+        reference_rect = self.reference_control.boundingRect()
+        reference_x = rect.right() - reference_rect.width() - margin
+        self.reference_control.setPos(reference_x, rect.top() + margin)
+
+    def _update_selection_control_colors(self):
+        default_color = QColor(255, 255, 255, 200)
+        selected_color = QColor(*self.border_color_selected)
+        reference_color = QColor(*self.border_color_reference)
+
+        if self._color_state == 'selected':
+            self.select_control.setBrush(selected_color)
+            self.reference_control.setBrush(default_color)
+        elif self._color_state == 'reference':
+            self.select_control.setBrush(default_color)
+            self.reference_control.setBrush(reference_color)
+        else:
+            self.select_control.setBrush(default_color)
+            self.reference_control.setBrush(default_color)
+
+    def _handle_selection_control_click(self, event):
+        if self._hit_selection_control(self.select_control, event.pos()):
+            bead_id = self.id
+            self._parent.set_selected_bead(bead_id)
+            self._parent.plot_worker.selected_bead_signal.emit(bead_id)
+            self._sync_plot_settings_inputs(bead_id, selected=True)
+            event.accept()
+            return True
+
+        if self._hit_selection_control(self.reference_control, event.pos()):
+            bead_id = self.id
+            self._parent.set_reference_bead(bead_id)
+            self._parent.plot_worker.reference_bead_signal.emit(bead_id)
+            self._sync_plot_settings_inputs(bead_id, selected=False)
+            event.accept()
+            return True
+
+        return False
+
+    def _hit_selection_control(self, control: QGraphicsSimpleTextItem, pos: QPointF) -> bool:
+        local_pos = control.mapFromItem(self, pos)
+        return control.boundingRect().contains(local_pos)
+
+    def _sync_plot_settings_inputs(self, bead_id: int, *, selected: bool):
+        plot_settings = getattr(self._parent.controls, 'plot_settings', None)
+        if plot_settings is None:
+            return
+
+        if selected:
+            line_edit = plot_settings.selected_bead.lineedit
+        else:
+            line_edit = plot_settings.reference_bead.lineedit
+
+        if line_edit.text() == str(bead_id):
+            return
+
+        line_edit.blockSignals(True)
+        try:
+            line_edit.setText(str(bead_id))
+        finally:
+            line_edit.blockSignals(False)
 
 
 class FlashLabel(QLabel):
