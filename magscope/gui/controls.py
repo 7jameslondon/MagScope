@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
+from PyQt6.QtGui import QDesktopServices, QFont, QPalette, QTextOption
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -76,6 +76,14 @@ class ControlPanelBase(QWidget):
 
     def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:  # type: ignore[override]
         return self.groupbox.content_area.layout()
+
+    def set_highlighted(self, enabled: bool) -> None:
+        highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
+        if enabled:
+            color_name = highlight_color.name()
+            self.groupbox.setStyleSheet(f"QGroupBox {{ border: 2px solid {color_name}; }}")
+        else:
+            self.groupbox.setStyleSheet("")
 
 
 class HelpPanel(QFrame):
@@ -938,11 +946,7 @@ class XYLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(is_enabled)
 
         # Send value
         command = SetXYLockOnCommand(value=is_enabled)
@@ -1009,11 +1013,7 @@ class XYLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(value)
 
     def update_interval(self, value: float):
         if value is None:
@@ -1095,11 +1095,7 @@ class ZLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(is_enabled)
 
         # Send value
         command = SetZLockOnCommand(value=is_enabled)
@@ -1177,11 +1173,7 @@ class ZLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(value)
 
     def update_bead(self, value: int):
         if value is None:
