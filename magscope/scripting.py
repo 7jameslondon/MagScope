@@ -89,8 +89,9 @@ class ScriptRegistry:
     def register_class_methods(self, cls):
         """Inspect ``cls`` for scriptable methods and add them to the registry."""
 
+        target_cls = cls if isinstance(cls, type) else cls.__class__
         cls_name = self.get_class_name(cls)
-        for registration in self._collect_script_registrations(cls):
+        for registration in self._collect_script_registrations(target_cls):
             if registration.command_type in self._methods:
                 existing = self._methods[registration.command_type]
                 raise ValueError(
