@@ -939,10 +939,7 @@ class XYLockPanel(ControlPanelBase):
         is_enabled = self.enabled.checkbox.isChecked()
 
         # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self._apply_enabled_style(is_enabled)
 
         # Send value
         command = SetXYLockOnCommand(value=is_enabled)
@@ -1010,10 +1007,13 @@ class XYLockPanel(ControlPanelBase):
         self.enabled.checkbox.blockSignals(False)
 
         # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self._apply_enabled_style(value)
+
+    def _apply_enabled_style(self, is_enabled: bool) -> None:
+        background_color = "palette(highlight)" if is_enabled else "none"
+        self.groupbox.setStyleSheet(
+            f"QGroupBox {{ background-color: {background_color}; }}"
+        )
 
     def update_interval(self, value: float):
         if value is None:
@@ -1096,10 +1096,7 @@ class ZLockPanel(ControlPanelBase):
         is_enabled = self.enabled.checkbox.isChecked()
 
         # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self._apply_enabled_style(is_enabled)
 
         # Send value
         command = SetZLockOnCommand(value=is_enabled)
@@ -1178,10 +1175,13 @@ class ZLockPanel(ControlPanelBase):
         self.enabled.checkbox.blockSignals(False)
 
         # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self._apply_enabled_style(value)
+
+    def _apply_enabled_style(self, is_enabled: bool) -> None:
+        background_color = "palette(highlight)" if is_enabled else "none"
+        self.groupbox.setStyleSheet(
+            f"QGroupBox {{ background-color: {background_color}; }}"
+        )
 
     def update_bead(self, value: int):
         if value is None:
