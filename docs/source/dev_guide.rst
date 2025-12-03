@@ -90,12 +90,16 @@ by the `ScriptManager` process:
 
 ```python
 import magscope
-from magscope.ipc_commands import (SetAcquisitionModeCommand, SetAcquisitionOnCommand,
-                                   ShowMessageCommand, StartSleepCommand)
+from magscope.ipc_commands import (
+    SetAcquisitionModeCommand,
+    SetAcquisitionOnCommand,
+    ShowMessageCommand,
+    SleepCommand,
+)
 
 script = magscope.Script()
 script(SetAcquisitionModeCommand(magscope.AcquisitionMode.CROP_VIDEO))
-script(StartSleepCommand(2.0))  # wait for 2 seconds before running the next command
+script(SleepCommand(2.0))  # wait for 2 seconds before running the next command
 script(ShowMessageCommand('Ready for capture!'))
 script(SetAcquisitionOnCommand(True), wait=True)
 ```
@@ -107,7 +111,7 @@ the IPC registry has a matching handler.
 Built-in scriptable commands include:
 
 * `ShowMessageCommand` – display a message in the GUI log
-* `StartSleepCommand` – pause script execution for a fixed number of seconds
+* `SleepCommand` – pause script execution for a fixed number of seconds
 * `SetAcquisitionOnCommand` – toggle processing of incoming frames
 * `SetAcquisitionDirCommand` – choose the directory used to save acquisitions
 * `SetAcquisitionDirOnCommand` – enable or disable saving data to disk

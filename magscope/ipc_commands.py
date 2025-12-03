@@ -234,7 +234,7 @@ class ResumeScriptCommand(Command):
 
 
 @dataclass(frozen=True)
-class StartSleepCommand(Command):
+class SleepCommand(Command):
     duration: float
 
 

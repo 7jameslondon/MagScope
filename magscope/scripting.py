@@ -15,14 +15,14 @@ mechanism.
 from dataclasses import dataclass
 from enum import StrEnum
 from time import time
-from typing import Callable, Iterable
 import traceback
+from typing import Callable, Iterable
 
-from magscope.ipc import register_ipc_command, UnknownCommandError
 from magscope._logging import get_logger
+from magscope.ipc import UnknownCommandError, register_ipc_command
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
-                                   StartScriptCommand, StartSleepCommand,
-                                   UpdateScriptStatusCommand, UpdateWaitingCommand)
+                                   SleepCommand, StartScriptCommand, UpdateScriptStatusCommand,
+                                   UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -328,7 +328,7 @@ class ScriptManager(ManagerProcessBase):
         if step.wait:
             self._script_waiting = True
 
-        if isinstance(step.command, StartSleepCommand):
+        if isinstance(step.command, SleepCommand):
             self._script_waiting = True
 
         command_type = self._command_registry.command_for_handler(
@@ -347,8 +347,8 @@ class ScriptManager(ManagerProcessBase):
         """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False
 
-    @register_ipc_command(StartSleepCommand)
-    @register_script_command(StartSleepCommand)
+    @register_ipc_command(SleepCommand)
+    @register_script_command(SleepCommand)
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""
         self._script_sleep_duration = duration

@@ -1,20 +1,23 @@
 import numpy as np
 
-import magscope
-from magscope import AcquisitionMode, Units
-from magscope.ipc_commands import (SetAcquisitionModeCommand, SetAcquisitionOnCommand, ShowMessageCommand,
-                                   StartSleepCommand)
+from magscope import AcquisitionMode, Script, Units
+from magscope.ipc_commands import (
+    SetAcquisitionModeCommand,
+    SetAcquisitionOnCommand,
+    ShowMessageCommand,
+    SleepCommand,
+)
 
-my_script = magscope.Script()
+my_script = Script()
 
 # Change the acquisition
-my_script(StartSleepCommand(2. * Units.sec))
+my_script(SleepCommand(2. * Units.sec))
 my_script(SetAcquisitionModeCommand(AcquisitionMode.CROP_VIDEO))
 my_script(SetAcquisitionOnCommand(False))
-my_script(StartSleepCommand(2. * Units.sec))
+my_script(SleepCommand(2. * Units.sec))
 my_script(SetAcquisitionOnCommand(True))
 my_script(SetAcquisitionModeCommand(AcquisitionMode.TRACK))
-my_script(StartSleepCommand(2. * Units.sec))
+my_script(SleepCommand(2. * Units.sec))
 
 # Use a for loop and Numpy
 n = 3

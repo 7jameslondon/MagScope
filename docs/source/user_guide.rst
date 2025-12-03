@@ -58,7 +58,14 @@ Alternatively, you can specify the number of windows between 1-3 using the follo
        .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-b_v1.jpg
         :width: 200px
 
+Live Video Viewer
+--------------
 
+MagScope automatically launches with a live video feed. You can zoom by scrolling in and out with a mouse wheel.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Video_Viewer_v1.gif
+   :alt: Demonstation of the live video feed (video viewer)
+   :align: center
 
 Control Panels
 --------------
@@ -83,38 +90,67 @@ The interface can be reset to the default arrangement by clicking the "Reset the
 
 Status Panel
 -------
+
 ??????????
 
 Bead Selection
 -------
-??????????
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
+   :alt: Demonstation of beads being added, moved and removed
+   :align: center
+
+Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
+To **add** a bead ROI click on the live video feed. A bead ROI will be created centered on your cursor.
+You can **move** the ROI by dragging the ROI.
+You can **remove** a bead by right-clicking the ROI.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v1.jpg
+   :alt: The bead selection panel
+   :align: center
+
+Each bead ROI will be assigned an ID number in the corner of the ROI.
+The ID number always increases to prevent mixing up beads.
+
+To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
+
+During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
+You can do this by click the 🔓 button on the "Bead Selection" panel.
+This will only affect user interactions (it will not effect the XY-Lock).
+You can click the button again to unlock.
 
 Plot Settings
 -------
+
 ??????????
 
 Camera Settings
 -------
+
 ??????????
 
 Acquisition (Saving Data)
 -------
+
 ??????????
 
 Histogram
 -------
+
 ??????????
 
 Radial Profile Monitor
 -------
+
 ??????????
 
 Z-LUT
 -------
+
 ??????????
 
 Z-LUT Generator
 -------
+
 ??????????
 
 XY-Lock
