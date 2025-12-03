@@ -2,7 +2,7 @@ from collections import OrderedDict
 import sys
 from time import time
 import traceback
-from typing import Iterable
+from typing import Callable, Iterable
 from warnings import warn
 
 import numpy as np
@@ -63,6 +63,7 @@ class WindowManager(ManagerProcessBase):
         self.selected_bead = 0
         self.reference_bead: int | None = None
         self._timer: QTimer | None = None
+        self._timer_video_view: QTimer | None = None
         self._video_buffer_last_index: int = 0
         self._video_viewer_need_reset: bool = True
         self.video_viewer: VideoViewer | None = None
@@ -129,15 +130,15 @@ class WindowManager(ManagerProcessBase):
 
         # Timer
         self._timer = QTimer()
-        self._timer.timeout.connect(self.do_main_loop)  # noqa
+        self._timer.timeout.connect(self._main_loop_tick)  # noqa
         self._timer.setInterval(0)
         self._timer.start()
 
         # Timer - Video Display
-        timer_video_view = QTimer()
-        timer_video_view.timeout.connect(self._update_view_and_hist)
-        timer_video_view.setInterval(25)
-        timer_video_view.start()
+        self._timer_video_view = QTimer()
+        self._timer_video_view.timeout.connect(self._update_view_and_hist_tick)
+        self._timer_video_view.setInterval(25)
+        self._timer_video_view.start()
 
         # Start app
         self._running = True
@@ -168,6 +169,26 @@ class WindowManager(ManagerProcessBase):
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
             self.receive_ipc()
+
+    def _handle_timer_exception(self, exc: BaseException) -> None:
+        """Surface exceptions that occur inside Qt timer callbacks."""
+
+        self._running = False
+        self._report_exception(exc)
+        if self.qt_app is not None:
+            self.qt_app.quit()
+
+    def _run_safe(self, callback: Callable[[], None]) -> None:
+        try:
+            callback()
+        except Exception as exc:
+            self._handle_timer_exception(exc)
+
+    def _main_loop_tick(self) -> None:
+        self._run_safe(self.do_main_loop)
+
+    def _update_view_and_hist_tick(self) -> None:
+        self._run_safe(self._update_view_and_hist)
 
 
     def set_selected_bead(self, bead: int):
