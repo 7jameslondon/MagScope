@@ -94,6 +94,9 @@ class ScriptRegistry:
         for registration in self._collect_script_registrations(target_cls):
             if registration.command_type in self._methods:
                 existing = self._methods[registration.command_type]
+                if (existing.cls_name == registration.cls_name
+                        and existing.meth_name == registration.meth_name):
+                    continue
                 raise ValueError(
                     f"Script command {registration.command_type.__name__} for {cls_name}.{registration.meth_name} "
                     f"is already registered with {existing.cls_name}.{existing.meth_name}."
@@ -161,7 +164,7 @@ class ScriptRegistry:
 
                 seen.add(meth_name)
                 yield ScriptCommandRegistration(
-                    cls_name=ScriptRegistry.get_class_name(cls),
+                    cls_name=ScriptRegistry.get_class_name(base),
                     meth_name=meth_name,
                     command_type=command_type,
                     callable=meth,
