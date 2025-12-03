@@ -62,17 +62,17 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       :octicon:`device-camera-video;3rem;sd-text-secondary`
 
-      Swap the simulated camera for your lab's camera
+      How to get your lab's camera connected to MagScope
 
-   .. grid-item-card:: Customization Guide
-      :link: custom_guide
+   .. grid-item-card:: Connect Your Hardware
+      :link: connect_hardware
       :link-type: doc
       :text-align: center
       :shadow: md
 
       :octicon:`gear;3rem;sd-text-secondary`
 
-      How to hookup your microscope with MagScope
+      How to get your lab's hardware connected to MagScope
 
    .. grid-item-card:: GitHub
       :link: https://github.com/7jameslondon/MagScope
