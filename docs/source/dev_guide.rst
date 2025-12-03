@@ -90,33 +90,37 @@ by the `ScriptManager` process:
 
 ```python
 import magscope
+from magscope.ipc_commands import (SetAcquisitionModeCommand, SetAcquisitionOnCommand,
+                                   ShowMessageCommand, StartSleepCommand)
 
 script = magscope.Script()
-script('set_acquisition_mode', magscope.AcquisitionMode.CROP_VIDEO)
-script('sleep', 2.0)  # wait for 2 seconds before running the next command
-script('print', 'Ready for capture!')
+script(SetAcquisitionModeCommand(magscope.AcquisitionMode.CROP_VIDEO))
+script(StartSleepCommand(2.0))  # wait for 2 seconds before running the next command
+script(ShowMessageCommand('Ready for capture!'))
+script(SetAcquisitionOnCommand(True), wait=True)
 ```
 
 Save the script to a `.py` file and load it from the GUI to run it. The manager
-validates each step to ensure the referenced method exists and that the
-provided arguments match the registered callable.
+validates each step to ensure the command is registered for scripting and that
+the IPC registry has a matching handler.
 
-Built-in scriptable functions include:
+Built-in scriptable commands include:
 
-* `print` – display a message in the GUI log
-* `sleep` – pause script execution for a fixed number of seconds
-* `set_acquisition_on` – toggle processing of incoming frames
-* `set_acquisition_dir` – choose the directory used to save acquisitions
-* `set_acquisition_dir_on` – enable or disable saving data to disk
-* `set_acquisition_mode` – switch between modes such as tracking or video
+* `ShowMessageCommand` – display a message in the GUI log
+* `StartSleepCommand` – pause script execution for a fixed number of seconds
+* `SetAcquisitionOnCommand` – toggle processing of incoming frames
+* `SetAcquisitionDirCommand` – choose the directory used to save acquisitions
+* `SetAcquisitionDirOnCommand` – enable or disable saving data to disk
+* `SetAcquisitionModeCommand` – switch between modes such as tracking or video
   recording
 
 See `example_script.py` for a minimal working example.
 
 Expose additional methods to scripts by decorating a manager method with
-`@registerwithscript('my_method_name')`. The string you provide becomes the
-first argument when adding the step to a script, for example
-`script('my_method_name', ...)`.
+`@register_script_command(MyCommand)`. ``MyCommand`` must be the
+:class:`magscope.ipc_commands.Command` dataclass that will be instantiated when
+the step executes. Script authors add the step using the command instance, for
+example `script(MyCommand(...))`.
 
 ## Adding a custom process
 

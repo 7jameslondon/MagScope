@@ -77,13 +77,14 @@ Then import magscope and create script instance.
 The instance can be called anything (it does not need to be called "my_script").
 Example::
    import magscope
+   from magscope.ipc_commands import StartSleepCommand
+
    my_script = magscope.Script()
 
-To add a step to the script you just need to call it with atleast one argument.
-The first argument should be the name of the scriptable function you want to call.
-Latter arguments should be anything you need to pass to that function.
-For example we can call the ``sleep`` command to pause our script for 5 seconds like this::
-   my_script('sleep', 5)
+To add a step to the script, instantiate one of the IPC command dataclasses and
+pass it to the ``Script`` instance. For example we can call the
+``StartSleepCommand`` to pause our script for 5 seconds like this::
+   my_script(StartSleepCommand(5))
 
 
 XY-Lock

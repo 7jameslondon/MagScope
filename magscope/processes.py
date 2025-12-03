@@ -16,7 +16,7 @@ from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
                                    SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
                                    SetAcquisitionModeCommand, SetAcquisitionOnCommand,
                                    SetBeadRoisCommand, SetSettingsCommand)
-from magscope.utils import AcquisitionMode, registerwithscript
+from magscope.utils import AcquisitionMode, register_script_command
 
 logger = get_logger("processes")
 
@@ -239,22 +239,22 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         handler(**command_kwargs(command))
 
     @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    @registerwithscript('set_acquisition_dir')
+    @register_script_command(SetAcquisitionDirCommand)
     def set_acquisition_dir(self, value: str | None):
         self._acquisition_dir = value
 
     @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    @registerwithscript('set_acquisition_dir_on')
+    @register_script_command(SetAcquisitionDirOnCommand)
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
     @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    @registerwithscript('set_acquisition_mode')
+    @register_script_command(SetAcquisitionModeCommand)
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
     @register_ipc_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    @registerwithscript('set_acquisition_on')
+    @register_script_command(SetAcquisitionOnCommand)
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 

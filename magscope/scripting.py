@@ -2,42 +2,69 @@
 
 This module provides the runtime that powers MagScope's lightweight
 automation system. Users describe a sequence of actions in a script file
-by instantiating :class:`Script` and calling registered methods on it. The
-resulting steps are validated against :class:`ScriptRegistry` to ensure
+by instantiating :class:`Script` and adding IPC :class:`Command` instances.
+The resulting steps are validated against :class:`ScriptRegistry` to ensure
 that each call is valid before being executed by :class:`ScriptManager`.
 
-Only methods decorated with :func:`registerwithscript` are exposed to the
+Only methods decorated with :func:`register_script_command` are exposed to the
 script environment. Script execution runs in its own manager process and
 communicates with other parts of the application through the standard IPC
 mechanism.
 """
 
-import inspect
-import traceback
+from dataclasses import dataclass
 from enum import StrEnum
 from time import time
-from typing import Callable
-from warnings import warn
+from typing import Callable, Iterable
+import traceback
 
-from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
+from magscope.ipc import register_ipc_command, UnknownCommandError
+from magscope._logging import get_logger
+from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
                                    StartScriptCommand, StartSleepCommand,
                                    UpdateScriptStatusCommand, UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import registerwithscript
+from magscope.utils import register_script_command
+
+
+logger = get_logger("scripting")
+
+
+@dataclass(frozen=True)
+class ScriptStep:
+    """Structured representation of a single scripted action."""
+
+    command: Command
+    wait: bool = False
+
+
+@dataclass(frozen=True)
+class ScriptCommandRegistration:
+    """Metadata binding a script-visible method to its IPC command type."""
+
+    cls_name: str
+    meth_name: str
+    command_type: type[Command]
+    callable: Callable
 
 
 class Script:
     """Container that records the steps of a user-authored script."""
 
     def __init__(self):
-        # Each step is stored as ``(method_name, args, kwargs)`` so that the
-        # manager can replay the actions later.
-        self.steps: list[tuple[str, tuple, dict]] = []
+        # Each step is stored as a :class:`ScriptStep` so that the manager can
+        # replay the actions later.
+        self.steps: list[ScriptStep] = []
 
-    def __call__(self, meth: str, *args, **kwargs):
-        """Append a method invocation to the script."""
-        self.steps.append((meth, args, kwargs))
+    def __call__(self, command: Command, *, wait: bool = False):
+        """Append an IPC command to the script."""
+
+        if not isinstance(command, Command):
+            raise TypeError(f"Script steps must be IPC commands, got {type(command).__name__}")
+        if not isinstance(wait, bool):
+            raise ValueError(f"Argument 'wait' must be a boolean. Got {wait}")
+
+        self.steps.append(ScriptStep(command=command, wait=wait))
 
 
 class ScriptRegistry:
@@ -46,80 +73,103 @@ class ScriptRegistry:
     avoided_names = ['sentinel', 'send_ipc']
 
     def __init__(self):
-        # Mapping of script-name -> (class name, attribute name, bound/unbound callable)
-        self._methods: dict[str, tuple[str, str, Callable]] = {}
+        # Mapping of command type -> registered command spec
+        self._methods: dict[type[Command], ScriptCommandRegistration] = {}
 
-    def __call__(self, meth_str: str) -> tuple[str, str, Callable]:
-        """Return the registered callable for ``meth_str``.
+    def __call__(self, command_type: type[Command]) -> "ScriptCommandRegistration":
+        """Return the registered callable for ``command_type``.
 
         Raises:
-            ValueError: If ``meth_str`` has not been registered.
+            ValueError: If ``command_type`` has not been registered.
         """
 
-        if meth_str not in self._methods:
-            raise ValueError(f"Script method {meth_str} is not registered.")
-        return self._methods[meth_str]
+        if command_type not in self._methods:
+            raise ValueError(f"Script command {command_type.__name__} is not registered.")
+        return self._methods[command_type]
 
     def register_class_methods(self, cls):
         """Inspect ``cls`` for scriptable methods and add them to the registry."""
 
+        target_cls = cls if isinstance(cls, type) else cls.__class__
         cls_name = self.get_class_name(cls)
-        meth_names = dir(cls)
-        for meth_name in meth_names:
-            # Skip some special methods
-            if meth_name in self.avoided_names:
-                continue
-
-            # Check if the method was decorated for registration
-            meth = getattr(cls, meth_name)
-            if not hasattr(meth, "_scriptable") or not meth._scriptable:
-                continue
-
-            # Check if it is a subclass only inheriting the registration
-            if cls_name != meth._script_cls:
-                continue
-
-            # Check the script method name is unique
-            if meth_name in self._methods:
-                cls_name_reg, meth_name_reg, _ = self._methods[meth_name]
+        for registration in self._collect_script_registrations(target_cls):
+            if registration.command_type in self._methods:
+                existing = self._methods[registration.command_type]
+                if (existing.cls_name == registration.cls_name
+                        and existing.meth_name == registration.meth_name):
+                    continue
                 raise ValueError(
-                    f"Script method {meth_name} for {cls_name}.{meth_name} is already registered with {cls_name_reg}.{meth_name_reg}.")
+                    f"Script command {registration.command_type.__name__} for {cls_name}.{registration.meth_name} "
+                    f"is already registered with {existing.cls_name}.{existing.meth_name}."
+                )
 
-            # Add method to registry
-            self._methods[meth._script_str] = (cls_name, meth_name, meth)
+            self._methods[registration.command_type] = registration
 
-    def check_script(self, script: list[tuple[str, tuple, dict]]):
+    def check_script(self, script: Iterable[ScriptStep], *, command_registry=None):
         """Validate a compiled script before it is executed.
 
         Checks include verifying that the method exists, arguments bind against
-        the callable signature, and that reserved keywords such as ``wait`` have
-        the correct types.
+        the callable signature, and that reserved flags such as ``wait`` have
+        the correct types. When ``command_registry`` is provided, the command must
+        also map to a registered IPC handler so that ScriptManager can dispatch
+        it.
         """
 
         for step in script:
-            step_meth: str = step[0]
-            step_args: tuple = step[1]
-            step_kwargs: dict = step[2]
+            if not isinstance(step.command, Command):
+                raise TypeError(
+                    f"Script contains a non-command step of type {type(step.command).__name__}"
+                )
 
-            if step_meth not in self._methods:
-                raise ValueError(f"Script contains an unknown method: {step_meth}")
+            if not isinstance(step.wait, bool):
+                raise ValueError(f"Argument 'wait' must be a boolean. Got {step.wait}")
 
-            if wait := step_kwargs.get('wait', False):
-                if not isinstance(wait, bool):
-                    raise ValueError(f"Argument 'wait' must be a boolean. Got {wait}")
+            registration = self._methods.get(type(step.command))
+            if registration is None:
+                raise ValueError(
+                    f"Script contains an unknown command: {type(step.command).__name__}"
+                )
 
-            # Test is the method will be called with the correct arguments
-            cls_name, meth_name, meth = self._methods[step_meth]
-            try:
-                bind_kwargs = dict(step_kwargs)
-                bind_kwargs.pop('wait', None)
-                if inspect.ismethod(meth):
-                    inspect.signature(meth).bind(*step_args, **bind_kwargs)
-                else:
-                    # "None" is used in place of "self" for unbound functions of class methods
-                    inspect.signature(meth).bind(None, *step_args, **bind_kwargs)
-            except TypeError as e:
-                raise TypeError(f"Invalid arguments for {meth.__name__} to call {cls_name}.{meth_name}: {e}")
+            if command_registry is not None:
+                try:
+                    command = command_registry.command_for_handler(registration.cls_name, registration.meth_name)
+                except UnknownCommandError as exc:
+                    raise ValueError(
+                        f"No IPC command registered for {registration.cls_name}.{registration.meth_name} "
+                        f"(command {registration.command_type.__name__})"
+                    ) from exc
+                if command is not registration.command_type:
+                    raise ValueError(
+                        f"Script command {registration.command_type.__name__} maps to {registration.cls_name}.{registration.meth_name} "
+                        f"but IPC registry maps that handler to {command.__name__}."
+                    )
+
+    @staticmethod
+    def _collect_script_registrations(cls):
+        """Yield scriptable methods declared on ``cls`` and its bases."""
+
+        seen: set[str] = set()
+        for base in cls.mro():
+            for meth_name, meth in base.__dict__.items():
+                if meth_name in seen or meth_name in ScriptRegistry.avoided_names:
+                    continue
+
+                if not getattr(meth, "_scriptable", False):
+                    continue
+
+                command_type = getattr(meth, "_script_command_type", None)
+                if command_type is None:
+                    raise ValueError(
+                        f"Script method {cls.__name__}.{meth_name} is missing its IPC command mapping"
+                    )
+
+                seen.add(meth_name)
+                yield ScriptCommandRegistration(
+                    cls_name=ScriptRegistry.get_class_name(base),
+                    meth_name=meth_name,
+                    command_type=command_type,
+                    callable=meth,
+                )
 
     @staticmethod
     def get_class_name(cls):
@@ -147,7 +197,7 @@ class ScriptManager(ManagerProcessBase):
 
     def __init__(self):
         super().__init__()
-        self._script: list[tuple[str, tuple, dict]] = []
+        self._script: list[ScriptStep] = []
         self._script_index: int = 0
         self._script_length: int = 0
         self.script_registry = ScriptRegistry()
@@ -190,10 +240,10 @@ class ScriptManager(ManagerProcessBase):
         """Start the currently loaded script from the beginning."""
 
         if self._script_status == ScriptStatus.EMPTY:
-            warn('Cannot start script. A script is not loaded.')
+            logger.warning('Cannot start script. A script is not loaded.')
             return
         elif self._script_status == ScriptStatus.RUNNING:
-            warn('Cannot start script. The script is already running.')
+            logger.warning('Cannot start script. The script is already running.')
             return
 
         self._script_index = 0
@@ -204,7 +254,7 @@ class ScriptManager(ManagerProcessBase):
         """Pause the running script."""
 
         if self._script_status != ScriptStatus.RUNNING:
-            warn('Cannot pause script. A script is not running.')
+            logger.warning('Cannot pause script. A script is not running.')
             return
         self._set_script_status(ScriptStatus.PAUSED)
 
@@ -213,7 +263,7 @@ class ScriptManager(ManagerProcessBase):
         """Resume a script that was previously paused."""
 
         if self._script_status != ScriptStatus.PAUSED:
-            warn('Cannot resume script. The script is not paused.')
+            logger.warning('Cannot resume script. The script is not paused.')
             return
         self._set_script_status(ScriptStatus.RUNNING)
 
@@ -227,7 +277,7 @@ class ScriptManager(ManagerProcessBase):
         """
 
         if self._script_status == ScriptStatus.RUNNING:
-            warn('Cannot load script while a script is running.')
+            logger.warning('Cannot load script while a script is running.')
             return
 
         self._script = []
@@ -239,8 +289,8 @@ class ScriptManager(ManagerProcessBase):
                 with open(path, 'r') as f:
                     exec(f.read(), {}, namespace)
             except Exception:  # noqa
-                warn(f"An error occurred while loading a script:\n")
-                warn(traceback.format_exc())
+                logger.error("An error occurred while loading a script.")
+                logger.error(traceback.format_exc())
             else:
                 n_scripts_found = 0
                 script = None
@@ -249,15 +299,15 @@ class ScriptManager(ManagerProcessBase):
                         script = item.steps  # noqa: retain type narrow
                         n_scripts_found += 1
                 if n_scripts_found == 0:
-                    warn("No Script instance found in script file.")
+                    logger.warning("No Script instance found in script file.")
                 elif n_scripts_found > 1:
-                    warn("Multiple Script instances found in script file.")
+                    logger.warning("Multiple Script instances found in script file.")
                 else:
                     # Check the script is valid
                     try:
-                        self.script_registry.check_script(script)
+                        self.script_registry.check_script(script, command_registry=self._command_registry)
                     except Exception as e:
-                        warn(f'Script is invalid. No script loaded. Error: {e}')
+                        logger.error('Script is invalid. No script loaded. Error: %s', e)
                     else:
                         self._script = script
                         status = ScriptStatus.LOADED
@@ -267,27 +317,30 @@ class ScriptManager(ManagerProcessBase):
         self._script_index = 0
         self._set_script_status(status)
 
-    def _execute_script_step(self, step: tuple[str, tuple, dict]):
+    def _execute_script_step(self, step: ScriptStep):
         """Dispatch a single script step to its owning manager."""
 
         if self._command_registry is None:
             raise RuntimeError("ScriptManager cannot dispatch commands without a registry")
 
-        step_name: str = step[0]
-        step_args: tuple = step[1]
-        step_kwargs: dict = dict(step[2])
+        registration = self.script_registry(type(step.command))
 
-        cls_name, meth_name, meth = self.script_registry(step_name)
-
-        if wait := step_kwargs.pop('wait', False):
-            self._script_waiting = wait
-
-        if step_name == 'sleep':
+        if step.wait:
             self._script_waiting = True
 
-        command_type = self._command_registry.command_for_handler(cls_name, meth_name)
-        command = command_type(*step_args, **step_kwargs)
-        self.send_ipc(command)
+        if isinstance(step.command, StartSleepCommand):
+            self._script_waiting = True
+
+        command_type = self._command_registry.command_for_handler(
+            registration.cls_name, registration.meth_name
+        )
+        if command_type is not registration.command_type:
+            raise UnknownCommandError(
+                f"Script command {registration.command_type.__name__} expected {registration.cls_name}.{registration.meth_name} "
+                f"but registry mapped to {command_type.__name__}"
+            )
+
+        self.send_ipc(step.command)
 
     @register_ipc_command(UpdateWaitingCommand)
     def update_waiting(self):
@@ -295,7 +348,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_waiting = False
 
     @register_ipc_command(StartSleepCommand)
-    @registerwithscript('sleep')
+    @register_script_command(StartSleepCommand)
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""
         self._script_sleep_duration = duration

@@ -34,7 +34,7 @@ from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, Pane
                                        ReorderableColumn)
 from magscope.gui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
-from magscope.scripting import ScriptStatus, registerwithscript
+from magscope.scripting import ScriptStatus, register_script_command
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")
@@ -510,7 +510,7 @@ class WindowManager(ManagerProcessBase):
         self.controls.script_panel.update_status(status)
 
     @register_ipc_command(ShowMessageCommand)
-    @registerwithscript('print')
+    @register_script_command(ShowMessageCommand)
     def print(self, text: str, details: str | None = None):
         msg = QMessageBox(self.windows[0])
         msg.setIcon(QMessageBox.Icon.Information)

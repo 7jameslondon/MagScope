@@ -15,7 +15,7 @@ from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
                                    UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
                                    UpdateZLockTargetCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import registerwithscript
+from magscope.utils import register_script_command
 
 
 class BeadLockManager(ManagerProcessBase):
@@ -62,7 +62,7 @@ class BeadLockManager(ManagerProcessBase):
                 self.do_z_lock(now=now)
 
     @register_ipc_command(ExecuteXYLockCommand)
-    @registerwithscript('do_xy_lock')
+    @register_script_command(ExecuteXYLockCommand)
     def do_xy_lock(self, now=None):
         """ Centers the bead-rois based on their tracked position """
 
@@ -129,7 +129,6 @@ class BeadLockManager(ManagerProcessBase):
                 command = MoveBeadCommand(id=id, dx=dx, dy=dy)
                 self.send_ipc(command)
 
-    @registerwithscript('do_z_lock')
     def do_z_lock(self, now=None):
         # Gather information
         if now is None: now = time()
@@ -170,7 +169,7 @@ class BeadLockManager(ManagerProcessBase):
             self._xy_lock_pending_moves.remove(id)
 
     @register_ipc_command(SetXYLockOnCommand)
-    @registerwithscript('set_xy_lock_on')
+    @register_script_command(SetXYLockOnCommand)
     def set_xy_lock_on(self, value: bool):
         self.xy_lock_on = value
         self._xy_lock_global_cutoff = time()
@@ -179,7 +178,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetXYLockIntervalCommand)
-    @registerwithscript('set_xy_lock_interval')
+    @register_script_command(SetXYLockIntervalCommand)
     def set_xy_lock_interval(self, value: float):
         self.xy_lock_interval = value
 
@@ -187,7 +186,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetXYLockMaxCommand)
-    @registerwithscript('set_xy_lock_max')
+    @register_script_command(SetXYLockMaxCommand)
     def set_xy_lock_max(self, value: float):
         value = max(1, round(value))
         self.xy_lock_max = value
@@ -196,7 +195,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetXYLockWindowCommand)
-    @registerwithscript('set_xy_lock_window')
+    @register_script_command(SetXYLockWindowCommand)
     def set_xy_lock_window(self, value: int):
         self.xy_lock_window = max(1, int(value))
 
@@ -204,7 +203,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetZLockOnCommand)
-    @registerwithscript('set_z_lock_on')
+    @register_script_command(SetZLockOnCommand)
     def set_z_lock_on(self, value: bool):
         self.z_lock_on = value
 
@@ -212,7 +211,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetZLockBeadCommand)
-    @registerwithscript('set_z_lock_bead')
+    @register_script_command(SetZLockBeadCommand)
     def set_z_lock_bead(self, value: int):
         value = int(value)
         self.z_lock_bead = value
@@ -221,7 +220,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetZLockTargetCommand)
-    @registerwithscript('set_z_lock_target')
+    @register_script_command(SetZLockTargetCommand)
     def set_z_lock_target(self, value: float):
         self.z_lock_target = value
 
@@ -229,7 +228,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetZLockIntervalCommand)
-    @registerwithscript('set_z_lock_interval')
+    @register_script_command(SetZLockIntervalCommand)
     def set_z_lock_interval(self, value: float):
         self.z_lock_interval = value
 
@@ -237,7 +236,7 @@ class BeadLockManager(ManagerProcessBase):
         self.send_ipc(command)
 
     @register_ipc_command(SetZLockMaxCommand)
-    @registerwithscript('set_z_lock_max')
+    @register_script_command(SetZLockMaxCommand)
     def set_z_lock_max(self, value: float):
         self.z_lock_max = value
 
