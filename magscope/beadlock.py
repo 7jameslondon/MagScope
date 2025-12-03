@@ -128,7 +128,6 @@ class BeadLockManager(ManagerProcessBase):
                 command = MoveBeadCommand(id=id, dx=dx, dy=dy)
                 self.send_ipc(command)
 
-    @register_script_command(ExecuteXYLockCommand)
     def do_z_lock(self, now=None):
         # Gather information
         if now is None: now = time()
