@@ -33,10 +33,9 @@ Example::
 
    my_script = magscope.Script()
 
-To add a step to the script, instantiate one of the IPC command dataclasses and
-pass it to the ``Script`` instance. For example we can call the
+To add a step to the script, call the ``append`` method. For example we can call the
 ``SleepCommand`` to pause our script for 5 seconds like this::
-   my_script(SleepCommand(5))
+   my_script.append(SleepCommand(5))
 
 
 

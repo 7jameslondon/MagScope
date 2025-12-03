@@ -56,7 +56,7 @@ class Script:
         # replay the actions later.
         self.steps: list[ScriptStep] = []
 
-    def __call__(self, command: Command, *, wait: bool = False):
+    def append(self, command: Command, *, wait: bool = False):
         """Append an IPC command to the script."""
 
         if not isinstance(command, Command):
