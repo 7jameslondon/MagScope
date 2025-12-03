@@ -44,7 +44,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       How to use MagScope
 
-   .. grid-item-card:: (Optional) Setup GPU Acceleration
+   .. grid-item-card:: (Optional) GPU Acceleration
       :link: gpu_guide
       :link-type: doc
       :text-align: center
@@ -72,7 +72,17 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       :octicon:`gear;3rem;sd-text-secondary`
 
-      How to get your lab's hardware connected to MagScope
+      How to get your lab's hardware (motors, stage, lights, ect) connected to MagScope
+
+   .. grid-item-card:: Scripting
+      :link: scripting_guide
+      :link-type: doc
+      :text-align: center
+      :shadow: md
+
+      :octicon:`terminal;3rem;sd-text-secondary`
+
+      Automate tasks with Python scripts
 
    .. grid-item-card:: GitHub
       :link: https://github.com/7jameslondon/MagScope
@@ -119,5 +129,6 @@ Support
    user_guide
    gpu_guide
    connect_camera
-   custom_guide
+   connect_hardware
+   scripting_guide
    dev_guide

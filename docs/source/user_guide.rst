@@ -3,7 +3,7 @@
 User Guide
 ==========
 
-This guide focuses on launching the MagScope application and interacting with its graphical interface.
+This guide explains how to launch MagScope and use its interface. If you have not already read the :doc:`getting_started`.
 
 Launching the Demo GUI
 ----------------------
@@ -17,21 +17,14 @@ MagScope includes a simulated camera so the interface can be explored without la
 
 This creates the default window layout and begins streaming data from the built-in demo pipeline.
 
-Lifecycle rules
----------------
+You can only launch MagScope once.
+After launching it if you want to start again you must close it and delete the instance (delete ``scope`` in the example).
 
-MagScope is a singleton. Attempting to create a second :class:`magscope.MagScope` raises a ``TypeError``; the first instance owns
-the entire application lifetime. Call :py:meth:`MagScope.start <magscope.scope.MagScope.start>` once to launch the GUI and manager
-processes. Calling ``start()`` again while the instance is already running only produces a warning because MagScope is already
-active. After MagScope receives a quit request or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`, the instance
-permanently shuts down and cannot be restarted.
-
-Use :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>` to trigger the same orderly shutdown that occurs when any manager
-process requests a quit. ``stop()`` blocks until all manager processes have joined, so you can safely clean up resources after it
-returns.
+To close MagScope you can close any of the windows, you might need to wait up to a couple of minutes for it to finish.
+Or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
 
 Windows and Multiple Screens
---------------
+----------------------------
 
 It is often easier to see everything in MagScope with multiple screens.
 By default MagScope will try to detect how many screens your computer has and place one Window in full screen on each.
@@ -43,6 +36,29 @@ Alternatively, you can specify the number of windows between 1-3 using the follo
    scope.window_manager.n_windows = 1
    scope.start()
 
+.. list-table::
+   :widths: 15 85
+   :header-rows: 0
+
+   * - One Screen
+     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/One-Window_v1.jpg
+        :width: 200px
+
+   * - Two Screens
+     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-a_v1.jpg
+        :width: 200px
+       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-b_v1.jpg
+        :width: 200px
+
+   * - Three Screens
+     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-a_v1.jpg
+        :width: 200px
+       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-c_v1.jpg
+        :width: 200px
+       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-b_v1.jpg
+        :width: 200px
+
+
 
 Control Panels
 --------------
@@ -53,39 +69,53 @@ Panels for each set of controls can be hidden or revealed by clicking on the pan
    :alt: Demonstration of opening and closing a GUI panel in MagScope
    :align: center
 
-Scripting
----------
-MagScope comes with a lightweight scripting runtime that allows you to queue up GUI interactions and hardware commands for repeatable experiments.
-A script is an instance of ``magscope.Script`` where each call records a step to be executed.
+Panels can move arranged by dragging them by the top-right corner. If space permits a new column can be added.
 
-First, create a script following the details below.
-An `example script is available <https://github.com/7jameslondon/MagScope/blob/master/example_script.py>`_.
-Second, load the script by clicking "Load" and selecting the Python script.
-Once loaded the Scripting panel should say "Loaded".
-Third, click "Start".
-You can pause your script while it is running.
-Or once it is "Finished" you can run it again by clicking "Start".
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Move-Panel_v1.gif
+   :alt: Demonstration of moving a GUI panel in MagScope
+   :align: center
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Scripting_Panel_v1.jpg
-         :alt: Screenshot of the Scripting panel.
+The interface can be reset to the default arrangement by clicking the "Reset the GUI" button in the top-left corner of the window with the control panels.
 
-Writing your own script
-""""""""""""""""""""""""
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Reset-GUI_v1.jpg
+   :alt: The "Reset the GUI" button
+   :align: center
 
-To start a script create a new Python file (example: ``a_script.py``).
-Then import magscope and create script instance.
-The instance can be called anything (it does not need to be called "my_script").
-Example::
-   import magscope
-   from magscope.ipc_commands import StartSleepCommand
+Status Panel
+-------
+??????????
 
-   my_script = magscope.Script()
+Bead Selection
+-------
+??????????
 
-To add a step to the script, instantiate one of the IPC command dataclasses and
-pass it to the ``Script`` instance. For example we can call the
-``StartSleepCommand`` to pause our script for 5 seconds like this::
-   my_script(StartSleepCommand(5))
+Plot Settings
+-------
+??????????
 
+Camera Settings
+-------
+??????????
+
+Acquisition (Saving Data)
+-------
+??????????
+
+Histogram
+-------
+??????????
+
+Radial Profile Monitor
+-------
+??????????
+
+Z-LUT
+-------
+??????????
+
+Z-LUT Generator
+-------
+??????????
 
 XY-Lock
 -------
@@ -129,8 +159,8 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
          :alt: Screenshot of the Z-Lock panel.
          :align: center
 
-Coming Soon
---------------------
 
-* **Data export** – Placeholder for explaining how to save measurements captured through the interface.
-* **Hardware integration** – For camera setup, follow :ref:`connect_camera` to replace the demo feed with your device.
+Scripting
+---------
+
+To learn how to use scripts to automate tasks in MagScope read the :doc:`scripting_guide` guide.

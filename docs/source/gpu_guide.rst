@@ -1,6 +1,6 @@
 .. _gpu_guide:
 
-Setup GPU Acceleration
+GPU Acceleration
 ======================
 This is **optional**. MagScope can work entirely with your computer's CPU. However, adding GPU support can make image processing faster.
 
