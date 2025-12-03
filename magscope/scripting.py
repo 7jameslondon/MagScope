@@ -18,10 +18,10 @@ from time import time
 from typing import Callable, Iterable
 import traceback
 
-from magscope.ipc import register_ipc_command
+from magscope.ipc import register_ipc_command, UnknownCommandError
 from magscope._logging import get_logger
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
-                                   StartScriptCommand, StartSleepCommand, UnknownCommandError,
+                                   StartScriptCommand, StartSleepCommand,
                                    UpdateScriptStatusCommand, UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command

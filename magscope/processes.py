@@ -16,7 +16,7 @@ from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
                                    SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
                                    SetAcquisitionModeCommand, SetAcquisitionOnCommand,
                                    SetBeadRoisCommand, SetSettingsCommand)
-from magscope.utils import AcquisitionMode, registerwithscript
+from magscope.utils import AcquisitionMode, register_script_command
 
 logger = get_logger("processes")
 
