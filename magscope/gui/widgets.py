@@ -464,8 +464,7 @@ class BeadGraphic(QGraphicsRectItem):
         self._locked = locked
 
         # Text
-        text = '🔒' if locked else '🔓'
-        self.label.setPlainText(f'{text} {self.id}')
+        self.label.setPlainText(f'{self.id}')
 
         # Draggable
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, not locked)

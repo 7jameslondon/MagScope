@@ -50,8 +50,8 @@ processes = importlib.util.module_from_spec(processes_spec)
 sys.modules["magscope.processes"] = processes
 processes_spec.loader.exec_module(processes)
 import magscope.ipc_commands as ipc_commands
-from magscope.ipc_commands import (CommandRegistry, Delivery, LogExceptionCommand, QuitCommand,
-                                   SetAcquisitionOnCommand, UnknownCommandError)
+from magscope.ipc import CommandRegistry, Delivery, UnknownCommandError
+from magscope.ipc_commands import LogExceptionCommand, QuitCommand, SetAcquisitionOnCommand
 
 
 class FakeEvent:

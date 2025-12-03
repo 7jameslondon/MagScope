@@ -8,9 +8,9 @@ settings synchronized and ensures buffers are properly released as acquisition
 states change.
 """
 
-import queue
 from abc import ABCMeta, abstractmethod
 from functools import lru_cache
+import queue
 from time import time
 from warnings import warn
 
@@ -18,9 +18,9 @@ import numpy as np
 from magtrack.simulation import simulate_beads
 
 from magscope.datatypes import BufferUnderflow, VideoBuffer
+from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (GetCameraSettingCommand, SetCameraSettingCommand,
-                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand,
-                                   command_handler)
+                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import PoolVideoFlag
 
@@ -127,14 +127,14 @@ class CameraManager(ManagerProcessBase):
         for _ in range(self.video_buffer.stack_shape[2]):
             self.camera.release()
 
-    @command_handler(GetCameraSettingCommand)
+    @register_ipc_command(GetCameraSettingCommand)
     def get_camera_setting(self, name: str):
         """Send a camera setting value to the GUI via IPC."""
         value = self.camera[name]
         command = UpdateCameraSettingCommand(name=name, value=value)
         self.send_ipc(command)
 
-    @command_handler(SetCameraSettingCommand)
+    @register_ipc_command(SetCameraSettingCommand)
     def set_camera_setting(self, name: str, value: str):
         """Apply a setting to the camera and broadcast the full settings set."""
         try:

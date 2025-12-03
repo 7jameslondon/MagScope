@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont, QTextOption
+from PyQt6.QtGui import QDesktopServices, QFont, QPalette, QTextOption
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -76,6 +76,14 @@ class ControlPanelBase(QWidget):
 
     def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:  # type: ignore[override]
         return self.groupbox.content_area.layout()
+
+    def set_highlighted(self, enabled: bool) -> None:
+        highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
+        if enabled:
+            color_name = highlight_color.name()
+            self.groupbox.setStyleSheet(f"QGroupBox {{ border: 2px solid {color_name}; border-radius: 6px; }}")
+        else:
+            self.groupbox.setStyleSheet("")
 
 
 class HelpPanel(QFrame):
@@ -316,14 +324,16 @@ class BeadSelectionPanel(ControlPanelBase):
         super().__init__(manager=manager, title='Bead Selection', collapsed_by_default=False)
 
         # Instructions
-        instructions = textwrap.dedent(
+        note_text = textwrap.dedent(
             """
-            Add a bead: Left-click on the video
-            Remove a bead: Right-click on the bead
-            Lock beads: Click the lock button to prevent yourself from accidentally moving/adding/removing beads. The XYZ-Locks will still function while beads are locked.
+            <b>Add a bead:</b> Left-click on the video<br>
+            <b>Remove a bead:</b> Right-click on the bead<br>
+            <b>Lock beads:</b> Click the lock button to prevent accidentally moving/adding/removing beads.
             """
         ).strip()
-        self.layout().addWidget(QLabel(instructions))
+        note = QLabel(note_text)
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
 
         # ROI
         roi_row = QHBoxLayout()
@@ -341,11 +351,6 @@ class BeadSelectionPanel(ControlPanelBase):
         # Lock/Unlock
         self.lock_button = QPushButton('🔓')
         self.lock_button.setCheckable(True)
-        self.lock_button.setStyleSheet(
-            """
-            QPushButton:checked {
-            background-color: #333;
-            }""")
         self.lock_button.clicked.connect(self.callback_lock)  # type: ignore
         button_row.addWidget(self.lock_button)
 
@@ -359,6 +364,7 @@ class BeadSelectionPanel(ControlPanelBase):
         is_locked = self.lock_button.isChecked()
         self.lock_button.setText('🔒' if is_locked else '🔓')
         self.clear_button.setEnabled(not is_locked)
+        self.set_highlighted(is_locked)
         self.manager.lock_beads(is_locked)
 
 
@@ -938,11 +944,7 @@ class XYLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(is_enabled)
 
         # Send value
         command = SetXYLockOnCommand(value=is_enabled)
@@ -1009,11 +1011,7 @@ class XYLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(value)
 
     def update_interval(self, value: float):
         if value is None:
@@ -1095,11 +1093,7 @@ class ZLockPanel(ControlPanelBase):
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
-        # Change panel background color
-        if is_enabled:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(is_enabled)
 
         # Send value
         command = SetZLockOnCommand(value=is_enabled)
@@ -1177,11 +1171,7 @@ class ZLockPanel(ControlPanelBase):
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
 
-        # Change panel background color
-        if value:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: #1e3322 }')
-        else:
-            self.groupbox.setStyleSheet('QGroupBox { background-color: none }')
+        self.set_highlighted(value)
 
     def update_bead(self, value: int):
         if value is None:

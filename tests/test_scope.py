@@ -6,7 +6,8 @@ import types
 
 import pytest
 
-from magscope.ipc_commands import Command, CommandRegistry, Delivery, QuitCommand, command_handler
+from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
+from magscope.ipc_commands import Command, QuitCommand
 
 
 class DummyEvent:
@@ -116,7 +117,7 @@ def load_scope_with_stubs(monkeypatch):
         def join(self) -> None:
             self.join_called = True
 
-        @command_handler(QuitCommand, delivery=Delivery.BROADCAST, target="ManagerProcessBase")
+        @register_ipc_command(QuitCommand, delivery=Delivery.BROADCAST, target="ManagerProcessBase")
         def quit(self) -> None:
             self._quitting.set()
 

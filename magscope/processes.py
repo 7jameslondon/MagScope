@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-import sys
-import traceback
 from abc import ABC, ABCMeta, abstractmethod
 from ctypes import c_uint8
 from multiprocessing import Event, Process, Value
+import sys
+import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.ipc import drain_pipe_until_quit
-from magscope.ipc_commands import (Command, CommandRegistry, Delivery, LogExceptionCommand,
-                                   QuitCommand, SetAcquisitionDirCommand,
-                                   SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
-                                   SetAcquisitionOnCommand, SetBeadRoisCommand,
-                                   SetSettingsCommand, UnknownCommandError, command_handler,
-                                   command_kwargs)
-from magscope.utils import AcquisitionMode, register_script_command
+from magscope.ipc import (CommandRegistry, Delivery, UnknownCommandError, command_kwargs,
+                          drain_pipe_until_quit, register_ipc_command)
+from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
+                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
+                                   SetAcquisitionModeCommand, SetAcquisitionOnCommand,
+                                   SetBeadRoisCommand, SetSettingsCommand)
+from magscope.utils import AcquisitionMode, registerwithscript
 
 logger = get_logger("processes")
 
@@ -179,7 +178,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def do_main_loop(self):
         pass
 
-    @command_handler(QuitCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(QuitCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def quit(self):
         """Shutdown the process (and ask the other processes to quit too)."""
         self._quitting.set()
@@ -239,31 +238,31 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
 
         handler(**command_kwargs(command))
 
-    @command_handler(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @register_script_command(SetAcquisitionDirCommand)
     def set_acquisition_dir(self, value: str | None):
         self._acquisition_dir = value
 
-    @command_handler(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @register_script_command(SetAcquisitionDirOnCommand)
     def set_acquisition_dir_on(self, value: bool):
         self._acquisition_dir_on = value
 
-    @command_handler(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @register_script_command(SetAcquisitionModeCommand)
     def set_acquisition_mode(self, mode: AcquisitionMode):
         self._acquisition_mode = mode
 
-    @command_handler(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetAcquisitionOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @register_script_command(SetAcquisitionOnCommand)
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 
-    @command_handler(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         self.bead_rois = value
 
-    @command_handler(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_settings(self, settings: dict):
         self.settings = settings
 
