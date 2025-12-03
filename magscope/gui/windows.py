@@ -570,11 +570,11 @@ class WindowManager(ManagerProcessBase):
         checkbox.blockSignals(False)
 
     @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    def set_acquisition_mode(self, value: AcquisitionMode):
-        super().set_acquisition_mode(value)
+    def set_acquisition_mode(self, mode: AcquisitionMode):
+        super().set_acquisition_mode(mode)
         combobox = self.controls.acquisition_panel.acquisition_mode_combobox
         combobox.blockSignals(True)  # to prevent a loop
-        combobox.setCurrentText(value)
+        combobox.setCurrentText(mode)
         combobox.blockSignals(False)
 
     @register_ipc_command(UpdateXYLockEnabledCommand)
