@@ -56,9 +56,17 @@ class Script:
         # replay the actions later.
         self.steps: list[ScriptStep] = []
 
-    def __call__(self, command: Command, *, wait: bool = False):
+    def append(self, command: Command, *, wait: bool = False):
         """Append an IPC command to the script."""
 
+        self._append_step(command=command, wait=wait)
+
+    def __call__(self, command: Command, *, wait: bool = False):
+        """Backward-compatible alias for :meth:`append`."""
+
+        self._append_step(command=command, wait=wait)
+
+    def _append_step(self, *, command: Command, wait: bool):
         if not isinstance(command, Command):
             raise TypeError(f"Script steps must be IPC commands, got {type(command).__name__}")
         if not isinstance(wait, bool):

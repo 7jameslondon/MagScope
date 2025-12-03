@@ -10,7 +10,9 @@ Overview
 
 * User scripts create a :class:`magscope.scripting.Script` instance and record
   each action by instantiating an IPC :class:`magscope.ipc_commands.Command`
-  subclass and passing it to the script. Every call is captured as a
+  subclass and calling :meth:`magscope.scripting.Script.append` to add it. The
+  callable ``script(...)`` style remains supported for backward compatibility,
+  but ``append`` makes the intent clearer. Every addition is captured as a
   :class:`magscope.scripting.ScriptStep` containing the fully constructed
   command and an optional ``wait`` flag.
 * Scriptable methods in managers are opt-in via the
@@ -24,6 +26,22 @@ Overview
   method to a concrete :class:`magscope.ipc_commands.Command` dataclass and its
   delivery semantics (direct, broadcast, or MagScope-local). This ensures every
   step maps to a registered IPC payload before execution.
+
+Simple script structure
+-----------------------
+
+.. code-block:: python
+
+   import magscope
+   from magscope.ipc_commands import StartSleepCommand, SetAcquisitionOnCommand
+
+   my_script = magscope.Script()
+   my_script.append(StartSleepCommand(2.0))
+   my_script.append(SetAcquisitionOnCommand(True), wait=True)
+
+The ``append`` call records each IPC command as a step. The optional ``wait``
+flag pauses script advancement until the command completes. The older
+``my_script(command)`` style still works for existing scripts.
 
 Lifecycle and validation
 ------------------------

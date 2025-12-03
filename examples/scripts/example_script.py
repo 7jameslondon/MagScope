@@ -8,16 +8,16 @@ from magscope.ipc_commands import (SetAcquisitionModeCommand, SetAcquisitionOnCo
 my_script = magscope.Script()
 
 # Change the acquisition
-my_script(StartSleepCommand(2. * Units.sec))
-my_script(SetAcquisitionModeCommand(AcquisitionMode.CROP_VIDEO))
-my_script(SetAcquisitionOnCommand(False))
-my_script(StartSleepCommand(2. * Units.sec))
-my_script(SetAcquisitionOnCommand(True))
-my_script(SetAcquisitionModeCommand(AcquisitionMode.TRACK))
-my_script(StartSleepCommand(2. * Units.sec))
+my_script.append(StartSleepCommand(2. * Units.sec))
+my_script.append(SetAcquisitionModeCommand(AcquisitionMode.CROP_VIDEO))
+my_script.append(SetAcquisitionOnCommand(False))
+my_script.append(StartSleepCommand(2. * Units.sec))
+my_script.append(SetAcquisitionOnCommand(True))
+my_script.append(SetAcquisitionModeCommand(AcquisitionMode.TRACK))
+my_script.append(StartSleepCommand(2. * Units.sec))
 
 # Use a for loop and Numpy
 n = 3
 array = np.random.rand(n)
 for i in range(n):
-    my_script(ShowMessageCommand(f'A random number is: {array[i]}'))
+    my_script.append(ShowMessageCommand(f'A random number is: {array[i]}'))
