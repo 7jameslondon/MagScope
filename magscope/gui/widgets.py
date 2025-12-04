@@ -416,6 +416,7 @@ class BeadGraphic(QGraphicsRectItem):
         self._locked: bool
         self._color_state: str = 'default'
         self.scene_rect = None
+        self._cached_roi: tuple[int, int, int, int] | None = None
         self.border_color_default = (0, 255, 255, 255)
         self.fill_color_default = (0, 183, 235, 25)
         self.border_color_selected = (255, 0, 0, 255)
@@ -451,6 +452,7 @@ class BeadGraphic(QGraphicsRectItem):
 
         # Configure scene
         self.scene_rect = self.scene().sceneRect()
+        self._update_cached_roi()
 
     def remove(self):
         self.view_scene.removeItem(self)
@@ -502,6 +504,7 @@ class BeadGraphic(QGraphicsRectItem):
         value.setY(value.y() + dy)
         value = self.validate_move(value)
         self.setPos(value)
+        self._update_cached_roi()
 
     def validate_move(self, value):
         """ Prevents the graphic from moving outside the scene border"""
@@ -539,6 +542,8 @@ class BeadGraphic(QGraphicsRectItem):
             self.move_label()
             if not self._is_moving:
                 self.on_move_completed()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            self._update_cached_roi()
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event):
@@ -561,6 +566,20 @@ class BeadGraphic(QGraphicsRectItem):
 
     def on_move_completed(self):
         self._parent.update_bead_rois()
+
+    def get_roi_bounds(self) -> tuple[int, int, int, int]:
+        if self._cached_roi is None:
+            self._update_cached_roi()
+        return self._cached_roi
+
+    def _update_cached_roi(self):
+        tl = self.mapToScene(self.rect().topLeft())
+        br = self.mapToScene(self.rect().bottomRight())
+        x0 = int(round(tl.x() - self.pen_width / 2))
+        x1 = int(round(br.x() + self.pen_width / 2))
+        y0 = int(round(tl.y() - self.pen_width / 2))
+        y1 = int(round(br.y() + self.pen_width / 2))
+        self._cached_roi = (x0, x1, y0, y1)
 
 
 class FlashLabel(QLabel):

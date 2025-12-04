@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout,
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand,
+from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand, MoveBeadsCommand,
                                    RemoveBeadFromPendingMovesCommand, SetAcquisitionDirCommand,
                                    SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
                                    SetAcquisitionOnCommand, SetBeadRoisCommand, ShowMessageCommand,
@@ -393,13 +393,7 @@ class WindowManager(ManagerProcessBase):
     def update_bead_rois(self):
         bead_rois = {}
         for id, graphic in self._bead_graphics.items():
-            tl = graphic.mapToScene(graphic.rect().topLeft())
-            br = graphic.mapToScene(graphic.rect().bottomRight())
-            x0 = int(round(tl.x() - graphic.pen_width / 2))
-            x1 = int(round(br.x() + graphic.pen_width / 2))
-            y0 = int(round(tl.y() - graphic.pen_width / 2))
-            y1 = int(round(br.y() + graphic.pen_width / 2))
-            bead_rois[id] = (x0, x1, y0, y1)
+            bead_rois[id] = graphic.get_roi_bounds()
         self.bead_rois = bead_rois
         command = SetBeadRoisCommand(value=bead_rois)
         self.send_ipc(command)
@@ -415,6 +409,17 @@ class WindowManager(ManagerProcessBase):
         # Confirm with the xy-lock
         command = RemoveBeadFromPendingMovesCommand(id=id)
         self.send_ipc(command)
+
+    @register_ipc_command(MoveBeadsCommand)
+    def move_beads(self, moves: list[tuple[int, int, int]]):
+        for id, dx, dy in moves:
+            if id not in self._bead_graphics:
+                continue
+            self._bead_graphics[id].move(dx, dy)
+        self.update_bead_rois()
+        for id, _, _ in moves:
+            command = RemoveBeadFromPendingMovesCommand(id=id)
+            self.send_ipc(command)
 
     def add_bead(self, pos: QPoint):
         # Add a bead graphic

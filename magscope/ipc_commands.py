@@ -73,6 +73,11 @@ class MoveBeadCommand(Command):
 
 
 @dataclass(frozen=True)
+class MoveBeadsCommand(Command):
+    moves: list[tuple[int, int, int]]
+
+
+@dataclass(frozen=True)
 class UpdateXYLockEnabledCommand(Command):
     value: bool
 
