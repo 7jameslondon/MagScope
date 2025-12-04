@@ -684,9 +684,10 @@ class ProfilePanel(ControlPanelBase):
         # Enable
         self.enable = LabeledCheckbox(
             label_text='Enabled',
-            callback=self.clear,
+            callback=self.enabled_callback,
         )
         self.layout().addWidget(self.enable)
+        self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
         # Selected bead
         selected_bead_row = QHBoxLayout()
@@ -712,6 +713,18 @@ class ProfilePanel(ControlPanelBase):
         self.axes.spines['left'].set_visible(False)
         self.axes.set_yticks([])
         self.line, = self.axes.plot([], [], 'w')
+
+    def enabled_callback(self, enabled: bool) -> None:
+        effective_enabled = enabled and not self.groupbox.collapsed
+        self._apply_enabled_state(effective_enabled)
+
+    def _groupbox_toggled(self, expanded: bool) -> None:
+        enabled = expanded and self.enable.checkbox.isChecked()
+        self._apply_enabled_state(enabled)
+
+    def _apply_enabled_state(self, enabled: bool) -> None:
+        self.set_highlighted(enabled)
+        self.clear()
 
     def update_plot(self):
         if not self.enable.checkbox.isChecked() or self.groupbox.collapsed:
