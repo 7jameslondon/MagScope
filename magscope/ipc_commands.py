@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
     from magscope.scripting import ScriptStatus
@@ -70,6 +70,11 @@ class MoveBeadCommand(Command):
     id: int
     dx: int
     dy: int
+
+
+@dataclass(frozen=True)
+class MoveBeadsCommand(Command):
+    moves: Sequence[tuple[int, int, int]]
 
 
 @dataclass(frozen=True)

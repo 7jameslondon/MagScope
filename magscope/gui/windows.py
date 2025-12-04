@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout,
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand,
+from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand, MoveBeadsCommand,
                                    RemoveBeadFromPendingMovesCommand, SetAcquisitionDirCommand,
                                    SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
                                    SetAcquisitionOnCommand, SetBeadRoisCommand, ShowMessageCommand,
@@ -404,17 +404,24 @@ class WindowManager(ManagerProcessBase):
         command = SetBeadRoisCommand(value=bead_rois)
         self.send_ipc(command)
 
+    @register_ipc_command(MoveBeadsCommand)
+    def move_beads(self, moves):
+        moved_ids = []
+
+        for bead_id, dx, dy in moves:
+            self._bead_graphics[bead_id].move(dx, dy)
+            moved_ids.append(bead_id)
+
+        if moved_ids:
+            self.update_bead_rois()
+
+            for bead_id in moved_ids:
+                command = RemoveBeadFromPendingMovesCommand(id=bead_id)
+                self.send_ipc(command)
+
     @register_ipc_command(MoveBeadCommand)
     def move_bead(self, id: int, dx, dy):
-        # Move the bead
-        self._bead_graphics[id].move(dx, dy)
-
-        # Update the ROIs
-        self.update_bead_rois()
-
-        # Confirm with the xy-lock
-        command = RemoveBeadFromPendingMovesCommand(id=id)
-        self.send_ipc(command)
+        self.move_beads([(id, dx, dy)])
 
     def add_bead(self, pos: QPoint):
         # Add a bead graphic

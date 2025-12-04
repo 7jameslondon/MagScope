@@ -4,7 +4,7 @@ from time import time
 import numpy as np
 
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
+from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand, MoveBeadsCommand,
                                    RemoveBeadFromPendingMovesCommand, SetXYLockIntervalCommand,
                                    SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
                                    SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
@@ -74,6 +74,7 @@ class BeadLockManager(ManagerProcessBase):
         self._xy_lock_last_time = now
 
         # For each bead calculate if/how much to move
+        moves: list[tuple[int, int, int]] = []
         for id, roi in self.bead_rois.items():
 
             # Get the track for this bead
@@ -126,8 +127,11 @@ class BeadLockManager(ManagerProcessBase):
             # Move the bead as needed
             if abs(dx) > 0. or abs(dy) > 0.:
                 self._xy_lock_pending_moves.append(id)
-                command = MoveBeadCommand(id=id, dx=dx, dy=dy)
-                self.send_ipc(command)
+                moves.append((id, dx, dy))
+
+        if moves:
+            command = MoveBeadsCommand(moves=moves)
+            self.send_ipc(command)
 
     def do_z_lock(self, now=None):
         # Gather information
