@@ -4,7 +4,7 @@ from time import time
 import numpy as np
 
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand, MoveBeadsCommand,
+from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadsCommand,
                                    RemoveBeadFromPendingMovesCommand,
                                    RemoveBeadsFromPendingMovesCommand, SetXYLockIntervalCommand,
                                    SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,

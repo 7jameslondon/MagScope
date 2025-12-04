@@ -65,12 +65,6 @@ class UpdateVideoBufferPurgeCommand(Command):
     t: float
 
 
-@dataclass(frozen=True)
-class MoveBeadCommand(Command):
-    id: int
-    dx: int
-    dy: int
-
 
 @dataclass(frozen=True)
 class MoveBeadsCommand(Command):
