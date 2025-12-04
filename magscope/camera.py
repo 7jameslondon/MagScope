@@ -446,15 +446,15 @@ class DummyCameraBeads(CameraBase):
     def __init__(self):
         super().__init__()
         self._settings = {
-            'framerate'       : 30.0,
-            'fixed_n'         : 4,
-            'fixed_z'         : 0.0,
-            'tethered_n'      : 2,
-            'tethered_z'      : 0.0,
-            'tethered_z_sigma': 0.3,
-            'tethered_xy_sigma'     : 3.0,
-            'gain'            : 25000.0,
-            'seed'            : 12345,
+            'framerate'         : 30.0,
+            'fixed_n'           : 5,
+            'fixed_z'           : 0.0,
+            'tethered_n'        : 3,
+            'tethered_z'        : 0.0,
+            'tethered_z_sigma'  : 0.3,
+            'tethered_xy_sigma' : 3.0,
+            'gain'              : 25000.0,
+            'seed'              : 1,
         }
         self._bead_size_px = 50
         self._min_sep_px = 50.0
