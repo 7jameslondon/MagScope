@@ -189,7 +189,12 @@ This can slow down the user interface so its best to not leave this enabled all 
 
 Z-LUT
 -----
-?
+The "Z-LUT" panel allows you to load in previously generated Z-LUTs.
+It also provides basic information about the current Z-LUT.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Z-LUT_Panel_v1.jpg
+   :alt: The Z-LUT selection panel
+   :align: center
 
 Z-LUT Generator
 ---------------
