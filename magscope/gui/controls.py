@@ -280,6 +280,8 @@ class AcquisitionPanel(ControlPanelBase):
         self.acquisition_dir_textedit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.layout().addWidget(self.acquisition_dir_textedit)
 
+        self.update_save_highlight(self.acquisition_dir_on_checkbox.checkbox.isChecked())
+
     def callback_acquisition_on(self):
         is_enabled: bool = self.acquisition_on_checkbox.checkbox.isChecked()
         command = SetAcquisitionOnCommand(value=is_enabled)
@@ -287,6 +289,7 @@ class AcquisitionPanel(ControlPanelBase):
 
     def callback_acquisition_dir_on(self):
         should_save: bool = self.acquisition_dir_on_checkbox.checkbox.isChecked()
+        self.update_save_highlight(should_save)
         command = SetAcquisitionDirOnCommand(value=should_save)
         self.manager.send_ipc(command)
 
@@ -316,6 +319,9 @@ class AcquisitionPanel(ControlPanelBase):
 
         command = SetAcquisitionDirCommand(value=selected_directory)
         self.manager.send_ipc(command)
+
+    def update_save_highlight(self, should_save: bool) -> None:
+        self.set_highlighted(should_save)
 
 
 class BeadSelectionPanel(ControlPanelBase):

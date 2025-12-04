@@ -568,6 +568,7 @@ class WindowManager(ManagerProcessBase):
         checkbox.blockSignals(True)  # to prevent a loop
         checkbox.setChecked(value)
         checkbox.blockSignals(False)
+        self.controls.acquisition_panel.update_save_highlight(value)
 
     @register_ipc_command(SetAcquisitionModeCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_mode(self, mode: AcquisitionMode):
