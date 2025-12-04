@@ -437,10 +437,13 @@ class HistogramPanel(ControlPanelBase):
 
         self.enable_checkbox = LabeledCheckbox(
             label_text='Enabled',
-            callback=self.clear,
+            callback=self.enabled_callback,
             widths=(50, 0),
             default=False)
         controls_row.addWidget(self.enable_checkbox)
+
+        # Keep enabled state synced with collapse/expand so highlighting matches behavior
+        self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
         self.only_beads_checkbox = LabeledCheckbox(
             label_text='Only Bead ROIs', default=False)
@@ -473,6 +476,18 @@ class HistogramPanel(ControlPanelBase):
         self.axes.set_xlim(0, 1)
 
         self.layout().addWidget(self.canvas)
+
+    def enabled_callback(self, enabled: bool) -> None:
+        effective_enabled = enabled and not self.groupbox.collapsed
+        self._apply_enabled_state(effective_enabled)
+
+    def _groupbox_toggled(self, expanded: bool) -> None:
+        enabled = expanded and self.enable_checkbox.checkbox.isChecked()
+        self._apply_enabled_state(enabled)
+
+    def _apply_enabled_state(self, enabled: bool) -> None:
+        self.set_highlighted(enabled)
+        self.clear()
 
     def update_plot(self, data):
         if not self.enable_checkbox.checkbox.isChecked() or self.groupbox.collapsed:
