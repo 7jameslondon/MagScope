@@ -4,8 +4,9 @@ from time import time
 import numpy as np
 
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand,
-                                   RemoveBeadFromPendingMovesCommand, SetXYLockIntervalCommand,
+from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand, MoveBeadsCommand,
+                                   RemoveBeadFromPendingMovesCommand,
+                                   RemoveBeadsFromPendingMovesCommand, SetXYLockIntervalCommand,
                                    SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
                                    SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
                                    SetZLockOnCommand, SetZLockTargetCommand,
@@ -74,6 +75,7 @@ class BeadLockManager(ManagerProcessBase):
         self._xy_lock_last_time = now
 
         # For each bead calculate if/how much to move
+        moves_to_send: list[tuple[int, int, int]] = []
         for id, roi in self.bead_rois.items():
 
             # Get the track for this bead
@@ -125,9 +127,12 @@ class BeadLockManager(ManagerProcessBase):
 
             # Move the bead as needed
             if abs(dx) > 0. or abs(dy) > 0.:
-                self._xy_lock_pending_moves.append(id)
-                command = MoveBeadCommand(id=id, dx=dx, dy=dy)
-                self.send_ipc(command)
+                moves_to_send.append((id, int(dx), int(dy)))
+
+        if moves_to_send:
+            self._xy_lock_pending_moves.extend([id for id, _, _ in moves_to_send])
+            command = MoveBeadsCommand(moves=moves_to_send)
+            self.send_ipc(command)
 
     def do_z_lock(self, now=None):
         # Gather information
@@ -167,6 +172,16 @@ class BeadLockManager(ManagerProcessBase):
     def remove_bead_from_xy_lock_pending_moves(self, id: int):
         if id in self._xy_lock_pending_moves:
             self._xy_lock_pending_moves.remove(id)
+
+    @register_ipc_command(RemoveBeadsFromPendingMovesCommand)
+    def remove_beads_from_xy_lock_pending_moves(self, ids: list[int]):
+        if not ids:
+            return
+
+        pending_set = set(ids)
+        self._xy_lock_pending_moves = [
+            bead_id for bead_id in self._xy_lock_pending_moves if bead_id not in pending_set
+        ]
 
     @register_ipc_command(SetXYLockOnCommand)
     @register_script_command(SetXYLockOnCommand)

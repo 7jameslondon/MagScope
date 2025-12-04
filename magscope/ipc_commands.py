@@ -73,6 +73,11 @@ class MoveBeadCommand(Command):
 
 
 @dataclass(frozen=True)
+class MoveBeadsCommand(Command):
+    moves: list[tuple[int, int, int]]
+
+
+@dataclass(frozen=True)
 class UpdateXYLockEnabledCommand(Command):
     value: bool
 
@@ -150,6 +155,11 @@ class UnloadZLUTCommand(Command):
 @dataclass(frozen=True)
 class RemoveBeadFromPendingMovesCommand(Command):
     id: int
+
+
+@dataclass(frozen=True)
+class RemoveBeadsFromPendingMovesCommand(Command):
+    ids: list[int]
 
 
 @dataclass(frozen=True)
