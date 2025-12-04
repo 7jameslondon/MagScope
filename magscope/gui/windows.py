@@ -69,6 +69,7 @@ class WindowManager(ManagerProcessBase):
         self._video_viewer_need_reset: bool = True
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
+        self._suppress_bead_roi_updates: bool = False
 
 
     def setup(self):
@@ -216,7 +217,7 @@ class WindowManager(ManagerProcessBase):
     @property
     def n_windows(self):
         return self._n_windows
-    
+
     @n_windows.setter
     def n_windows(self, value):
         if self._running:
@@ -226,8 +227,12 @@ class WindowManager(ManagerProcessBase):
         if not 1 <= value <= 3:
             warn("Number of windows must be between 1 and 3")
             return
-        
+
         self._n_windows = value
+
+    @property
+    def bead_roi_updates_suppressed(self) -> bool:
+        return self._suppress_bead_roi_updates
 
     def create_central_widgets(self):
         match self.n_windows:
@@ -415,12 +420,16 @@ class WindowManager(ManagerProcessBase):
     def move_beads(self, moves: list[tuple[int, int, int]]):
         moved_ids: list[int] = []
 
-        for id, dx, dy in moves:
-            if id not in self._bead_graphics:
-                continue
+        self._suppress_bead_roi_updates = True
+        try:
+            for id, dx, dy in moves:
+                if id not in self._bead_graphics:
+                    continue
 
-            self._bead_graphics[id].move(dx, dy)
-            moved_ids.append(id)
+                self._bead_graphics[id].move(dx, dy)
+                moved_ids.append(id)
+        finally:
+            self._suppress_bead_roi_updates = False
 
         if not moved_ids:
             return

@@ -540,7 +540,7 @@ class BeadGraphic(QGraphicsRectItem):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             value = self.validate_move(value)
             self.move_label()
-            if not self._is_moving:
+            if not self._is_moving and not self._parent.bead_roi_updates_suppressed:
                 self.on_move_completed()
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_cached_roi()
