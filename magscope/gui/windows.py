@@ -55,6 +55,7 @@ class WindowManager(ManagerProcessBase):
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
         self._n_windows: int | None = None
+        self._pending_bead_roi_update: bool = False
         self.plot_worker: PlotWorker
         self.plot_thread: QThread
         self.plots_widget: QLabel
@@ -169,6 +170,16 @@ class WindowManager(ManagerProcessBase):
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
             self.receive_ipc()
+
+    def receive_ipc(self):
+        handled_command = False
+
+        while self._pipe is not None and self._pipe.poll():
+            super().receive_ipc()
+            handled_command = True
+
+        if handled_command:
+            self._sync_pending_bead_rois()
 
     def _handle_timer_exception(self, exc: BaseException) -> None:
         """Surface exceptions that occur inside Qt timer callbacks."""
@@ -391,6 +402,11 @@ class WindowManager(ManagerProcessBase):
         pass
 
     def update_bead_rois(self):
+        bead_rois = self._collect_bead_rois()
+        self._pending_bead_roi_update = False
+        self._send_bead_rois(bead_rois)
+
+    def _collect_bead_rois(self) -> dict[int, tuple[int, int, int, int]]:
         bead_rois = {}
         for id, graphic in self._bead_graphics.items():
             tl = graphic.mapToScene(graphic.rect().topLeft())
@@ -400,17 +416,28 @@ class WindowManager(ManagerProcessBase):
             y0 = int(round(tl.y() - graphic.pen_width / 2))
             y1 = int(round(br.y() + graphic.pen_width / 2))
             bead_rois[id] = (x0, x1, y0, y1)
+        return bead_rois
+
+    def _send_bead_rois(self, bead_rois: dict[int, tuple[int, int, int, int]]):
         self.bead_rois = bead_rois
         command = SetBeadRoisCommand(value=bead_rois)
         self.send_ipc(command)
+
+    def _sync_pending_bead_rois(self):
+        if not self._pending_bead_roi_update:
+            return
+
+        bead_rois = self._collect_bead_rois()
+        self._pending_bead_roi_update = False
+        self._send_bead_rois(bead_rois)
 
     @register_ipc_command(MoveBeadCommand)
     def move_bead(self, id: int, dx, dy):
         # Move the bead
         self._bead_graphics[id].move(dx, dy)
 
-        # Update the ROIs
-        self.update_bead_rois()
+        # Update the ROIs after all pending moves are processed
+        self._pending_bead_roi_update = True
 
         # Confirm with the xy-lock
         command = RemoveBeadFromPendingMovesCommand(id=id)
