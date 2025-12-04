@@ -2,12 +2,10 @@
 
 User Guide
 ==========
-
 This guide explains how to launch MagScope and use its interface. If you have not already read the :doc:`getting_started`.
 
 Launching the Demo GUI
 ----------------------
-
 MagScope includes a simulated camera so the interface can be explored without laboratory hardware. Launch the demo from a Python interpreter by running::
 
    import magscope
@@ -25,7 +23,6 @@ Or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
 
 Windows and Multiple Screens
 ----------------------------
-
 It is often easier to see everything in MagScope with multiple screens.
 By default MagScope will try to detect how many screens your computer has and place one Window in full screen on each.
 Alternatively, you can specify the number of windows between 1-3 using the following::
@@ -60,7 +57,6 @@ Alternatively, you can specify the number of windows between 1-3 using the follo
 
 Live Video Viewer
 --------------
-
 MagScope automatically launches with a live video feed. You can zoom by scrolling in and out with a mouse wheel.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Video_Viewer_v1.gif
@@ -69,7 +65,6 @@ MagScope automatically launches with a live video feed. You can zoom by scrollin
 
 Control Panels
 --------------
-
 Panels for each set of controls can be hidden or revealed by clicking on the panel's title.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Open-Close_Panel_v1.gif
@@ -89,14 +84,32 @@ The interface can be reset to the default arrangement by clicking the "Reset the
    :align: center
 
 Status Panel
--------
+------------
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Status_Panel_v1.gif
+   :alt: Demonstration of beads being added, moved and removed
+   :align: center
 
-??????????
+The status panel provides information on the status of the GUI, video processing, and video buffer.
+
+The "Display Rate" is not the camera's framerate but instead the rate at which the live video feed is being updated.
+It is normal for the display rate to be slower than your cameras framerate.
+The video feed will be processed at the full framerate.
+
+The number of video processor should always be at least 3 and there is little benefit to increating them.
+If all processor are constantly in use (for example "3/3") then you may have selected too many beads and the processors can not keep up.
+
+The video buffer size can be adjusted in the settings.yaml file (created after you first launch the program).
+
+The video buffer should ideally never fill all the way up. If it does fill up it will be purged.
+Purges result in those frames being deleted with out being processed.
+If the buffer is filling all the way up and purging then you may have selected too many beads.
+Optimizing the video buffer size settings may allow you to process more beads.
+Re-launch the program after updating the settings.yaml file.
 
 Bead Selection
--------
+--------------
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
-   :alt: Demonstation of beads being added, moved and removed
+   :alt: Demonstration of beads being added, moved and removed
    :align: center
 
 Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
@@ -120,38 +133,67 @@ You can click the button again to unlock.
 
 Plot Settings
 -------
-
-??????????
+?
 
 Camera Settings
--------
-
-??????????
+---------------
+Camera settings will depend on the camera you are using. By default the program starts with a simulated camera.
+With the simulated camera you can change the framerate, number of beads simulated, and other simulation settings.
+To check the current value of the camera setting you will need to click the refresh button in the bottom-left.
+When adding you own camera these setting will be controlled by what settings you provide access to in your camera class.
+See the :doc:`connect_camera` guide for more details.
 
 Acquisition (Saving Data)
--------
+-------------------------
+The "Acquire" checkbox enables data processing in general.
+If this is disabled no video will be sent for processing.
+These is almost never a reason to disable this.
 
-??????????
+The "Save" checkbox enabled saving data to the disk.
+The data will be saved to the directory selected with the "Select Directory to Save To" button.
+If no directory is selected then no data is saved.
+
+Several types of data can be saved: tracks, full field-of-view videos, and cropped videos.
+Tracks are saved as text files with the data and time in the name. Each batch of video processed is saved as one file.
+This can result in a lot of files. But these can be combined later with a simple Python script.
+Frequent saves ensure data is never lost.
+Videos are saved as tiff files which can be opened in ImageJ.
+Saveing video files can be very slow and can result in the video buffer filling up and needing to be purged resulting in lost data.
+In general only the tracks should be saved.
+Any combination of tracks and/or video can be selected with the "Mode" selector.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Acquisition_Panel_v1.jpg
+   :alt: The bead selection panel
+   :align: center
 
 Histogram
--------
+---------
+The histogram panel provide a simple intensity histogram of the live video feed.
+It may slow down the user interface so its best to not leave this enabled all the time.
+You can select for the histogram to either use the entier camera's field-of-view or be limited to just the bead ROIs.
 
-??????????
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Histogram_Panel_v1.jpg
+   :alt: The bead selection panel
+   :align: center
 
 Radial Profile Monitor
--------
+----------------------
+The radial profile monitor can provide a live view of one bead's radial profile.
+This is particularly helpful for optimizing radial profile settings and debugging.
+The currently selected bead (see Plot Settings) will be used.
+This can slow down the user interface so its best to not leave this enabled all the time.
 
-??????????
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Radial_Profile_Monitor_Panel_v1.jpg
+   :alt: The bead selection panel
+   :align: center
 
 Z-LUT
--------
-
-??????????
+-----
+?
 
 Z-LUT Generator
--------
-
-??????????
+---------------
+?
 
 XY-Lock
 -------
@@ -195,8 +237,6 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
          :alt: Screenshot of the Z-Lock panel.
          :align: center
 
-
 Scripting
 ---------
-
 To learn how to use scripts to automate tasks in MagScope read the :doc:`scripting_guide` guide.
