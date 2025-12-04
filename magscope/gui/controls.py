@@ -542,7 +542,7 @@ class PlotSettingsPanel(ControlPanelBase):
 
         # Selected Bead
         self.selected_bead = LabeledLineEdit(
-            label_text='Selected Bead',
+            label_text='Selected Bead (red)',
             default='0',
             callback=self.selected_bead_callback,
         )
@@ -550,7 +550,7 @@ class PlotSettingsPanel(ControlPanelBase):
 
         # Selected Reference Bead
         self.reference_bead = LabeledLineEdit(
-            label_text='Reference Bead',
+            label_text='Reference Bead (green)',
             callback=self.reference_bead_callback,
         )
         self.layout().addWidget(self.reference_bead)
