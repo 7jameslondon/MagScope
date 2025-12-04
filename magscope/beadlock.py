@@ -5,7 +5,8 @@ import numpy as np
 
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadCommand, MoveBeadsCommand,
-                                   RemoveBeadFromPendingMovesCommand, SetXYLockIntervalCommand,
+                                   RemoveBeadFromPendingMovesCommand,
+                                   RemoveBeadsFromPendingMovesCommand, SetXYLockIntervalCommand,
                                    SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
                                    SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
                                    SetZLockOnCommand, SetZLockTargetCommand,
@@ -171,6 +172,16 @@ class BeadLockManager(ManagerProcessBase):
     def remove_bead_from_xy_lock_pending_moves(self, id: int):
         if id in self._xy_lock_pending_moves:
             self._xy_lock_pending_moves.remove(id)
+
+    @register_ipc_command(RemoveBeadsFromPendingMovesCommand)
+    def remove_beads_from_xy_lock_pending_moves(self, ids: list[int]):
+        if not ids:
+            return
+
+        pending_set = set(ids)
+        self._xy_lock_pending_moves = [
+            bead_id for bead_id in self._xy_lock_pending_moves if bead_id not in pending_set
+        ]
 
     @register_ipc_command(SetXYLockOnCommand)
     @register_script_command(SetXYLockOnCommand)

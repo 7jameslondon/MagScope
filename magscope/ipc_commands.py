@@ -158,6 +158,11 @@ class RemoveBeadFromPendingMovesCommand(Command):
 
 
 @dataclass(frozen=True)
+class RemoveBeadsFromPendingMovesCommand(Command):
+    ids: list[int]
+
+
+@dataclass(frozen=True)
 class SetXYLockOnCommand(Command):
     value: bool
 

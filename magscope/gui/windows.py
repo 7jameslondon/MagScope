@@ -15,7 +15,8 @@ from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadCommand, MoveBeadsCommand,
-                                   RemoveBeadFromPendingMovesCommand, SetAcquisitionDirCommand,
+                                   RemoveBeadFromPendingMovesCommand,
+                                   RemoveBeadsFromPendingMovesCommand, SetAcquisitionDirCommand,
                                    SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
                                    SetAcquisitionOnCommand, SetBeadRoisCommand, ShowMessageCommand,
                                    UnloadZLUTCommand, UpdateCameraSettingCommand,
@@ -412,14 +413,22 @@ class WindowManager(ManagerProcessBase):
 
     @register_ipc_command(MoveBeadsCommand)
     def move_beads(self, moves: list[tuple[int, int, int]]):
+        moved_ids: list[int] = []
+
         for id, dx, dy in moves:
             if id not in self._bead_graphics:
                 continue
+
             self._bead_graphics[id].move(dx, dy)
+            moved_ids.append(id)
+
+        if not moved_ids:
+            return
+
         self.update_bead_rois()
-        for id, _, _ in moves:
-            command = RemoveBeadFromPendingMovesCommand(id=id)
-            self.send_ipc(command)
+
+        command = RemoveBeadsFromPendingMovesCommand(ids=moved_ids)
+        self.send_ipc(command)
 
     def add_bead(self, pos: QPoint):
         # Add a bead graphic
