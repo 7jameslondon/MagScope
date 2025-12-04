@@ -88,7 +88,7 @@ class MagScope(metaclass=SingletonMeta):
     acknowledge the quit sequence and exit.
     """
 
-    def __init__(self, *, verbose: bool = False):
+    def __init__(self, *, verbose: bool = False, list_commands_on_start: bool = False):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self.video_processor_manager = VideoProcessorManager()
@@ -114,6 +114,8 @@ class MagScope(metaclass=SingletonMeta):
         self._running: bool = False
         self._log_level = logging.INFO if verbose else logging.WARNING
 
+        self._list_commands_on_start = list_commands_on_start
+
         self._terminated: bool = False
 
         self.profiles_buffer: MatrixBuffer | None = None
@@ -138,6 +140,13 @@ class MagScope(metaclass=SingletonMeta):
         """
         self._ensure_not_terminated()
         self._apply_logging_preferences()
+
+        if self._list_commands_on_start:
+            self._collect_processes()
+            self._setup_command_registry()
+            self._print_registered_commands()
+            self._mark_terminated()
+            return
 
         if not self._mark_running():
             return
@@ -201,6 +210,16 @@ class MagScope(metaclass=SingletonMeta):
         if self._running:
             command = SetSettingsCommand(settings=value)
             self._handle_broadcast_command(command)
+
+    @property
+    def list_commands_on_start(self) -> bool:
+        return self._list_commands_on_start
+
+    @list_commands_on_start.setter
+    def list_commands_on_start(self, value: bool) -> None:
+        if self._running:
+            warn('MagScope is already running')
+        self._list_commands_on_start = bool(value)
 
     @classmethod
     def _reset_singleton_for_testing(cls) -> None:
@@ -266,6 +285,19 @@ class MagScope(metaclass=SingletonMeta):
         for proc in self.processes.values():
             self.command_registry.register_manager(proc)
         self.command_registry.validate_targets(self.processes)
+
+    def _print_registered_commands(self) -> None:
+        """Print a summary of all registered IPC commands."""
+
+        print('Registered IPC commands:')
+        for command_type, spec in sorted(
+            self.command_registry._specs.items(),
+            key=lambda item: item[0].__name__,
+        ):
+            print(
+                f"- {command_type.__name__}: delivery={spec.delivery.value}, "
+                f"target={spec.target}, handler={spec.handler}"
+            )
 
     def _initialize_shared_state(self) -> None:
         """Load configuration and prepare shared resources for all managers."""
