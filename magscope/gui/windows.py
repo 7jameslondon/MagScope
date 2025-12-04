@@ -46,7 +46,7 @@ class WindowManager(ManagerProcessBase):
         self._bead_next_id: int = 0
         self.beads_in_view_on = False
         self.beads_in_view_count = 1
-        self.beads_in_view_marker_size = 100
+        self.beads_in_view_marker_size = 20
         self.central_widgets: list[QWidget] = []
         self.central_layouts: list[QLayout] = []
         self.controls: Controls | None = None
@@ -400,7 +400,7 @@ class WindowManager(ManagerProcessBase):
             y0 = int(round(tl.y() - graphic.pen_width / 2))
             y1 = int(round(br.y() + graphic.pen_width / 2))
             bead_rois[id] = (x0, x1, y0, y1)
-        self._bead_rois = bead_rois
+        self.bead_rois = bead_rois
         command = SetBeadRoisCommand(value=bead_rois)
         self.send_ipc(command)
 
@@ -442,7 +442,7 @@ class WindowManager(ManagerProcessBase):
         self._update_bead_highlights()
 
         # Update bead ROIs
-        rois = self._bead_rois
+        rois = self.bead_rois
         rois.pop(id)
         command = SetBeadRoisCommand(value=rois)
         self.send_ipc(command)
