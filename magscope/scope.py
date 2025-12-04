@@ -88,7 +88,13 @@ class MagScope(metaclass=SingletonMeta):
     acknowledge the quit sequence and exit.
     """
 
-    def __init__(self, *, verbose: bool = False):
+    def __init__(
+        self,
+        *,
+        verbose: bool = False,
+        print_ipc_commands: bool = False,
+        print_script_commands: bool = False,
+    ):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self.video_processor_manager = VideoProcessorManager()
@@ -113,6 +119,10 @@ class MagScope(metaclass=SingletonMeta):
 
         self._running: bool = False
         self._log_level = logging.INFO if verbose else logging.WARNING
+
+        self._command_registry_initialized: bool = False
+        self._print_ipc_commands = print_ipc_commands
+        self._print_script_commands = print_script_commands
 
         self._terminated: bool = False
 
@@ -143,6 +153,15 @@ class MagScope(metaclass=SingletonMeta):
             return
 
         self._collect_processes()
+
+        if self._print_ipc_commands or self._print_script_commands:
+            if self._print_ipc_commands:
+                self.print_registered_commands()
+            if self._print_script_commands:
+                self.print_registered_script_commands()
+            self._running = False
+            return
+
         self._initialize_shared_state()
         self._start_managers()
         self._main_ipc_loop()
@@ -190,6 +209,32 @@ class MagScope(metaclass=SingletonMeta):
         if self._running:
             warn('MagScope is already running')
         self._settings_path = value
+
+    @property
+    def print_ipc_commands(self) -> bool:
+        """Return whether :meth:`start` should print IPC commands and exit early."""
+
+        return self._print_ipc_commands
+
+    @print_ipc_commands.setter
+    def print_ipc_commands(self, enabled: bool) -> None:
+        if self._running:
+            warn('MagScope is already running')
+            return
+        self._print_ipc_commands = enabled
+
+    @property
+    def print_script_commands(self) -> bool:
+        """Return whether :meth:`start` should print script commands and exit early."""
+
+        return self._print_script_commands
+
+    @print_script_commands.setter
+    def print_script_commands(self, enabled: bool) -> None:
+        if self._running:
+            warn('MagScope is already running')
+            return
+        self._print_script_commands = enabled
 
     @property
     def settings(self):
@@ -260,12 +305,61 @@ class MagScope(metaclass=SingletonMeta):
         for proc in proc_list:
             self.processes[proc.name] = proc
 
+        self._command_registry_initialized = False
+
     def _setup_command_registry(self) -> None:
         """Register all command handlers and validate destinations."""
+        if self._command_registry_initialized:
+            return
+
         self.command_registry.register_object(self, target='MagScope')
         for proc in self.processes.values():
             self.command_registry.register_manager(proc)
         self.command_registry.validate_targets(self.processes)
+        self._command_registry_initialized = True
+
+    def print_registered_commands(self) -> None:
+        """Print the registered IPC commands without launching managers."""
+
+        if not self.processes:
+            self._collect_processes()
+
+        self._setup_command_registry()
+
+        targets = sorted({*self.processes.keys(), 'MagScope'})
+        for target in targets:
+            specs = self.command_registry.handlers_for_target(target)
+            if not specs:
+                continue
+            print(f'{target}:', file=sys.stdout)
+            for command_type in sorted(specs.keys(), key=lambda c: c.__name__):
+                spec = specs[command_type]
+                destination = spec.target if spec.delivery != Delivery.BROADCAST else 'BROADCAST'
+                print(
+                    f'  {command_type.__name__} -> {spec.delivery.name} to {destination} via {spec.handler}',
+                    file=sys.stdout,
+                )
+
+    def print_registered_script_commands(self) -> None:
+        """Print the registered script commands without launching managers."""
+
+        if not self.processes:
+            self._collect_processes()
+
+        self._setup_command_registry()
+        self._register_script_methods()
+
+        registrations = self.script_manager.script_registry._methods
+        if not registrations:
+            return
+
+        print('Script commands:', file=sys.stdout)
+        for command_type in sorted(registrations.keys(), key=lambda c: c.__name__):
+            registration = registrations[command_type]
+            print(
+                f'  {command_type.__name__} -> {registration.cls_name}.{registration.meth_name}',
+                file=sys.stdout,
+            )
 
     def _initialize_shared_state(self) -> None:
         """Load configuration and prepare shared resources for all managers."""
