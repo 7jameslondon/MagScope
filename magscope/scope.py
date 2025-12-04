@@ -92,7 +92,7 @@ class MagScope(metaclass=SingletonMeta):
         self,
         *,
         verbose: bool = False,
-        print_commands: bool = False,
+        print_ipc_commands: bool = False,
         print_script_commands: bool = False,
     ):
         self.beadlock_manager = BeadLockManager()
@@ -121,7 +121,7 @@ class MagScope(metaclass=SingletonMeta):
         self._log_level = logging.INFO if verbose else logging.WARNING
 
         self._command_registry_initialized: bool = False
-        self._print_commands = print_commands
+        self._print_ipc_commands = print_ipc_commands
         self._print_script_commands = print_script_commands
 
         self._terminated: bool = False
@@ -154,8 +154,8 @@ class MagScope(metaclass=SingletonMeta):
 
         self._collect_processes()
 
-        if self._print_commands or self._print_script_commands:
-            if self._print_commands:
+        if self._print_ipc_commands or self._print_script_commands:
+            if self._print_ipc_commands:
                 self.print_registered_commands()
             if self._print_script_commands:
                 self.print_registered_script_commands()
@@ -211,17 +211,17 @@ class MagScope(metaclass=SingletonMeta):
         self._settings_path = value
 
     @property
-    def print_commands(self) -> bool:
-        """Return whether :meth:`start` should print commands and exit early."""
+    def print_ipc_commands(self) -> bool:
+        """Return whether :meth:`start` should print IPC commands and exit early."""
 
-        return self._print_commands
+        return self._print_ipc_commands
 
-    @print_commands.setter
-    def print_commands(self, enabled: bool) -> None:
+    @print_ipc_commands.setter
+    def print_ipc_commands(self, enabled: bool) -> None:
         if self._running:
             warn('MagScope is already running')
             return
-        self._print_commands = enabled
+        self._print_ipc_commands = enabled
 
     @property
     def print_script_commands(self) -> bool:
