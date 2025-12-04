@@ -87,6 +87,10 @@ class FakeAcquisitionPanel:
         self.acquisition_dir_textedit = FakeTextEdit()
         self.acquisition_dir_on_checkbox = SimpleNamespace(checkbox=FakeCheckable())
         self.acquisition_mode_combobox = FakeComboBox()
+        self.save_highlight_calls: list[bool] = []
+
+    def update_save_highlight(self, should_save: bool) -> None:
+        self.save_highlight_calls.append(should_save)
 
 
 class FakeControls:
