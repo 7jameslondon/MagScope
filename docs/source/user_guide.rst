@@ -60,7 +60,45 @@ Live Video Viewer
 MagScope automatically launches with a live video feed. You can zoom by scrolling in and out with a mouse wheel.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Video_Viewer_v1.gif
-   :alt: Demonstation of the live video feed (video viewer)
+   :alt: Demonstration of the live video feed (video viewer)
+   :align: center
+
+Live Plots
+----------
+MagScope provides a live plot of bead track.
+You can also add a live view of data from hardware such as motor positions or calibrated force.
+See the :doc:`connect_hardware` guide for details.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plots_v1.jpg
+   :alt: Demonstration of the live video feed (video viewer)
+   :align: center
+
+You can set limits on any axis using the min and max limits in the "Plot Settings" panel.
+By default the min and max values are automatically calculated. Times should be specified with a 24-hour clock.
+Such as "14:20:45" for 14 hours, 20 minutes, and 45 seconds. Or "14.12.45" will work the same. Or "14" for 14 hours, 0 minutes, and 0 seconds.
+
+You can control which bead is plotted and which bead is selected with the "Plot Settings" panel.
+You can also set a reference bead who values will be subtracted from the other beads.
+Changing the plot setting does not affect how any of the data is saved.
+The raw tracks are always saved.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plot_Settings_Panel_v1.jpg
+   :alt: Demonstration of the live video feed (video viewer)
+   :align: center
+
+The selected bead's ROI will be highlighted in red.
+The reference bead's ROI will be highlighted in green.
+All other bead ROIs will be highlighted in blue.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selected_Bead_for_Plot_Setting_Panel_v1.jpg
+   :alt: Demonstration of the live video feed (video viewer)
+   :align: center
+
+There are also some options for plotting the xy position of the beads on the live video feed in a crosshair 𐀏.
+This can be useful for debugging but can slow down the user interface and should not be left enabled in general.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Marked_Bead_for_Plot_Setting_Panel_v1.jpg
+   :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
 Control Panels
@@ -130,10 +168,6 @@ During an experiment you may want to lock the beads so you do not accidentally a
 You can do this by click the 🔓 button on the "Bead Selection" panel.
 This will only affect user interactions (it will not effect the XY-Lock).
 You can click the button again to unlock.
-
-Plot Settings
--------
-?
 
 Camera Settings
 ---------------
