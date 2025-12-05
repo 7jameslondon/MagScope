@@ -2,7 +2,8 @@
 
 Scripting
 =========
-This guide explains how to run and write scripts to automate tasks in MagScope.
+| This guide explains how to run and write scripts to automate tasks in MagScope.
+| For a list of script commands see :doc:`scripting_commands`.
 
 Writing Scripts
 ---------------

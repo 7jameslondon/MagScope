@@ -131,4 +131,5 @@ Support
    connect_camera
    connect_hardware
    scripting_guide
+   scripting_commands
    dev_guide
