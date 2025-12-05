@@ -20,21 +20,35 @@ FORCE_CALIBRATION_PATH = Path(__file__).with_name("force_calibrant.txt")
 
 class ForceCalibration:
     def __init__(self):
-        # Load in data
-        self.data = np.loadtxt(FORCE_CALIBRATION_PATH)
+        try:
+            # Load in data
+            self.data = np.loadtxt(FORCE_CALIBRATION_PATH)
 
-        # Sort data to be ascending
-        idx = np.argsort(self.data[:, 0])
-        self.data = self.data[idx, :]
+            # Sort data to be ascending
+            idx = np.argsort(self.data[:, 0])
+            self.data = self.data[idx, :]
 
-        # Interpolate
-        self.motor2force = PchipInterpolator(self.data[:, 0],
-                                             self.data[:, 1],
-                                             extrapolate=False)
+            # Interpolate
+            self.motor2force = PchipInterpolator(self.data[:, 0],
+                                                 self.data[:, 1],
+                                                 extrapolate=False)
 
-        self.force2motor = PchipInterpolator(self.data[:, 1],
-                                             self.data[:, 0],
-                                             extrapolate=False)
+            self.force2motor = PchipInterpolator(self.data[:, 1],
+                                                 self.data[:, 0],
+                                                 extrapolate=False)
+        except FileNotFoundError:
+            warn(
+                f"Force calibration file not found at {FORCE_CALIBRATION_PATH}. "
+                "Force conversions will return NaN."
+            )
+            self.data = None
+            self.motor2force = self._nan_conversion
+            self.force2motor = self._nan_conversion
+
+    @staticmethod
+    def _nan_conversion(values):
+        arr = np.asarray(values, dtype=float)
+        return np.full_like(arr, np.nan, dtype=float)
 
 
 force_calibration = ForceCalibration()
