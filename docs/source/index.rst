@@ -30,7 +30,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`rocket;3rem;sd-text-info`
+      :octicon:`rocket;3rem;sd-text-secondary`
 
       How to install and get the demo running
 
@@ -40,7 +40,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`book;3rem;sd-text-success`
+      :octicon:`book;3rem;sd-text-info`
 
       How to use MagScope
 
@@ -50,9 +50,9 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`cpu;3rem;sd-text-secondary`
+      :octicon:`cpu;3rem;sd-text-success`
 
-      Use a NVIDIA GPU to speed up image processing
+      How to use a NVIDIA GPU to speed up image processing
 
    .. grid-item-card:: Connect Your Camera
       :link: connect_camera
@@ -60,7 +60,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`device-camera-video;3rem;sd-text-secondary`
+      :octicon:`device-camera-video;3rem;sd-text-success`
 
       How to get your lab's camera connected to MagScope
 
@@ -70,7 +70,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`gear;3rem;sd-text-secondary`
+      :octicon:`gear;3rem;sd-text-success`
 
       How to get your lab's hardware (motors, stage, lights, ect) connected to MagScope
 
@@ -80,7 +80,7 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :text-align: center
       :shadow: md
 
-      :octicon:`terminal;3rem;sd-text-secondary`
+      :octicon:`terminal;3rem;sd-text-success`
 
       Automate tasks with Python scripts
 
@@ -93,16 +93,6 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
       :octicon:`mark-github;3rem;sd-text-dark`
 
       Source code, issues, and releases.
-
-   .. grid-item-card:: (Advanced) Development guide
-      :link: dev_guide
-      :link-type: doc
-      :text-align: center
-      :shadow: md
-
-      :octicon:`tools;3rem;sd-text-dark`
-
-      How to MagScope works behind the scenes and how to make advanced customizations
 
    .. grid-item-card:: (Advanced) API Reference
       :link: api/index
@@ -132,4 +122,3 @@ Support
    connect_hardware
    scripting_guide
    scripting_commands
-   dev_guide
