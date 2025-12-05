@@ -89,13 +89,17 @@ command dataclass with a manager method decorated by both
        scope.add_hardware(HelloManager())
        scope.start()
 
-Run that file to launch MagScope with the custom ``HelloManager`` process.
-Then create a new script file and import ``HelloCommand`` and call it:
+Place the shared command and manager definitions in a module that both the
+entrypoint and your script can import. In the repository this lives in
+``examples/custom_hello.py`` and is reused by the example entrypoint
+``examples/main_custom_script.py``. Run that entrypoint to launch MagScope with
+the custom ``HelloManager`` process. Then create a new script file and import
+``HelloCommand`` and call it:
 
 .. code-block:: python
 
    import magscope
-   from main_custom_script_command import HelloCommand
+   from examples.custom_hello import HelloCommand
 
    script = magscope.Script()
    script.append(HelloCommand("Jamie"))
