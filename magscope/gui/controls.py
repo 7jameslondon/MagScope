@@ -828,6 +828,8 @@ class ScriptPanel(ControlPanelBase):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.layout().addWidget(self.filepath_textedit)
 
+        self.update_status(ScriptStatus.EMPTY)
+
     def update_status(self, status: ScriptStatus):
         self.status_label.setText(f'{self.status_prefix}: {status}')
         if status == ScriptStatus.PAUSED:
@@ -835,8 +837,13 @@ class ScriptPanel(ControlPanelBase):
         else:
             self.pause_button.setText('Pause')
 
+        self.start_button.setEnabled(status in (ScriptStatus.LOADED, ScriptStatus.FINISHED))
+        self.pause_button.setEnabled(status in (ScriptStatus.RUNNING, ScriptStatus.PAUSED))
+
         if status == ScriptStatus.EMPTY:
             self.filepath_textedit.setText(self.NO_SCRIPT_SELECTED_TEXT)
+            self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        elif status == ScriptStatus.ERROR:
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def callback_load(self):

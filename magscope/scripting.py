@@ -242,6 +242,9 @@ class ScriptManager(ManagerProcessBase):
         if self._script_status == ScriptStatus.EMPTY:
             logger.warning('Cannot start script. A script is not loaded.')
             return
+        if self._script_status == ScriptStatus.ERROR:
+            logger.warning('Cannot start script. The previously loaded script failed.')
+            return
         elif self._script_status == ScriptStatus.RUNNING:
             logger.warning('Cannot start script. The script is already running.')
             return
