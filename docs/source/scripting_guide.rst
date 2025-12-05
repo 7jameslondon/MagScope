@@ -52,57 +52,62 @@ Adding a custom script command
 
 You can add your own custom functions to the scripting system by pairing an IPC
 command dataclass with a manager method decorated by both
-``register_script_command`` and ``register_ipc_command``. For example:
+``register_script_command`` and ``register_ipc_command``.
+When implmenting custom script commands it works best if you split up your files.
+In this example there is the ``main.py`` for launching magscope, the ``custom_command.py`` file for
+creating a HardwareManager/Command, and the ``custom_script.py`` for the actual script loaded into MagScope.
+You can see the files for this example on GitHub in `examples/custom_script <https://github.com/7jameslondon/MagScope/tree/master/examples/custom_script>`_.
+Or here:
 
 .. code-block:: python
 
-   """Example MagScope entrypoint that exposes a custom script command."""
-   from dataclasses import dataclass
+    """ main.py """
+    from custom_command import HelloManager
+    import magscope
 
-   import magscope
-   from magscope.hardware import HardwareManagerBase
-   from magscope.ipc import register_ipc_command
-   from magscope.ipc_commands import Command
-   from magscope.utils import register_script_command
-
-   @dataclass(frozen=True)
-   class HelloCommand(Command):
-       name: str
-
-   class HelloManager(HardwareManagerBase):
-       def connect(self):
-           self._is_connected = True
-
-       def disconnect(self):
-           self._is_connected = False
-
-       def fetch(self):
-           pass
-
-       @register_ipc_command(HelloCommand)
-       @register_script_command(HelloCommand)
-       def say_hello(self, name: str):
-           print(f"Hello {name}", flush=True)
-
-   if __name__ == "__main__":
-       scope = magscope.MagScope()
-       scope.add_hardware(HelloManager())
-       scope.start()
-
-Place the shared command and manager definitions in a module that both the
-entrypoint and your script can import. In the repository this lives in
-``examples/custom_hello.py`` and is reused by the example entrypoint
-``examples/main_custom_script.py``. Run that entrypoint to launch MagScope with
-the custom ``HelloManager`` process. Then create a new script file and import
-``HelloCommand`` and call it:
+    scope = magscope.MagScope()
+    scope.add_hardware(HelloManager())
+    scope.start()
 
 .. code-block:: python
 
-   import magscope
-   from examples.custom_hello import HelloCommand
+    """ custom_command.py """
+    from dataclasses import dataclass
 
-   script = magscope.Script()
-   script.append(HelloCommand("Jamie"))
+    from magscope.hardware import HardwareManagerBase
+    from magscope.ipc import register_ipc_command
+    from magscope.ipc_commands import Command
+    from magscope.utils import register_script_command
+
+    @dataclass(frozen=True)
+    class HelloCommand(Command):
+        name: str
+
+    class HelloManager(HardwareManagerBase):
+        def connect(self):
+            self._is_connected = True
+
+        def disconnect(self):
+            self._is_connected = False
+
+        def fetch(self):
+            pass
+
+        @register_ipc_command(HelloCommand)
+        @register_script_command(HelloCommand)
+        def say_hello(self, name: str):
+            print(f"Hello {name}", flush=True)
+
+.. code-block:: python
+
+    """ custom_script.py """
+    import magscope
+    from custom_command import HelloCommand
+
+    script = magscope.Script()
+    script.append(HelloCommand("Jamie"))
+    script.append(HelloCommand("Abhishek"))
+    script.append(HelloCommand("Teague"))
 
 You can also check a command was correctly registered by running `MagScope` with ``print_script_commands`` to ``True``.
 This will print a list of all registered script commands and then close.
