@@ -255,6 +255,10 @@ class ScriptManager(ManagerProcessBase):
         elif self._script_status == ScriptStatus.RUNNING:
             logger.warning('Cannot start script. The script is already running.')
             return
+        if self._script_length == 0:
+            logger.warning('Cannot start script. The loaded script contains no steps.')
+            self._set_script_status(ScriptStatus.FINISHED)
+            return
 
         self._script_index = 0
         self._set_script_status(ScriptStatus.RUNNING)
@@ -358,10 +362,7 @@ class ScriptManager(ManagerProcessBase):
 
         registration = self.script_registry(type(step.command))
 
-        if step.wait:
-            self._script_waiting = True
-
-        if isinstance(step.command, SleepCommand):
+        if step.wait or isinstance(step.command, SleepCommand):
             self._script_waiting = True
 
         command_type = self._command_registry.command_for_handler(
