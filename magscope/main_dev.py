@@ -1,6 +1,14 @@
 import magscope
+from magscope import Command, register_script_command
+from dataclasses import dataclass
 
-if __name__ == "__main__":
-    scope = magscope.MagScope(verbose=True)
-    scope.window_manager.n_windows = 1
-    scope.start()
+@dataclass(frozen=True)
+class HelloCommand(Command):
+    name: str
+
+@register_script_command(HelloCommand)
+def say_hello(name: str):
+    print(f"Hello {name}!")
+
+scope = magscope.MagScope(verbose=True)
+scope.start()
