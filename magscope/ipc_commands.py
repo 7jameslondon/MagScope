@@ -128,6 +128,12 @@ class ShowMessageCommand(Command):
 
 
 @dataclass(frozen=True)
+class ShowErrorCommand(Command):
+    text: str
+    details: str | None = None
+
+
+@dataclass(frozen=True)
 class UpdateZLUTMetadataCommand(Command):
     filepath: str | None = None
     z_min: float | None = None

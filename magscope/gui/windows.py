@@ -34,6 +34,7 @@ from magscope.ipc_commands import (
     SetAcquisitionModeCommand,
     SetAcquisitionOnCommand,
     SetBeadRoisCommand,
+    ShowErrorCommand,
     ShowMessageCommand,
     UnloadZLUTCommand,
     UpdateCameraSettingCommand,
@@ -598,6 +599,20 @@ class WindowManager(ManagerProcessBase):
             msg.setDetailedText(details)
         else:
             logger.info('%s', text)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.show()
+
+    @register_ipc_command(ShowErrorCommand)
+    def show_error(self, text: str, details: str | None = None):
+        msg = QMessageBox(self.windows[0])
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setWindowTitle("Error")
+        msg.setText(text)
+        if details:
+            logger.error('%s: %s', text, details)
+            msg.setDetailedText(details)
+        else:
+            logger.error('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 
