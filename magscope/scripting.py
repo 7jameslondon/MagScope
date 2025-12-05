@@ -226,7 +226,14 @@ class ScriptManager(ManagerProcessBase):
                 return
 
             # Execute next step in script
-            self._execute_script_step(self._script[self._script_index])
+            try:
+                self._execute_script_step(self._script[self._script_index])
+            except Exception:
+                self._handle_script_error(
+                    "Script execution failed.",
+                    details=traceback.format_exc(),
+                )
+                return
 
             # Increment index
             self._script_index += 1
@@ -378,7 +385,11 @@ class ScriptManager(ManagerProcessBase):
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""
         if duration < 0:
-            raise ValueError("Sleep duration must be non-negative")
+            self._handle_script_error(
+                "Sleep duration must be non-negative",
+                details=None,
+            )
+            return
 
         self._script_sleep_duration = duration
         self._script_sleep_start = time()
@@ -398,3 +409,15 @@ class ScriptManager(ManagerProcessBase):
         self._script_status = status
         command = UpdateScriptStatusCommand(status=status)
         self.send_ipc(command)
+
+    def _handle_script_error(self, message: str, *, details: str | None):
+        """Report a script error to the GUI and transition to the error state."""
+        logger.error(message)
+        if details:
+            logger.error(details)
+
+        self._script_waiting = False
+        self._script_sleep_duration = None
+        self._script_sleep_start = 0
+        self._set_script_status(ScriptStatus.ERROR)
+        self.send_ipc(ShowErrorCommand(text=message, details=details))
