@@ -21,8 +21,8 @@ from typing import Callable, Iterable
 from magscope._logging import get_logger
 from magscope.ipc import UnknownCommandError, register_ipc_command
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
-                                   SleepCommand, StartScriptCommand, UpdateScriptStatusCommand,
-                                   UpdateWaitingCommand)
+                                   ShowErrorCommand, SleepCommand, StartScriptCommand,
+                                   UpdateScriptStatusCommand, UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -282,6 +282,8 @@ class ScriptManager(ManagerProcessBase):
 
         self._script = []
         status = ScriptStatus.EMPTY
+        error_message: str | None = None
+        error_details: str | None = None
 
         if path:
             namespace = {}
@@ -289,8 +291,11 @@ class ScriptManager(ManagerProcessBase):
                 with open(path, 'r') as f:
                     exec(f.read(), {}, namespace)
             except Exception:  # noqa
-                logger.error("An error occurred while loading a script.")
-                logger.error(traceback.format_exc())
+                error_message = "An error occurred while loading a script."
+                error_details = traceback.format_exc()
+                logger.error(error_message)
+                logger.error(error_details)
+                status = ScriptStatus.ERROR
             else:
                 n_scripts_found = 0
                 script = None
@@ -299,15 +304,22 @@ class ScriptManager(ManagerProcessBase):
                         script = item.steps  # noqa: retain type narrow
                         n_scripts_found += 1
                 if n_scripts_found == 0:
-                    logger.warning("No Script instance found in script file.")
+                    error_message = "No Script instance found in script file."
+                    logger.error(error_message)
+                    status = ScriptStatus.ERROR
                 elif n_scripts_found > 1:
-                    logger.warning("Multiple Script instances found in script file.")
+                    error_message = "Multiple Script instances found in script file."
+                    logger.error(error_message)
+                    status = ScriptStatus.ERROR
                 else:
                     # Check the script is valid
                     try:
                         self.script_registry.check_script(script, command_registry=self._command_registry)
                     except Exception as e:
-                        logger.error('Script is invalid. No script loaded. Error: %s', e)
+                        error_message = 'Script is invalid. No script loaded.'
+                        error_details = str(e)
+                        logger.error('%s Error: %s', error_message, e)
+                        status = ScriptStatus.ERROR
                     else:
                         self._script = script
                         status = ScriptStatus.LOADED
@@ -316,6 +328,9 @@ class ScriptManager(ManagerProcessBase):
         self._script_waiting = False
         self._script_index = 0
         self._set_script_status(status)
+
+        if error_message is not None:
+            self.send_ipc(ShowErrorCommand(text=error_message, details=error_details))
 
     def _execute_script_step(self, step: ScriptStep):
         """Dispatch a single script step to its owning manager."""
