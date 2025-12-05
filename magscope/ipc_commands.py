@@ -61,9 +61,13 @@ class UpdateCameraSettingCommand(Command):
 
 
 @dataclass(frozen=True)
+class SetSimulatedFocusCommand(Command):
+    offset: float
+
+
+@dataclass(frozen=True)
 class UpdateVideoBufferPurgeCommand(Command):
     t: float
-
 
 
 @dataclass(frozen=True)

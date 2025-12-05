@@ -20,7 +20,8 @@ from magtrack.simulation import simulate_beads
 from magscope.datatypes import BufferUnderflow, VideoBuffer
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (GetCameraSettingCommand, SetCameraSettingCommand,
-                                   UpdateCameraSettingCommand, UpdateVideoBufferPurgeCommand)
+                                   SetSimulatedFocusCommand, UpdateCameraSettingCommand,
+                                   UpdateVideoBufferPurgeCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import PoolVideoFlag
 
@@ -146,6 +147,18 @@ class CameraManager(ManagerProcessBase):
             warn(f'Could not set camera setting {name} to {value}: {reason}')
         for setting in self.camera.settings:
             self.get_camera_setting(setting)
+
+    @register_ipc_command(SetSimulatedFocusCommand)
+    def set_simulated_focus(self, offset: float):
+        """Adjust the simulated camera focus when using :class:`DummyCameraBeads`."""
+        if not isinstance(self.camera, DummyCameraBeads):
+            return
+
+        try:
+            self.camera.set_focus_offset(offset)
+        except Exception as exc:
+            reason = str(exc).strip() or repr(exc)
+            warn(f'Could not update simulated focus to {offset}: {reason}')
 
 
 class CameraBase(metaclass=ABCMeta):
@@ -456,6 +469,7 @@ class DummyCameraBeads(CameraBase):
             'gain'              : 25000.0,
             'seed'              : 1,
         }
+        self._focus_offset = 0.0
         self._bead_size_px = 50
         self._min_sep_px = 50.0
         self._edge_margin_px = 10.0
@@ -520,7 +534,7 @@ class DummyCameraBeads(CameraBase):
             sig_xy  = float(self._settings['tethered_xy_sigma'])
             th_z    = float(self._theta_z)
             sig_z   = float(self._settings['tethered_z_sigma'])
-            z_anchor = float(self._settings['tethered_z'])
+            z_anchor = float(self._settings['tethered_z']) + float(self._focus_offset)
             size_px = int(self._bead_size_px)
             nmpp    = float(self.nm_per_px)
             radius  = float(self._radius_nm)
@@ -610,6 +624,13 @@ class DummyCameraBeads(CameraBase):
 
         raise KeyError(f"Unknown setting {name}")
 
+    def set_focus_offset(self, offset: float) -> None:
+        offset = float(offset)
+        delta = offset - float(self._focus_offset)
+        self._focus_offset = offset
+        self._z = self._z + delta
+        self._recompute_fixed_delta()
+
     # ------------------------- internals ----------------------------
     def _reinit_centers_and_fixed(self):
         w = self.width; h = self.height
@@ -635,7 +656,7 @@ class DummyCameraBeads(CameraBase):
         size_px = int(self._bead_size_px)
         nmpp    = float(self.nm_per_px)
         radius  = float(self._radius_nm)
-        z_s     = float(self._settings['fixed_z'])
+        z_s     = float(self._settings['fixed_z']) + float(self._focus_offset)
         xyz = np.array([[0.0, 0.0, z_s]], np.float32)
         crop_WHT = simulate_beads(xyz, nm_per_px=nmpp, size_px=size_px, radius_nm=radius)  # (w,h,1)
         crop_HW  = crop_WHT[:, :, 0].T
@@ -644,7 +665,8 @@ class DummyCameraBeads(CameraBase):
     def _init_tether_state(self):
         n_t = int(self._settings['tethered_n'])
         self._xy = np.zeros((n_t, 2), np.float32)
-        self._z  = np.full((n_t,), float(self._settings['tethered_z']), np.float32)
+        base_z = float(self._settings['tethered_z']) + float(self._focus_offset)
+        self._z  = np.full((n_t,), base_z, np.float32)
 
     @staticmethod
     def _blit_add(dst, src, x, y, w=1.0):
