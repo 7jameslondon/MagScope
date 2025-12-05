@@ -2,11 +2,37 @@
 
 Scripting
 =========
-
 This guide explains how to run and write scripts to automate tasks in MagScope.
+
+Writing Scripts
+---------------
+You may want to take a look at the included `example script <https://github.com/7jameslondon/MagScope/blob/master/examples/scripts/example_script.py>`_.
+
+To start a script create a new Python file (example: ``my_new_script.py``).
+Then import magscope and create script instance.
+The instance can be called anything (it does not need to be called "my_script").
+For example:
+
+.. code-block:: python
+
+   import magscope
+   from magscope.ipc_commands import *
+
+   my_script = magscope.Script()
+
+To add a step to the script, call the ``append`` method. For example we can call the
+``SleepCommand`` to pause our script for 5 seconds like this:
+
+.. code-block:: python
+
+   my_script.append(SleepCommand(5))
+
+There are lots of built-in script commands. A complete list is provided :doc:`scripting_commands`.
 
 Running scripts
 ---------------
+To run a script navigate to the "Scripting Panel". F
+
 MagScope comes with a lightweight scripting runtime that allows you to queue up GUI interactions and hardware commands for repeatable experiments.
 A script is an instance of ``magscope.Script`` where each call records a step to be executed.
 
@@ -21,92 +47,63 @@ Or once it is "Finished" you can run it again by clicking "Start".
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Scripting_Panel_v1.jpg
          :alt: Screenshot of the Scripting panel.
 
-Writing your own script
-""""""""""""""""""""""""
+Adding a custom script command
+------------------------------
 
-To start a script create a new Python file (example: ``a_script.py``).
-Then import magscope and create script instance.
-The instance can be called anything (it does not need to be called "my_script").
-Example::
+You can add your own custom functions to the scripting system by pairing an IPC
+command dataclass with a manager method decorated by both
+``register_script_command`` and ``register_ipc_command``. For example:
+
+.. code-block:: python
+
+   """Example MagScope entrypoint that exposes a custom script command."""
+   from dataclasses import dataclass
+
    import magscope
-   from magscope.ipc_commands import SleepCommand
+   from magscope.hardware import HardwareManagerBase
+   from magscope.ipc import register_ipc_command
+   from magscope.ipc_commands import Command
+   from magscope.utils import register_script_command
 
-   my_script = magscope.Script()
+   @dataclass(frozen=True)
+   class HelloCommand(Command):
+       name: str
 
-To add a step to the script, call the ``append`` method. For example we can call the
-``SleepCommand`` to pause our script for 5 seconds like this::
-   my_script.append(SleepCommand(5))
+   class HelloManager(HardwareManagerBase):
+       def connect(self):
+           self._is_connected = True
 
+       def disconnect(self):
+           self._is_connected = False
 
+       def fetch(self):
+           pass
 
-Technical Details (Advanced)
-============================
+       @register_ipc_command(HelloCommand)
+       @register_script_command(HelloCommand)
+       def say_hello(self, name: str):
+           print(f"Hello {name}", flush=True)
 
-This guide explains how MagScope's scripting subsystem interacts with the IPC
-layer. It reflects the updated IPC message schema built around typed command
-objects and a centralized registry.
+   if __name__ == "__main__":
+       scope = magscope.MagScope()
+       scope.add_hardware(HelloManager())
+       scope.start()
 
-Overview
---------
+Run that file to launch MagScope with the custom ``HelloManager`` process.
+Then create a new script file and import ``HelloCommand`` and call it:
 
-* User scripts create a :class:`magscope.scripting.Script` instance and record
-  each action by instantiating an IPC :class:`magscope.ipc_commands.Command`
-  subclass and passing it to the script. Every call is captured as a
-  :class:`magscope.scripting.ScriptStep` containing the fully constructed
-  command and an optional ``wait`` flag.
-* Scriptable methods in managers are opt-in via the
-  :func:`magscope.utils.register_script_command` decorator, which pairs each
-  script entry point with a concrete IPC :class:`magscope.ipc_commands.Command`
-  type (use ``@register_script_command(MyCommand)``). During startup,
-  :class:`magscope.scope.MagScope` calls
-  :meth:`magscope.scripting.ScriptRegistry.register_class_methods` for each
-  manager so the scripting layer knows which methods can be invoked.
-* The :class:`magscope.ipc_commands.CommandRegistry` links each scriptable
-  method to a concrete :class:`magscope.ipc_commands.Command` dataclass and its
-  delivery semantics (direct, broadcast, or MagScope-local). This ensures every
-  step maps to a registered IPC payload before execution.
+.. code-block:: python
 
-Lifecycle and validation
-------------------------
+   import magscope
+   from main_custom_script_command import HelloCommand
 
-* :class:`magscope.scripting.ScriptManager` owns a compiled script and controls
-  its lifecycle through :class:`magscope.scripting.ScriptStatus` values
-  (``Empty``, ``Loaded``, ``Running``, ``Paused``, ``Finished``, ``Error``).
-* Loading a script dispatches :class:`magscope.ipc_commands.LoadScriptCommand`
-  to the manager. The manager executes the file in an isolated namespace,
-  extracts the sole ``Script`` instance, and validates each
-  :class:`~magscope.scripting.ScriptStep` against both the
-  :class:`~magscope.scripting.ScriptRegistry` and the active
-  :class:`~magscope.ipc_commands.CommandRegistry`. Argument validation uses the
-  command dataclass constructor so scripts must match the IPC payload schema.
-* The GUI sends :class:`magscope.ipc_commands.StartScriptCommand`,
-  :class:`~magscope.ipc_commands.PauseScriptCommand`, and
-  :class:`~magscope.ipc_commands.ResumeScriptCommand` to transition execution
-  through the lifecycle states. The manager reports state changes back to the
-  GUI via :class:`magscope.ipc_commands.UpdateScriptStatusCommand`.
+   script = magscope.Script()
+   script.append(HelloCommand("Jamie"))
 
-Dispatching steps
------------------
+You can also check a command was correctly registered by running `MagScope` with ``print_script_commands`` to ``True``.
+This will print a list of all registered script commands and then close.
 
-* Each :class:`~magscope.scripting.ScriptStep` already holds a concrete command
-  instance. :class:`~magscope.scripting.ScriptManager` validates that the
-  command type is registered for scripting, checks the active IPC registry for a
-  matching handler, and forwards the command over the IPC pipe so the registry
-  can route it to the correct process or broadcast destination.
-* Steps marked with ``wait=True`` or the special ``StartSleepCommand`` pause
-  script advancement until the associated condition is satisfied. Managers emit
-  :class:`magscope.ipc_commands.UpdateWaitingCommand` when the wait concludes so
-  :class:`~magscope.scripting.ScriptManager` can continue.
+.. code-block:: python
 
-Error handling
---------------
-
-* Script parsing and validation errors are logged via the ``scripting`` logger
-  with full tracebacks when available. Invalid scripts are rejected before any
-  IPC traffic is emitted.
-* Runtime exceptions inside :class:`~magscope.scripting.ScriptManager` continue
-  to flow through the standard manager error path, which reports details via
-  :class:`magscope.ipc_commands.LogExceptionCommand` when IPC is available.
-* Missing or unregistered script methods raise explicit validation errors during
-  loading, mirroring the IPC command registration semantics and preventing
-  undefined messages from being dispatched.
+  scope = magscope.MagScope(print_script_commands=True)
+  scope.start()
