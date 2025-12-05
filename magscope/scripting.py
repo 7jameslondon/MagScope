@@ -292,7 +292,13 @@ class ScriptManager(ManagerProcessBase):
             namespace = {}
             try:
                 with open(path, 'r') as f:
-                    exec(f.read(), {}, namespace)
+                    exec(
+                        f.read(),
+                        {
+                            "__file__": path,
+                        },
+                        namespace,
+                    )
             except Exception:  # noqa
                 error_message = "An error occurred while loading a script."
                 error_details = traceback.format_exc()
@@ -330,6 +336,8 @@ class ScriptManager(ManagerProcessBase):
         self._script_length = len(self._script)
         self._script_waiting = False
         self._script_index = 0
+        self._script_sleep_duration = None
+        self._script_sleep_start = 0
         self._set_script_status(status)
 
         if error_message is not None:
@@ -369,8 +377,15 @@ class ScriptManager(ManagerProcessBase):
     @register_script_command(SleepCommand)
     def start_sleep(self, duration: float):
         """Pause the script for ``duration`` seconds."""
+        if duration < 0:
+            raise ValueError("Sleep duration must be non-negative")
+
         self._script_sleep_duration = duration
         self._script_sleep_start = time()
+        self._script_waiting = True
+
+        if duration == 0:
+            self._do_sleep()
 
     def _do_sleep(self):
         """Check whether the scripted sleep period has elapsed."""

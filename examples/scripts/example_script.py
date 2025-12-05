@@ -1,12 +1,7 @@
 import numpy as np
 
 from magscope import AcquisitionMode, Script, Units
-from magscope.ipc_commands import (
-    SetAcquisitionModeCommand,
-    SetAcquisitionOnCommand,
-    ShowMessageCommand,
-    SleepCommand,
-)
+from magscope.ipc_commands import *
 
 my_script = Script()
 
