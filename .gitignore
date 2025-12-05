@@ -2,6 +2,7 @@
 *settings.yaml
 .idea/
 *build/
+dev*
 dev/
 dist/
 *.egg-info/
