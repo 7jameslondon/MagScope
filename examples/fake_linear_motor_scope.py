@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from math import copysign
+from pathlib import Path
 from time import time
 from warnings import warn
 
@@ -11,9 +12,10 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
 from scipy.interpolate import PchipInterpolator
 
 import magscope
-from magscope.ipc_commands import Command, register_ipc_command
+from magscope.ipc import register_ipc_command
+from magscope.ipc_commands import Command
 
-FORCE_CALIBRATION_PATH = r"C:\Users\lond11\Documents\MagScope and MagTrack\MagScope\force_calibrant.txt"
+FORCE_CALIBRATION_PATH = Path(__file__).with_name("force_calibrant.txt")
 
 
 class ForceCalibration:
@@ -403,7 +405,7 @@ class LinearMotorControls(magscope.ControlPanelBase):
 
         # Try to get speed
         try:
-            speed = float(self.speed_textedit.text())
+            speed = float(self.speed_force_textedit.text())
         except ValueError:
             speed = None
         if speed is not None:
