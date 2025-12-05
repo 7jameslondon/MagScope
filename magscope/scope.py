@@ -45,7 +45,7 @@ import logging
 import os
 import sys
 import time
-from multiprocessing import Event, Lock, freeze_support
+from multiprocessing import current_process, Event, freeze_support, Lock
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -59,8 +59,15 @@ from magscope.camera import CameraManager
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
-from magscope.ipc import (CommandRegistry, Delivery, broadcast_command, command_kwargs,
-                          create_pipes, drain_pipe_until_quit, register_ipc_command)
+from magscope.ipc import (
+    broadcast_command,
+    command_kwargs,
+    CommandRegistry,
+    create_pipes,
+    Delivery,
+    drain_pipe_until_quit,
+    register_ipc_command,
+)
 from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.scripting import ScriptManager
@@ -71,6 +78,7 @@ logger = get_logger("scope")
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
+
 
 class MagScope(metaclass=SingletonMeta):
     """Coordinate MagScope managers, shared resources, and IPC.
@@ -146,6 +154,15 @@ class MagScope(metaclass=SingletonMeta):
         When a quit message is received the method joins every process before
         returning control to the caller.
         """
+        freeze_support()
+
+        if current_process().name != "MainProcess":
+            logger.debug(
+                "MagScope.start called in a child process; skipping initialization to "
+                "avoid duplicate startup during multiprocessing spawn."
+            )
+            return
+
         self._ensure_not_terminated()
         self._apply_logging_preferences()
 
@@ -293,7 +310,8 @@ class MagScope(metaclass=SingletonMeta):
         decorator binds correctly before other managers start.
         """
         proc_list: list[ManagerProcessBase] = [
-            self.script_manager,  # ScriptManager must be first in this list for @register_script_command to work
+            # ScriptManager must be first in this list for @register_script_command to work
+            self.script_manager,
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,
@@ -534,13 +552,13 @@ class MagScope(metaclass=SingletonMeta):
             create=True,
             locks=self.locks,
             name='ProfilesBuffer',
-            shape=(1000, 2+self.settings['bead roi width'])
+            shape=(1000, 2 + self.settings['bead roi width']),
         )
         self.tracks_buffer = MatrixBuffer(
             create=True,
             locks=self.locks,
             name='TracksBuffer',
-            shape=(self._settings['tracks max datapoints'], 7)
+            shape=(self._settings['tracks max datapoints'], 7),
         )
         self.video_buffer = VideoBuffer(
             create=True,
@@ -549,14 +567,14 @@ class MagScope(metaclass=SingletonMeta):
             n_images=self._settings['video buffer n images'],
             width=self.camera_manager.camera.width,
             height=self.camera_manager.camera.height,
-            bits=np.iinfo(self.camera_manager.camera.dtype).bits
+            bits=np.iinfo(self.camera_manager.camera.dtype).bits,
         )
         for name, hardware in self._hardware.items():
             self._hardware_buffers[name] = MatrixBuffer(
                 create=True,
                 locks=self.locks,
                 name=name,
-                shape=hardware.buffer_shape
+                shape=hardware.buffer_shape,
             )
 
     def _setup_locks(self):

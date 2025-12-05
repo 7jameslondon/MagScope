@@ -4,17 +4,30 @@ from time import time
 import numpy as np
 
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (ExecuteXYLockCommand, MoveBeadsCommand,
-                                   RemoveBeadFromPendingMovesCommand,
-                                   RemoveBeadsFromPendingMovesCommand, SetXYLockIntervalCommand,
-                                   SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
-                                   SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
-                                   SetZLockOnCommand, SetZLockTargetCommand,
-                                   UpdateXYLockEnabledCommand, UpdateXYLockIntervalCommand,
-                                   UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
-                                   UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
-                                   UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
-                                   UpdateZLockTargetCommand)
+from magscope.ipc_commands import (
+    ExecuteXYLockCommand,
+    MoveBeadsCommand,
+    RemoveBeadFromPendingMovesCommand,
+    RemoveBeadsFromPendingMovesCommand,
+    SetXYLockIntervalCommand,
+    SetXYLockMaxCommand,
+    SetXYLockOnCommand,
+    SetXYLockWindowCommand,
+    SetZLockBeadCommand,
+    SetZLockIntervalCommand,
+    SetZLockMaxCommand,
+    SetZLockOnCommand,
+    SetZLockTargetCommand,
+    UpdateXYLockEnabledCommand,
+    UpdateXYLockIntervalCommand,
+    UpdateXYLockMaxCommand,
+    UpdateXYLockWindowCommand,
+    UpdateZLockBeadCommand,
+    UpdateZLockEnabledCommand,
+    UpdateZLockIntervalCommand,
+    UpdateZLockMaxCommand,
+    UpdateZLockTargetCommand,
+)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -28,8 +41,8 @@ class BeadLockManager(ManagerProcessBase):
         self.xy_lock_interval: float
         self.xy_lock_max: float
         self.xy_lock_window: int
-        self._xy_lock_last_time: float = 0.
-        self._xy_lock_global_cutoff: float = 0.
+        self._xy_lock_last_time: float = 0.0
+        self._xy_lock_global_cutoff: float = 0.0
         self._xy_lock_bead_cutoff: dict[int, float] = {}
         self._xy_lock_pending_moves: list[int] = []
 
@@ -39,7 +52,7 @@ class BeadLockManager(ManagerProcessBase):
         self.z_lock_target: float | None = None
         self.z_lock_interval: float
         self.z_lock_max: float
-        self._z_lock_last_time: float = 0.
+        self._z_lock_last_time: float = 0.0
 
     def setup(self):
         self.xy_lock_interval = self.settings['xy-lock default interval']
@@ -53,13 +66,13 @@ class BeadLockManager(ManagerProcessBase):
         # XY-Lock Enabled
         if self.xy_lock_on:
             # Timer
-            if (now:=time()) - self._xy_lock_last_time > self.xy_lock_interval:
+            if (now := time()) - self._xy_lock_last_time > self.xy_lock_interval:
                 self.do_xy_lock(now=now)
 
         # Z-Lock Enabled
         if self.z_lock_on:
             # Timer
-            if (now:=time()) - self._z_lock_last_time > self.z_lock_interval:
+            if (now := time()) - self._z_lock_last_time > self.z_lock_interval:
                 self.do_z_lock(now=now)
 
     @register_ipc_command(ExecuteXYLockCommand)
@@ -71,7 +84,8 @@ class BeadLockManager(ManagerProcessBase):
         width = self.settings['bead roi width']
         half_width = width // 2
         tracks = self.tracks_buffer.peak_unsorted().copy()
-        if now is None: now = time()
+        if now is None:
+            now = time()
         self._xy_lock_last_time = now
 
         # For each bead calculate if/how much to move
@@ -86,7 +100,7 @@ class BeadLockManager(ManagerProcessBase):
                 continue
 
             # Filter to valid positions for this ROI
-            position_mask =  ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
+            position_mask = ~np.isnan(track[:, [0, 1, 2]]).any(axis=1)
             valid_track = track[position_mask]
 
             cutoff = max(
@@ -126,7 +140,7 @@ class BeadLockManager(ManagerProcessBase):
             dy = copysign(min(abs(dy), self.xy_lock_max), dy)
 
             # Move the bead as needed
-            if abs(dx) > 0. or abs(dy) > 0.:
+            if abs(dx) > 0 or abs(dy) > 0:
                 moves_to_send.append((id, int(dx), int(dy)))
 
         if moves_to_send:
@@ -136,7 +150,8 @@ class BeadLockManager(ManagerProcessBase):
 
     def do_z_lock(self, now=None):
         # Gather information
-        if now is None: now = time()
+        if now is None:
+            now = time()
         self._z_lock_last_time = now
 
         raise NotImplementedError
@@ -146,7 +161,7 @@ class BeadLockManager(ManagerProcessBase):
         super().set_bead_rois(value)
 
         # Check if any of the beads have been deleted
-        keys = list(self._xy_lock_pending_moves) # copy
+        keys = list(self._xy_lock_pending_moves)  # copy
         for id in keys:
             if id not in self.bead_rois:
                 self._xy_lock_pending_moves.pop(id)

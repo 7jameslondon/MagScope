@@ -8,30 +8,79 @@ from warnings import warn
 import numpy as np
 from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer
 from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
-from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLayout, QMainWindow,
-                             QMessageBox, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QMainWindow,
+    QMessageBox,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, MoveBeadsCommand,
-                                   RemoveBeadsFromPendingMovesCommand, SetAcquisitionDirCommand,
-                                   SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
-                                   SetAcquisitionOnCommand, SetBeadRoisCommand, ShowMessageCommand,
-                                   UnloadZLUTCommand, UpdateCameraSettingCommand,
-                                   UpdateScriptStatusCommand, UpdateVideoBufferPurgeCommand,
-                                   UpdateXYLockEnabledCommand, UpdateXYLockIntervalCommand,
-                                   UpdateXYLockMaxCommand, UpdateXYLockWindowCommand,
-                                   UpdateZLockBeadCommand, UpdateZLockEnabledCommand,
-                                   UpdateZLockIntervalCommand, UpdateZLockMaxCommand,
-                                   UpdateZLockTargetCommand, UpdateZLUTMetadataCommand)
-from magscope.gui import (AcquisitionPanel, BeadGraphic, BeadSelectionPanel, CameraPanel,
-                          ControlPanelBase, GripSplitter, HistogramPanel, PlotWorker,
-                          ResizableLabel, ScriptPanel, StatusPanel, TimeSeriesPlotBase, VideoViewer)
-from magscope.gui.controls import (HelpPanel, PlotSettingsPanel, ProfilePanel, ResetPanel,
-                                   XYLockPanel, ZLUTGenerationPanel, ZLUTPanel, ZLockPanel)
-from magscope.gui.panel_layout import (PANEL_MIME_TYPE, PanelLayoutManager, PanelWrapper,
-                                       ReorderableColumn)
+from magscope.ipc_commands import (
+    LoadZLUTCommand,
+    MoveBeadsCommand,
+    RemoveBeadsFromPendingMovesCommand,
+    SetAcquisitionDirCommand,
+    SetAcquisitionDirOnCommand,
+    SetAcquisitionModeCommand,
+    SetAcquisitionOnCommand,
+    SetBeadRoisCommand,
+    ShowMessageCommand,
+    UnloadZLUTCommand,
+    UpdateCameraSettingCommand,
+    UpdateScriptStatusCommand,
+    UpdateVideoBufferPurgeCommand,
+    UpdateXYLockEnabledCommand,
+    UpdateXYLockIntervalCommand,
+    UpdateXYLockMaxCommand,
+    UpdateXYLockWindowCommand,
+    UpdateZLockBeadCommand,
+    UpdateZLockEnabledCommand,
+    UpdateZLockIntervalCommand,
+    UpdateZLockMaxCommand,
+    UpdateZLockTargetCommand,
+    UpdateZLUTMetadataCommand,
+)
+from magscope.gui import (
+    AcquisitionPanel,
+    BeadGraphic,
+    BeadSelectionPanel,
+    CameraPanel,
+    ControlPanelBase,
+    GripSplitter,
+    HistogramPanel,
+    PlotWorker,
+    ResizableLabel,
+    ScriptPanel,
+    StatusPanel,
+    TimeSeriesPlotBase,
+    VideoViewer,
+)
+from magscope.gui.controls import (
+    HelpPanel,
+    PlotSettingsPanel,
+    ProfilePanel,
+    ResetPanel,
+    XYLockPanel,
+    ZLUTGenerationPanel,
+    ZLUTPanel,
+    ZLockPanel,
+)
+from magscope.gui.panel_layout import (
+    PANEL_MIME_TYPE,
+    PanelLayoutManager,
+    PanelWrapper,
+    ReorderableColumn,
+)
 from magscope.gui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
@@ -69,7 +118,6 @@ class WindowManager(ManagerProcessBase):
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
         self._suppress_bead_roi_updates: bool = False
-
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -191,7 +239,6 @@ class WindowManager(ManagerProcessBase):
     def _update_view_and_hist_tick(self) -> None:
         self._run_safe(self._update_view_and_hist)
 
-
     def set_selected_bead(self, bead: int):
         self.selected_bead = bead
         self._update_bead_highlights()
@@ -211,7 +258,6 @@ class WindowManager(ManagerProcessBase):
                 graphic.set_selection_state('reference')
             else:
                 graphic.set_selection_state('default')
-
 
     @property
     def n_windows(self):
@@ -649,7 +695,6 @@ class WindowManager(ManagerProcessBase):
         panel.set_filepath(filepath)
         panel.update_metadata(z_min, z_max, step_size, profile_length)
 
-
 class LoadingWindow(QMainWindow):
 
     def __init__(self):
@@ -682,7 +727,6 @@ class LoadingWindow(QMainWindow):
         center_point = self.screen().availableGeometry().center()
         frame_geometry.moveCenter(center_point)
         self.move(frame_geometry.topLeft())
-
 
 class AddColumnDropTarget(QFrame):
     """Drop target that creates a new column when a panel is dropped."""
@@ -774,7 +818,6 @@ class AddColumnDropTarget(QFrame):
             return
         self._controls.create_new_column_with_panel(wrapper)
         event.acceptProposedAction()
-
 
 class Controls(QWidget):
     """Container widget hosting draggable, persistent control panels."""

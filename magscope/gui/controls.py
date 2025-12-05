@@ -12,6 +12,7 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QPalette, QTextOption
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -35,14 +36,28 @@ from magscope.gui import (
     LabeledLineEditWithValue,
 )
 from magscope.gui.widgets import FlashLabel
-from magscope.ipc_commands import (ExecuteXYLockCommand, GetCameraSettingCommand,
-                                   LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
-                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
-                                   SetAcquisitionModeCommand, SetAcquisitionOnCommand,
-                                   SetCameraSettingCommand, SetXYLockIntervalCommand,
-                                   SetXYLockMaxCommand, SetXYLockOnCommand, SetXYLockWindowCommand,
-                                   SetZLockBeadCommand, SetZLockIntervalCommand, SetZLockMaxCommand,
-                                   SetZLockOnCommand, SetZLockTargetCommand, StartScriptCommand)
+from magscope.ipc_commands import (
+    ExecuteXYLockCommand,
+    GetCameraSettingCommand,
+    LoadScriptCommand,
+    PauseScriptCommand,
+    ResumeScriptCommand,
+    SetAcquisitionDirCommand,
+    SetAcquisitionDirOnCommand,
+    SetAcquisitionModeCommand,
+    SetAcquisitionOnCommand,
+    SetCameraSettingCommand,
+    SetXYLockIntervalCommand,
+    SetXYLockMaxCommand,
+    SetXYLockOnCommand,
+    SetXYLockWindowCommand,
+    SetZLockBeadCommand,
+    SetZLockIntervalCommand,
+    SetZLockMaxCommand,
+    SetZLockOnCommand,
+    SetZLockTargetCommand,
+    StartScriptCommand,
+)
 from magscope.scripting import ScriptStatus
 from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
@@ -71,17 +86,19 @@ class ControlPanelBase(QWidget):
     def set_title(self, text: str) -> None:
         self.groupbox.setTitle(text)
 
-    def setLayout(self, layout: QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout) -> None:  # noqa: N802
+    def setLayout(self, layout: QBoxLayout) -> None:
         self.groupbox.setContentLayout(layout)
 
-    def layout(self) -> QVBoxLayout | QHBoxLayout | QGridLayout | QStackedLayout:  # type: ignore[override]
+    def layout(self) -> QBoxLayout:
         return self.groupbox.content_area.layout()
 
     def set_highlighted(self, enabled: bool) -> None:
         highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
         if enabled:
             color_name = highlight_color.name()
-            self.groupbox.setStyleSheet(f"QGroupBox {{ border: 2px solid {color_name}; border-radius: 6px; }}")
+            self.groupbox.setStyleSheet(
+                f"QGroupBox {{ border: 2px solid {color_name}; border-radius: 6px; }}"
+            )
         else:
             self.groupbox.setStyleSheet("")
 
