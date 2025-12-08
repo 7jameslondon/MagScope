@@ -36,7 +36,6 @@ class VideoProcessorManager(ManagerProcessBase):
         self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
         self._gpu_lock: LockType = Lock()
-        self._loop: int = 0
 
         # TODO: Check implementation
         self._save_profiles = False
