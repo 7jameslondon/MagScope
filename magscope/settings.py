@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping, MutableMapping
 
 from PyQt6.QtCore import QSettings
 import yaml
+from cupy import maximum
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
     _QSETTINGS_GROUP = "MagScopeSettings"
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
-        "ROI": SettingSpec("ROI", int, minimum=1, must_be_even=True),
+        "ROI": SettingSpec("ROI", int, minimum=8, must_be_even=True),
         "magnification": SettingSpec("magnification", (int, float), minimum=0.0001),
         "tracks max datapoints": SettingSpec("tracks max datapoints", int, minimum=1),
         "video buffer n images": SettingSpec("video buffer n images", int, minimum=1),
