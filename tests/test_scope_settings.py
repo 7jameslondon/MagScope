@@ -99,3 +99,11 @@ def test_settings_respect_maximum_values():
 
     with pytest.raises(ValueError):
         spec.coerce(11.5)
+
+
+def test_settingspec_display_label_defaults_to_key():
+    spec_with_display = SettingSpec("test", int, display_name="Custom label")
+    assert spec_with_display.label == "Custom label"
+
+    spec_without_display = SettingSpec("fallback", int)
+    assert spec_without_display.label == "fallback"

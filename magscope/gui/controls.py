@@ -275,8 +275,9 @@ class MagScopeSettingsPanel(ControlPanelBase):
         button_row.addStretch(1)
 
         for key in MagScopeSettings.defined_keys():
+            spec = MagScopeSettings.spec_for(key)
             widget = LabeledLineEditWithValue(
-                label_text=key,
+                label_text=spec.label,
                 widths=(180, 100, 80),
             )
             widget.lineedit.setText(str(self._current_settings[key]))
