@@ -1,69 +1,49 @@
+from pathlib import Path
 import sys
-import types
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
-
-class _DummyMeta(type):
-    def __getattr__(cls, name):
-        return cls
-
-    def __call__(cls, *args, **kwargs):
-        return cls
+from magscope.settings import MagScopeSettings
 
 
-class _Dummy(metaclass=_DummyMeta):
-    pass
+def test_settings_clone_and_reset():
+    settings = MagScopeSettings()
+    settings['magnification'] = 2.5
+
+    clone = settings.clone()
+    settings['magnification'] = 3.0
+
+    assert clone['magnification'] == 2.5
+
+    settings.reset_to_defaults()
+    defaults = MagScopeSettings()
+    assert settings['magnification'] == defaults['magnification']
 
 
-def _install_pyqt_mocks(monkeypatch):
-    dummy = _Dummy()
+def test_settings_round_trip(tmp_path):
+    settings = MagScopeSettings()
+    settings['video processors n'] = 4
+    settings['video buffer n stacks'] = 6
 
-    def create_module(name):
-        module = types.ModuleType(name)
-        module.__getattr__ = lambda attr, _dummy=dummy: _dummy
-        return module
+    path = tmp_path / "settings.yaml"
+    settings.save(path)
 
-    qt_gui = create_module("PyQt6.QtGui")
-    qt_core = create_module("PyQt6.QtCore")
-    qt_widgets = create_module("PyQt6.QtWidgets")
+    loaded = MagScopeSettings.from_yaml(path)
 
-    pyqt6 = types.ModuleType("PyQt6")
-    pyqt6.QtGui = qt_gui
-    pyqt6.QtCore = qt_core
-    pyqt6.QtWidgets = qt_widgets
-    pyqt6.__getattr__ = lambda attr, _dummy=dummy: _dummy
-
-    qt_sip = create_module("PyQt6.sip")
-
-    monkeypatch.setitem(sys.modules, "PyQt6", pyqt6)
-    monkeypatch.setitem(sys.modules, "PyQt6.QtGui", qt_gui)
-    monkeypatch.setitem(sys.modules, "PyQt6.QtCore", qt_core)
-    monkeypatch.setitem(sys.modules, "PyQt6.QtWidgets", qt_widgets)
-    monkeypatch.setitem(sys.modules, "PyQt6.sip", qt_sip)
-
-    gui_module = types.ModuleType("magscope.gui")
-    gui_module.ControlPanelBase = type("ControlPanelBase", (), {})
-    gui_module.TimeSeriesPlotBase = type("TimeSeriesPlotBase", (), {})
-    gui_module.WindowManager = type("WindowManager", (), {})
-
-    monkeypatch.setitem(sys.modules, "magscope.gui", gui_module)
+    assert loaded['video processors n'] == 4
+    assert loaded['video buffer n stacks'] == 6
 
 
-def test_load_settings_warns_and_skips_empty_file(monkeypatch, tmp_path):
-    _install_pyqt_mocks(monkeypatch)
-    from magscope.scope import MagScope
+def test_settings_validation_and_coercion():
+    settings = MagScopeSettings()
 
-    MagScope._reset_singleton_for_testing()
-    scope = MagScope()
-    settings_path = tmp_path / "settings.yaml"
-    settings_path.write_text("")
-    original_settings = scope.settings.copy()
+    settings['video processors n'] = "3"
+    assert settings['video processors n'] == 3
 
-    scope.settings_path = str(settings_path)
-    with pytest.warns(UserWarning, match="empty.*Skipping merge"):
-        scope._load_settings()
+    with pytest.raises(ValueError):
+        settings['video buffer n stacks'] = 0
 
-    assert scope.settings == original_settings
-
-    MagScope._reset_singleton_for_testing()
+    with pytest.raises(KeyError):
+        settings['unknown'] = 1

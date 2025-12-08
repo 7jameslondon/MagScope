@@ -6,5 +6,5 @@ from magscope.gui.widgets import (BeadGraphic, CollapsibleGroupBox, GripSplitter
                                   ResizableLabel)
 from magscope.gui.controls import (AcquisitionPanel, BeadSelectionPanel, CameraPanel,
                                    ControlPanelBase, HistogramPanel, PlotSettingsPanel, ScriptPanel,
-                                   StatusPanel)
+                                   StatusPanel, MagScopeSettingsPanel)
 from magscope.gui.windows import Controls, WindowManager
