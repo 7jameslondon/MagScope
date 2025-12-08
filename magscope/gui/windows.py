@@ -68,6 +68,7 @@ from magscope.gui import (
 )
 from magscope.gui.controls import (
     HelpPanel,
+    MagScopeSettingsPanel,
     PlotSettingsPanel,
     ProfilePanel,
     ResetPanel,
@@ -883,6 +884,7 @@ class Controls(QWidget):
         # Instantiate standard panels
         self.help_panel = HelpPanel(self.manager)
         self.reset_panel = ResetPanel(self.manager)
+        self.settings_panel = MagScopeSettingsPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
@@ -902,6 +904,7 @@ class Controls(QWidget):
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("HelpPanel", self.help_panel, "left", False),
             ("ResetPanel", self.reset_panel, "left", False),
+            ("MagScopeSettingsPanel", self.settings_panel, "left", True),
             ("StatusPanel", self.status_panel, "left", True),
             ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),

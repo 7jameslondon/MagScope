@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from magscope.scripting import ScriptStatus
+    from magscope.settings import MagScopeSettings
     from magscope.utils import AcquisitionMode
 
 
@@ -20,7 +21,12 @@ class QuitCommand(Command):
 
 @dataclass(frozen=True)
 class SetSettingsCommand(Command):
-    settings: dict
+    settings: "MagScopeSettings"
+
+
+@dataclass(frozen=True)
+class UpdateSettingsCommand(Command):
+    settings: "MagScopeSettings"
 
 
 @dataclass(frozen=True)
