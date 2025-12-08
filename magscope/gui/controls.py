@@ -841,6 +841,12 @@ class ProfilePanel(ControlPanelBase):
         self.selected_bead_label = QLabel('')
         selected_bead_row.addWidget(self.selected_bead_label)
 
+        profile_length_row = QHBoxLayout()
+        self.layout().addLayout(profile_length_row)
+        profile_length_row.addWidget(QLabel('Profile length:'))
+        self.profile_length_label = QLabel('')
+        profile_length_row.addWidget(self.profile_length_label)
+
         # Figure
         self.figure = Figure(dpi=100, facecolor='#1e1e1e')
         self.canvas = FigureCanvas(self.figure)
@@ -878,6 +884,7 @@ class ProfilePanel(ControlPanelBase):
         selected_bead = self.manager.selected_bead
         if selected_bead == -1:
             self.selected_bead_label.setText('')
+            self.profile_length_label.setText('')
         else:
             self.selected_bead_label.setText(str(selected_bead))
 
@@ -898,17 +905,21 @@ class ProfilePanel(ControlPanelBase):
             self.line.set_xdata(radial_distances)
             self.line.set_ydata(cleaned_profile)
 
+            self.profile_length_label.setText(str(len(cleaned_profile)))
+
             if len(cleaned_profile) > 0:
                 self.axes.set_xlim(0, max(radial_distances))
                 self.axes.set_ylim(0, max(cleaned_profile))
         else:
             self.line.set_xdata([])
             self.line.set_ydata([])
+            self.profile_length_label.setText('')
 
         self.canvas.draw()
 
     def clear(self):
         self.selected_bead_label.setText('')
+        self.profile_length_label.setText('')
         self.line.set_xdata([])
         self.line.set_ydata([])
         self.canvas.draw()
