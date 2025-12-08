@@ -3,7 +3,7 @@ from __future__ import annotations
 from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
-from queue import Full
+from queue import Empty, Full
 from typing import TYPE_CHECKING
 import warnings
 
@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 logger = get_logger("videoprocessing")
 
+_LOOKUP_Z_PROFILE_WARNING = 'lookup_z_profile_size_warning'
+
 class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
@@ -38,6 +40,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
         self._gpu_lock: LockType = Lock()
+        self._warning_queue: QueueType | None = None
+        self._lookup_z_warning_reported = False
         self._waiting_for_acquisition: bool | None = None
 
         # TODO: Check implementation
@@ -51,6 +55,7 @@ class VideoProcessorManager(ManagerProcessBase):
     def setup(self):
         self._n_workers = self.settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
+        self._warning_queue = Queue()
 
         # Create the workers
         for _ in range(self._n_workers):
@@ -58,7 +63,8 @@ class VideoProcessorManager(ManagerProcessBase):
                                  locks=self.locks,
                                  video_flag=self.shared_values.video_process_flag,
                                  busy_count=self.shared_values.video_process_busy_count,
-                                 gpu_lock=self._gpu_lock)
+                                 gpu_lock=self._gpu_lock,
+                                 warning_queue=self._warning_queue)
             self._workers.append(worker)
 
         # Start the workers
@@ -68,6 +74,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._broadcast_zlut_metadata()
 
     def do_main_loop(self):
+        self._process_worker_warnings()
         if self._waiting_for_acquisition is not None:
             self._finish_waiting_when_ready()
 
@@ -116,6 +123,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_path = None
         self._zlut_metadata = None
         self._zlut = None
+        self._lookup_z_warning_reported = False
         self._broadcast_zlut_metadata()
 
     def _set_zlut_from_path(self, path: Path) -> None:
@@ -125,6 +133,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_metadata = metadata
         self._zlut_path = path
         self._zlut = self._to_processing_array(zlut_array)
+        self._lookup_z_warning_reported = False
 
     @staticmethod
     def _extract_zlut_metadata(zlut_array: np.ndarray) -> dict[str, float | int]:
@@ -190,6 +199,24 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.warning('Skipping video processing task because worker queue is full')
             return False
 
+    def _process_worker_warnings(self) -> None:
+        if self._warning_queue is None:
+            return
+
+        while True:
+            try:
+                warning = self._warning_queue.get_nowait()
+            except Empty:
+                break
+
+            if warning == _LOOKUP_Z_PROFILE_WARNING and not self._lookup_z_warning_reported:
+                self._lookup_z_warning_reported = True
+                command = ShowMessageCommand(
+                    text='Z-LUT may not match current ROI or detection settings.',
+                    details='MagTrack reported a LookupZProfileSizeWarning; consider reloading a compatible Z-LUT or adjusting ROI size.',
+                )
+                self.send_ipc(command)
+
     @register_ipc_command(WaitUntilAcquisitionOnCommand)
     @register_script_command(WaitUntilAcquisitionOnCommand)
     def script_wait_until_acquisition_on(self, value: bool):
@@ -207,13 +234,15 @@ class VideoWorker(Process):
                  locks: dict[str, LockType],
                  video_flag: ValueTypeUI8,
                  busy_count: ValueTypeUI8,
-                 gpu_lock: Lock):
+                 gpu_lock: Lock,
+                 warning_queue: QueueType | None):
         super().__init__()
         self._gpu_lock: Lock = gpu_lock
         self._tasks: QueueType = tasks
         self._locks: dict[str, LockType] = locks
         self._video_flag: ValueTypeUI8 = video_flag
         self._busy_count: ValueTypeUI8 = busy_count
+        self._warning_queue: QueueType | None = warning_queue
         self._video_buffer: VideoBuffer | None = None
         self._tracks_buffer: MatrixBuffer | None = None
 
@@ -306,11 +335,13 @@ class VideoWorker(Process):
             stack_rois_reshaped = stack_rois.reshape(roi_width, roi_width, n_rois * n_images)
 
             # "zlut" can be None; magtrack returns NaN z values in that case.
-            with self._gpu_lock:
-                y, x, z, profiles = magtrack.stack_to_xyzp_advanced(stack_rois_reshaped, zlut)
+            with warnings.catch_warnings(record=True) as warning_records:
+                warnings.simplefilter('always')
+                with self._gpu_lock:
+                    y, x, z, profiles = magtrack.stack_to_xyzp_advanced(stack_rois_reshaped, zlut)
             if is_cupy_available():
                 cp.get_default_memory_pool().free_all_blocks()
-            # TODO: Print warning to user
+            self._notify_lookup_profile_warning(warning_records)
 
             # Calculate bead indexes (b)
             b = np.tile(np.array(list(bead_rois.keys())).astype(np.float64), n_images)
@@ -517,6 +548,22 @@ class VideoWorker(Process):
                 process_mode_crop_video()
             case AcquisitionMode.FULL_VIDEO:
                 process_mode_full_video()
+
+    def _notify_lookup_profile_warning(self, warning_records: list[warnings.WarningMessage]) -> None:
+        if self._warning_queue is None:
+            return
+
+        warning_type = getattr(magtrack, 'LookupZProfileSizeWarning', None)
+        if warning_type is None:
+            return
+
+        for warning_record in warning_records:
+            if isinstance(warning_record.message, warning_type):
+                try:
+                    self._warning_queue.put_nowait(_LOOKUP_Z_PROFILE_WARNING)
+                except Full:
+                    logger.debug('Dropping LookupZProfileSizeWarning notification because queue is full')
+                break
 
     def _release_stack(self):
         self._video_buffer.read_stack_no_return()
