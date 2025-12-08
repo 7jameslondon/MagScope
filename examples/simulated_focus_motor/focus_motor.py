@@ -36,12 +36,12 @@ class FocusMotorState:
 class SimulatedFocusMotor(HardwareManagerBase):
     """Simulated focus/Z motor that publishes telemetry and adjusts camera focus."""
 
-    position_min_max: Final[tuple[float, float]] = (-10.0, 10.0)
-    speed_min_max: Final[tuple[float, float]] = (0.01, 50.0)
+    position_min_max: Final[tuple[float, float]] = (-10000.0, 10000.0)
+    speed_min_max: Final[tuple[float, float]] = (0.01, 1000.0)
 
     def __init__(self):
         super().__init__()
-        self.buffer_shape = (1000, 3)
+        self.buffer_shape = (100000, 3)
         self.fetch_interval = 0.05
         self._state = FocusMotorState(position=0.0, target=0.0, speed=1.0)
         self._last_time = time()
@@ -135,14 +135,14 @@ class FocusMotorControls(magscope.ControlPanelBase):
         self.layout().addWidget(self.target_label)
 
         target_row = QHBoxLayout()
-        target_row.addWidget(QLabel("Target (a.u.):"))
-        self.target_text = QLineEdit()
+        target_row.addWidget(QLabel("Target (nm):"))
+        self.target_text = QLineEdit("0")
         target_row.addWidget(self.target_text)
         self.layout().addLayout(target_row)
 
         speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("Speed (a.u./s):"))
-        self.speed_text = QLineEdit()
+        speed_row.addWidget(QLabel("Speed (nm/s):"))
+        self.speed_text = QLineEdit("1")
         speed_row.addWidget(self.speed_text)
         self.layout().addLayout(speed_row)
 
@@ -152,15 +152,14 @@ class FocusMotorControls(magscope.ControlPanelBase):
 
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_labels)
-        self._timer.setInterval(200)
+        self._timer.setInterval(50)
         self._timer.start()
 
     def _update_labels(self) -> None:
-        data = self._buffer.peak_unsorted()
-        if data.size == 0:
-            return
+        # Get latest value from buffer
+        _, position, target = self._buffer.peak_sorted()[-1, :]
 
-        _, position, target = data[-1]
+        # Update GUI
         self.position_label.setText(f"Position: {position:.3f}")
         self.target_label.setText(f"Target: {target:.3f}")
 
@@ -194,7 +193,7 @@ class FocusMotorPlot(magscope.TimeSeriesPlotBase):
     """Time series plot for the simulated focus motor position and target."""
 
     def __init__(self, buffer_name: str = FOCUS_MOTOR_BUFFER_NAME):
-        super().__init__(buffer_name, "Focus (a.u.)")
+        super().__init__(buffer_name, "Focus (nm)")
         self.line_position = None
         self.line_target = None
 
