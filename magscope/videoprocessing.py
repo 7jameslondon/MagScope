@@ -14,9 +14,11 @@ from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (LoadZLUTCommand, ShowMessageCommand, UnloadZLUTCommand,
-                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand)
+                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
+                                   WaitUntilAcquisitionOnCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str
+from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
+                            register_script_command)
 
 if TYPE_CHECKING:
     from multiprocessing.queues import Queue as QueueType
@@ -178,6 +180,8 @@ class VideoProcessorManager(ManagerProcessBase):
 
         self._tasks.put(kwargs)
 
+    @register_ipc_command(WaitUntilAcquisitionOnCommand)
+    @register_script_command(WaitUntilAcquisitionOnCommand)
     def script_wait_until_acquisition_on(self, value: bool):
         while self._acquisition_on != value:
             self.do_main_loop()
