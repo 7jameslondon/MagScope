@@ -74,19 +74,13 @@ class VideoProcessorManager(ManagerProcessBase):
     def quit(self):
         super().quit()
 
-        # Close
         if hasattr(self, '_workers'):
-            for _ in self._workers:
-                self._tasks.put(None)
-
-        # Join
-        if hasattr(self, '_workers'):
+            if self._tasks is not None:
+                for _ in self._workers:
+                    self._tasks.put(None)
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.join()
-
-        # Terminate
-        if hasattr(self, '_workers'):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.terminate()
@@ -184,7 +178,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
         self._tasks.put(kwargs)
 
-    def script_wait_unitl_acquisition_on(self, value: bool):
+    def script_wait_until_acquisition_on(self, value: bool):
         while self._acquisition_on != value:
             self.do_main_loop()
         command = UpdateWaitingCommand()
