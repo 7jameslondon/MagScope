@@ -57,8 +57,10 @@ from magscope.ipc_commands import (
     SetZLockOnCommand,
     SetZLockTargetCommand,
     StartScriptCommand,
+    UpdateSettingsCommand,
 )
 from magscope.scripting import ScriptStatus
+from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
@@ -240,6 +242,125 @@ class ResetPanel(QFrame):
             }}
             """
         )
+
+
+class MagScopeSettingsPanel(ControlPanelBase):
+    """Allow loading, saving, and editing MagScope configuration values."""
+
+    def __init__(self, manager: "WindowManager"):
+        super().__init__(manager=manager, title="MagScope Settings", collapsed_by_default=True)
+
+        self._current_settings = manager.settings.clone()
+        self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
+
+        button_row = QHBoxLayout()
+        self.layout().addLayout(button_row)
+
+        self.load_button = QPushButton("Load")
+        self.load_button.clicked.connect(self._on_load_clicked)  # type: ignore
+        button_row.addWidget(self.load_button)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self._on_save_clicked)  # type: ignore
+        button_row.addWidget(self.save_button)
+
+        self.defaults_button = QPushButton("Set to Defaults")
+        self.defaults_button.clicked.connect(self._on_defaults_clicked)  # type: ignore
+        button_row.addWidget(self.defaults_button)
+
+        self.apply_button = QPushButton("Apply Changes")
+        self.apply_button.clicked.connect(self._on_apply_clicked)  # type: ignore
+        button_row.addWidget(self.apply_button)
+
+        button_row.addStretch(1)
+
+        for key in MagScopeSettings.defined_keys():
+            widget = LabeledLineEditWithValue(
+                label_text=key,
+                widths=(180, 100, 80),
+            )
+            widget.lineedit.setText(str(self._current_settings[key]))
+            widget.value_label.setText(str(self._current_settings[key]))
+            self._setting_inputs[key] = widget
+            self.layout().addWidget(widget)
+
+        self.status_label = FlashLabel()
+        self.layout().addWidget(self.status_label)
+
+    def _notify(self, text: str) -> None:
+        self.status_label.setText(text)
+
+    def _show_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Settings", message)
+
+    def _collect_settings_from_inputs(self) -> MagScopeSettings | None:
+        updated = MagScopeSettings(self._current_settings.to_dict())
+        for key, widget in self._setting_inputs.items():
+            text = widget.lineedit.text().strip()
+            if not text:
+                continue
+            try:
+                updated[key] = text
+            except (KeyError, ValueError) as exc:
+                self._show_error(str(exc))
+                return None
+        return updated
+
+    def _push_settings(self, settings: MagScopeSettings) -> None:
+        self._current_settings = settings.clone()
+        self.manager.settings = settings.clone()
+        command = UpdateSettingsCommand(settings=settings.clone())
+        self.manager.send_ipc(command)
+        self._refresh_fields()
+        self._notify("Settings updated")
+
+    def _refresh_fields(self) -> None:
+        for key, widget in self._setting_inputs.items():
+            value = self._current_settings[key]
+            widget.value_label.setText(str(value))
+            widget.lineedit.setText(str(value))
+
+    def _on_apply_clicked(self) -> None:
+        pending = self._collect_settings_from_inputs()
+        if pending is None:
+            return
+        self._push_settings(pending)
+
+    def _on_defaults_clicked(self) -> None:
+        self._push_settings(MagScopeSettings())
+
+    def _on_load_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load settings",
+            "",
+            "YAML Files (*.yaml);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            settings = MagScopeSettings.from_yaml(path)
+        except (OSError, ValueError) as exc:
+            self._show_error(str(exc))
+            return
+        self._push_settings(settings)
+        self._notify(f"Loaded settings from {os.path.basename(path)}")
+
+    def _on_save_clicked(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save settings",
+            "settings.yaml",
+            "YAML Files (*.yaml);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            self._current_settings.save(path)
+        except OSError as exc:
+            self._show_error(str(exc))
+            return
+        self._notify(f"Saved settings to {os.path.basename(path)}")
 
 
 class AcquisitionPanel(ControlPanelBase):

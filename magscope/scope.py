@@ -42,16 +42,14 @@ remain synchronized.
 """
 
 import logging
-import os
 import sys
 import time
-from multiprocessing import current_process, Event, freeze_support, Lock
+from multiprocessing import Event, Lock, current_process, freeze_support
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
 
 import numpy as np
-import yaml
 
 from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
@@ -68,8 +66,9 @@ from magscope.ipc import (
     drain_pipe_until_quit,
     register_ipc_command,
 )
-from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand
+from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand, UpdateSettingsCommand
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
+from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
 from magscope.videoprocessing import VideoProcessorManager
 
@@ -121,9 +120,7 @@ class MagScope(metaclass=SingletonMeta):
         self.shared_values: InterprocessValues = InterprocessValues()
         self._quitting: Event = Event()
 
-        self._default_settings_path = os.path.join(os.path.dirname(__file__), 'default_settings.yaml')
-        self._settings = self._get_default_settings()
-        self._settings_path = 'settings.yaml'
+        self._settings = MagScopeSettings()
 
         self._running: bool = False
         self._log_level = logging.INFO if verbose else logging.WARNING
@@ -218,16 +215,6 @@ class MagScope(metaclass=SingletonMeta):
         self.window_manager.plots_to_add.append(plot)
 
     @property
-    def settings_path(self):
-        return self._settings_path
-
-    @settings_path.setter
-    def settings_path(self, value):
-        if self._running:
-            warn('MagScope is already running')
-        self._settings_path = value
-
-    @property
     def print_ipc_commands(self) -> bool:
         """Return whether :meth:`start` should print IPC commands and exit early."""
 
@@ -253,15 +240,20 @@ class MagScope(metaclass=SingletonMeta):
             return
         self._print_script_commands = enabled
 
+    def _coerce_settings(self, value: MagScopeSettings | dict) -> MagScopeSettings:
+        if isinstance(value, MagScopeSettings):
+            return value.clone()
+        return MagScopeSettings(value)
+
     @property
     def settings(self):
         return self._settings
 
     @settings.setter
     def settings(self, value):
-        self._settings = value
+        self._settings = self._coerce_settings(value)
         if self._running:
-            command = SetSettingsCommand(settings=value)
+            command = SetSettingsCommand(settings=self._settings.clone())
             self._handle_broadcast_command(command)
 
     @classmethod
@@ -382,7 +374,6 @@ class MagScope(metaclass=SingletonMeta):
     def _initialize_shared_state(self) -> None:
         """Load configuration and prepare shared resources for all managers."""
         freeze_support()  # To prevent recursion in windows executable
-        self._load_settings()
         self._setup_command_registry()
         self._setup_shared_resources()
         self._register_script_methods()
@@ -478,6 +469,9 @@ class MagScope(metaclass=SingletonMeta):
         if spec is None:
             spec = self.command_registry.route_for(command)
 
+        if isinstance(command, SetSettingsCommand):
+            self._settings = self._coerce_settings(command.settings)
+
         if isinstance(command, QuitCommand):
             logger.info('MagScope quitting ...')
             self._quitting.set()
@@ -538,7 +532,7 @@ class MagScope(metaclass=SingletonMeta):
                 camera_type=camera_type,
                 hardware_types=hardware_types,
                 quitting_event=self._quitting,
-                settings=self._settings,
+                settings=self._settings.clone(),
                 shared_values=self.shared_values,
                 locks=self.locks,
                 pipe_end=child_pipes[name],
@@ -596,34 +590,8 @@ class MagScope(metaclass=SingletonMeta):
         for proc in self.processes.values():
             self.script_manager.script_registry.register_class_methods(proc)
 
-    def _get_default_settings(self):
-        """Load the project's default YAML configuration shipped with MagScope."""
-        with open(self._default_settings_path, 'r') as f:
-            settings = yaml.safe_load(f)
-        return settings
+    @register_ipc_command(UpdateSettingsCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
+    def update_settings(self, settings: MagScopeSettings | dict) -> None:
+        """Replace the active settings and broadcast them to all managers."""
 
-    # TODO - Settings validation and error reporting. _load_settings quietly returns on malformed YAML.
-    def _load_settings(self):
-        """Merge user overrides from :attr:`settings_path` into active settings."""
-        if not self._settings_path.endswith('.yaml'):
-            warn("Settings path must be a .yaml file")
-        elif not os.path.exists(self._settings_path):
-            warn(f"Settings file {self._settings_path} did not exist. Creating it now.")
-            with open(self._settings_path, 'w') as f:
-                yaml.dump(self._settings, f)
-        else:
-            try:
-                with open(self._settings_path, 'r') as f:
-                    settings = yaml.safe_load(f)
-                if settings is None:
-                    warn(f"Settings file {self._settings_path} is empty. Skipping merge.")
-                    return
-                if not isinstance(settings, dict):
-                    warn(
-                        f"Settings file {self._settings_path} must contain a YAML mapping. "
-                        "Skipping merge."
-                    )
-                    return
-                self._settings.update(settings)
-            except yaml.YAMLError as e:
-                warn(f"Error loading settings file {self._settings_path}: {e}")
+        self.settings = settings

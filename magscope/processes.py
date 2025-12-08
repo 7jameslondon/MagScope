@@ -16,6 +16,7 @@ from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
                                    SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
                                    SetAcquisitionModeCommand, SetAcquisitionOnCommand,
                                    SetBeadRoisCommand, SetSettingsCommand)
+from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, register_script_command
 
 logger = get_logger("processes")
@@ -95,7 +96,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         camera_type: type[CameraBase] | None,
         hardware_types: dict[str, type[HardwareManagerBase]],
         quitting_event: EventType,
-        settings: dict,
+        settings: MagScopeSettings,
         shared_values: InterprocessValues,
         locks: dict[str, LockType],
         pipe_end: Connection,
@@ -110,7 +111,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.camera_type = camera_type
         self.hardware_types = hardware_types
         self._magscope_quitting = quitting_event
-        self.settings = settings
+        self.settings = settings.clone()
         self.shared_values = shared_values
         self.locks = locks
         self._pipe = pipe_end
@@ -263,8 +264,8 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.bead_rois = value
 
     @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    def set_settings(self, settings: dict):
-        self.settings = settings
+    def set_settings(self, settings: MagScopeSettings):
+        self.settings = settings.clone()
 
     def _report_exception(self, exc: BaseException) -> None:
         error_details = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
