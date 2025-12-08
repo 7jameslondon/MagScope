@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import os
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping
 
@@ -13,6 +12,7 @@ import yaml
 class SettingSpec:
     key: str
     value_type: type | tuple[type, ...]
+    default: Any | None = None
     display_name: str | None = None
     minimum: float | None = None
     maximum: float | None = None
@@ -58,6 +58,9 @@ class SettingSpec:
 
         return coerced
 
+    def default_value(self) -> Any:
+        return copy.deepcopy(self.default)
+
     @property
     def _candidate_types(self) -> tuple[type, ...]:
         if isinstance(self.value_type, tuple):
@@ -70,51 +73,89 @@ class SettingSpec:
 
 
 class MagScopeSettings(MutableMapping[str, Any]):
-    _DEFAULTS_PATH = os.path.join(os.path.dirname(__file__), "default_settings.yaml")
     _QSETTINGS_ORGANIZATION = "MagScope"
     _QSETTINGS_APPLICATION = "MagScope"
     _QSETTINGS_GROUP = "MagScopeSettings"
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
-        "ROI": SettingSpec("ROI", int, display_name="ROI", minimum=8, must_be_even=True),
+        "ROI": SettingSpec(
+            "ROI",
+            value_type=int,
+            default=50,
+            display_name="ROI (pixels)",
+            minimum=8,
+            maximum=256,
+            must_be_even=True,
+        ),
         "magnification": SettingSpec(
-            "magnification", (int, float), display_name="Magnification", minimum=0.0001
+            "magnification",
+            value_type=(int, float),
+            default=1,
+            display_name="Magnification (x)",
+            minimum=1,
         ),
         "tracks max datapoints": SettingSpec(
-            "tracks max datapoints", int, display_name="Tracks max datapoints", minimum=1
+            "tracks max datapoints",
+            value_type=int,
+            default=1_000_000,
+            display_name="Tracks max datapoints",
+            minimum=1,
         ),
         "video buffer n images": SettingSpec(
-            "video buffer n images", int, display_name="Video buffer n images", minimum=1
+            "video buffer n images",
+            value_type=int,
+            default=40,
+            display_name="Video buffer n images",
+            minimum=1,
         ),
         "video buffer n stacks": SettingSpec(
-            "video buffer n stacks", int, display_name="Video buffer n stacks", minimum=1
+            "video buffer n stacks",
+            value_type=int,
+            default=5,
+            display_name="Video buffer n stacks",
+            minimum=1,
         ),
         "video processors n": SettingSpec(
-            "video processors n", int, display_name="Video processors n", minimum=1
+            "video processors n",
+            value_type=int,
+            default=3,
+            display_name="Video processors n",
+            minimum=1,
         ),
         "xy-lock default interval": SettingSpec(
             "xy-lock default interval",
-            (int, float),
+            value_type=(int, float),
+            default=10,
             display_name="XY-lock default interval",
             minimum=0,
         ),
         "xy-lock default max": SettingSpec(
             "xy-lock default max",
-            (int, float),
+            value_type=(int, float),
+            default=10,
             display_name="XY-lock default max",
             minimum=0,
         ),
         "xy-lock default window": SettingSpec(
-            "xy-lock default window", int, display_name="XY-lock default window", minimum=1
+            "xy-lock default window",
+            value_type=int,
+            default=10,
+            display_name="XY-lock default window",
+            minimum=1,
         ),
         "z-lock default interval": SettingSpec(
             "z-lock default interval",
-            (int, float),
+            value_type=(int, float),
+            default=10,
             display_name="Z-lock default interval",
             minimum=0,
         ),
         "z-lock default max": SettingSpec(
-            "z-lock default max", (int, float), display_name="Z-lock default max", minimum=0
+            "z-lock default max",
+            value_type=(int, float),
+            default=1_000,
+            display_name="Z-lock default max",
+            minimum=0,
         ),
     }
 
@@ -130,9 +171,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
 
     @classmethod
     def _load_defaults(cls) -> dict[str, Any]:
-        with open(cls._DEFAULTS_PATH, "r", encoding="utf-8") as file:
-            data = yaml.safe_load(file) or {}
-        return data
+        return {key: spec.default_value() for key, spec in cls._SETTING_SPECS.items()}
 
     @classmethod
     def _qsettings(cls) -> QSettings:
