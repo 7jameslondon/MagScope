@@ -14,6 +14,7 @@ class SettingSpec:
     key: str
     value_type: type | tuple[type, ...]
     minimum: float | None = None
+    must_be_even: bool = False
 
     def coerce(self, value: Any) -> Any:
         if isinstance(value, str):
@@ -41,6 +42,12 @@ class SettingSpec:
                     f"Setting '{self.key}' must be at least {self.minimum}, got {coerced}."
                 )
 
+        if self.must_be_even and isinstance(coerced, int):
+            if coerced % 2 != 0:
+                raise ValueError(
+                    f"Setting '{self.key}' must be an even integer, got {coerced}."
+                )
+
         return coerced
 
     @property
@@ -57,7 +64,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
     _QSETTINGS_GROUP = "MagScopeSettings"
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
-        "ROI": SettingSpec("ROI", int, minimum=1),
+        "ROI": SettingSpec("ROI", int, minimum=1, must_be_even=True),
         "magnification": SettingSpec("magnification", (int, float), minimum=0.0001),
         "tracks max datapoints": SettingSpec("tracks max datapoints", int, minimum=1),
         "video buffer n images": SettingSpec("video buffer n images", int, minimum=1),

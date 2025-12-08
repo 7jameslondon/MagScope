@@ -64,6 +64,19 @@ def test_settings_validation_and_coercion():
         settings['unknown'] = 1
 
 
+def test_roi_must_be_even():
+    settings = MagScopeSettings()
+
+    settings['ROI'] = 2
+    assert settings['ROI'] == 2
+
+    with pytest.raises(ValueError):
+        settings['ROI'] = 3
+
+    with pytest.raises(ValueError):
+        settings['ROI'] = "5"
+
+
 def test_settings_persist_between_instances():
     settings = MagScopeSettings()
     settings['magnification'] = 4.2
