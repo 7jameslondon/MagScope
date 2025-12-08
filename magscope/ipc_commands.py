@@ -29,6 +29,11 @@ class SetAcquisitionOnCommand(Command):
 
 
 @dataclass(frozen=True)
+class WaitUntilAcquisitionOnCommand(Command):
+    value: bool
+
+
+@dataclass(frozen=True)
 class SetAcquisitionDirOnCommand(Command):
     value: bool
 
