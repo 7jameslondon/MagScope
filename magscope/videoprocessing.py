@@ -3,6 +3,7 @@ from __future__ import annotations
 from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
+from queue import Full
 from typing import TYPE_CHECKING
 
 import magtrack
@@ -36,6 +37,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
         self._gpu_lock: LockType = Lock()
+        self._waiting_for_acquisition: bool | None = None
 
         # TODO: Check implementation
         self._save_profiles = False
@@ -65,12 +67,15 @@ class VideoProcessorManager(ManagerProcessBase):
         self._broadcast_zlut_metadata()
 
     def do_main_loop(self):
+        if self._waiting_for_acquisition is not None:
+            self._finish_waiting_when_ready()
+
         # Check if images are ready for image processing
         if self._acquisition_on:
             if self.shared_values.video_process_flag.value == PoolVideoFlag.READY:
                 if self.video_buffer.check_read_stack():
-                    self.shared_values.video_process_flag.value = PoolVideoFlag.RUNNING
-                    self._add_task()
+                    if self._add_task():
+                        self.shared_values.video_process_flag.value = PoolVideoFlag.RUNNING
 
     def quit(self):
         super().quit()
@@ -177,15 +182,23 @@ class VideoProcessorManager(ManagerProcessBase):
             'zlut': self._zlut
         }
 
-        self._tasks.put(kwargs)
+        try:
+            self._tasks.put_nowait(kwargs)
+            return True
+        except Full:
+            logger.warning('Skipping video processing task because worker queue is full')
+            return False
 
     @register_ipc_command(WaitUntilAcquisitionOnCommand)
     @register_script_command(WaitUntilAcquisitionOnCommand)
     def script_wait_until_acquisition_on(self, value: bool):
-        while self._acquisition_on != value:
-            self.do_main_loop()
-        command = UpdateWaitingCommand()
-        self.send_ipc(command)
+        self._waiting_for_acquisition = value
+
+    def _finish_waiting_when_ready(self):
+        if self._acquisition_on == self._waiting_for_acquisition:
+            command = UpdateWaitingCommand()
+            self.send_ipc(command)
+            self._waiting_for_acquisition = None
 
 class VideoWorker(Process):
     def __init__(self,
