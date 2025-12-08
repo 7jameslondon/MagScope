@@ -20,35 +20,63 @@ FORCE_CALIBRATION_PATH = Path(__file__).with_name("force_calibrant.txt")
 
 class ForceCalibration:
     def __init__(self):
+        # Load in data
+        self.data = np.loadtxt(FORCE_CALIBRATION_PATH)
         try:
-            # Load in data
             self.data = np.loadtxt(FORCE_CALIBRATION_PATH)
-
-            # Sort data to be ascending
-            idx = np.argsort(self.data[:, 0])
-            self.data = self.data[idx, :]
-
-            # Interpolate
-            self.motor2force = PchipInterpolator(self.data[:, 0],
-                                                 self.data[:, 1],
-                                                 extrapolate=False)
-
-            self.force2motor = PchipInterpolator(self.data[:, 1],
-                                                 self.data[:, 0],
-                                                 extrapolate=False)
         except FileNotFoundError:
             warn(
                 f"Force calibration file not found at {FORCE_CALIBRATION_PATH}. "
                 "Force conversions will return NaN."
             )
-            self.data = None
-            self.motor2force = self._nan_conversion
-            self.force2motor = self._nan_conversion
+            self.data = np.empty((0, 2))
+            self.motor2force = self._nan_interp
+            self.force2motor = self._nan_interp
+            return
+
+        # Drop rows that share duplicated values in either column
+        values0, counts0 = np.unique(self.data[:, 0], return_counts=True)
+        values1, counts1 = np.unique(self.data[:, 1], return_counts=True)
+        duplicate_values_col0 = values0[counts0 > 1]
+        duplicate_values_col1 = values1[counts1 > 1]
+        has_duplicate = (
+            np.isin(self.data[:, 0], duplicate_values_col0)
+            | np.isin(self.data[:, 1], duplicate_values_col1)
+        )
+        if np.any(has_duplicate):
+            warn("Duplicate values detected in calibration data; dropping affected rows.")
+            self.data = self.data[~has_duplicate]
+
+        if self.data.size == 0:
+            warn("No valid calibration data remain after removing duplicates.")
+            self.motor2force = self._nan_interp
+            self.force2motor = self._nan_interp
+            return
+
+        if self.data.shape[0] < 2:
+            warn("Insufficient calibration data after removing duplicates.")
+            self.motor2force = self._nan_interp
+            self.force2motor = self._nan_interp
+            return
+
+        # Sort data to be ascending
+        idx = np.argsort(self.data[:, 0])
+        self.data = self.data[idx, :]
+
+        # Interpolate
+        self.motor2force = PchipInterpolator(self.data[:, 0],
+                                             self.data[:, 1],
+                                             extrapolate=False)
+
+        self.force2motor = PchipInterpolator(np.flipud(self.data[:, 1]),
+                                             np.flipud(self.data[:, 0]),
+                                             extrapolate=False)
 
     @staticmethod
-    def _nan_conversion(values):
-        arr = np.asarray(values, dtype=float)
-        return np.full_like(arr, np.nan, dtype=float)
+    def _nan_interp(x):
+        arr = np.asarray(x, dtype=float)
+        result = np.full_like(arr, np.nan, dtype=float)
+        return result.item() if result.shape == () else result
 
 
 force_calibration = ForceCalibration()
