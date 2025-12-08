@@ -253,3 +253,13 @@ class FocusMotorPlot(magscope.TimeSeriesPlotBase):
         self.axes.set_xlim(xmin=xmin, xmax=xmax)
         self.axes.set_ylim(ymin=ymin, ymax=ymax)
         self.axes.relim()
+
+
+if __name__ == "__main__":
+    scope = magscope.MagScope()
+
+    scope.add_hardware(SimulatedFocusMotor())
+    scope.add_control(FocusMotorControls, column=0)
+    scope.add_timeplot(FocusMotorPlot())
+
+    scope.start()
