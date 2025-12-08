@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from queue import Full
 from typing import TYPE_CHECKING
+import warnings
 
 import magtrack
 import numpy as np
@@ -306,13 +307,10 @@ class VideoWorker(Process):
 
             # "zlut" can be None; magtrack returns NaN z values in that case.
             with self._gpu_lock:
-                y, x, z, profiles = magtrack.stack_to_xyzp_advanced(
-                    stack_rois_reshaped,
-                    zlut
-                )
-                # TODO: There might be a faster more robust solution
-                if is_cupy_available():
-                    cp.get_default_memory_pool().free_all_blocks()
+                y, x, z, profiles = magtrack.stack_to_xyzp_advanced(stack_rois_reshaped, zlut)
+            if is_cupy_available():
+                cp.get_default_memory_pool().free_all_blocks()
+            # TODO: Print warning to user
 
             # Calculate bead indexes (b)
             b = np.tile(np.array(list(bead_rois.keys())).astype(np.float64), n_images)
