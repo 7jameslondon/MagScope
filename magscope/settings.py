@@ -7,7 +7,6 @@ from typing import Any, Iterable, Mapping, MutableMapping
 
 from PyQt6.QtCore import QSettings
 import yaml
-from cupy import maximum
 
 
 @dataclass(frozen=True)
@@ -15,6 +14,7 @@ class SettingSpec:
     key: str
     value_type: type | tuple[type, ...]
     minimum: float | None = None
+    maximum: float | None = None
     must_be_even: bool = False
 
     def coerce(self, value: Any) -> Any:
@@ -41,6 +41,12 @@ class SettingSpec:
             if coerced < self.minimum:
                 raise ValueError(
                     f"Setting '{self.key}' must be at least {self.minimum}, got {coerced}."
+                )
+
+        if self.maximum is not None and isinstance(coerced, (int, float)):
+            if coerced > self.maximum:
+                raise ValueError(
+                    f"Setting '{self.key}' must be at most {self.maximum}, got {coerced}."
                 )
 
         if self.must_be_even and isinstance(coerced, int):
