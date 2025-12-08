@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from magscope.settings import MagScopeSettings
+from magscope.settings import MagScopeSettings, SettingSpec
 
 
 @pytest.fixture(autouse=True)
@@ -67,8 +67,8 @@ def test_settings_validation_and_coercion():
 def test_roi_must_be_even():
     settings = MagScopeSettings()
 
-    settings['ROI'] = 2
-    assert settings['ROI'] == 2
+    settings['ROI'] = 8
+    assert settings['ROI'] == 8
 
     with pytest.raises(ValueError):
         settings['ROI'] = 3
@@ -86,3 +86,16 @@ def test_settings_persist_between_instances():
 
     assert reloaded['magnification'] == 4.2
     assert reloaded['video buffer n images'] == 7
+
+
+def test_settings_respect_maximum_values():
+    spec = SettingSpec("test", (int, float), minimum=0, maximum=10)
+
+    assert spec.coerce(5) == 5
+    assert spec.coerce(10.0) == 10.0
+
+    with pytest.raises(ValueError):
+        spec.coerce(11)
+
+    with pytest.raises(ValueError):
+        spec.coerce(11.5)
