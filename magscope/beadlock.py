@@ -81,7 +81,7 @@ class BeadLockManager(ManagerProcessBase):
         """ Centers the bead-rois based on their tracked position """
 
         # Gather information
-        width = self.settings['bead roi width']
+        width = self.settings['ROI']
         half_width = width // 2
         tracks = self.tracks_buffer.peak_unsorted().copy()
         if now is None:

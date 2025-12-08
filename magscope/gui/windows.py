@@ -479,7 +479,7 @@ class WindowManager(ManagerProcessBase):
         id = self._bead_next_id
         x = pos.x()
         y = pos.y()
-        w = self.settings['bead roi width']
+        w = self.settings['ROI']
         view_scene = self.video_viewer.scene
         graphic = BeadGraphic(self, id, x, y, w, view_scene)
         self._bead_graphics[id] = graphic
