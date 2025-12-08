@@ -1,11 +1,26 @@
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from PyQt6.QtCore import QSettings
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from magscope.settings import MagScopeSettings
+
+
+@pytest.fixture(autouse=True)
+def clear_qsettings():
+    settings = QSettings("MagScope", "MagScope")
+    settings.beginGroup("MagScopeSettings")
+    settings.remove("")
+    settings.endGroup()
+    settings.sync()
+    yield
+    settings.beginGroup("MagScopeSettings")
+    settings.remove("")
+    settings.endGroup()
+    settings.sync()
 
 
 def test_settings_clone_and_reset():
@@ -47,3 +62,14 @@ def test_settings_validation_and_coercion():
 
     with pytest.raises(KeyError):
         settings['unknown'] = 1
+
+
+def test_settings_persist_between_instances():
+    settings = MagScopeSettings()
+    settings['magnification'] = 4.2
+    settings['video buffer n images'] = 7
+
+    reloaded = MagScopeSettings()
+
+    assert reloaded['magnification'] == 4.2
+    assert reloaded['video buffer n images'] == 7
