@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, MutableMapping
 
+from PyQt6.QtCore import QSettings
 import yaml
 
 
@@ -51,6 +52,9 @@ class SettingSpec:
 
 class MagScopeSettings(MutableMapping[str, Any]):
     _DEFAULTS_PATH = os.path.join(os.path.dirname(__file__), "default_settings.yaml")
+    _QSETTINGS_ORGANIZATION = "MagScope"
+    _QSETTINGS_APPLICATION = "MagScope"
+    _QSETTINGS_GROUP = "MagScopeSettings"
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
         "bead roi width": SettingSpec("bead roi width", int, minimum=1),
@@ -67,10 +71,14 @@ class MagScopeSettings(MutableMapping[str, Any]):
     }
 
     def __init__(self, values: Mapping[str, Any] | None = None):
+        self._persist_changes = False
         self._values: dict[str, Any] = {}
         self.update(self._load_defaults())
+        self.update(self._load_qsettings_values())
         if values:
             self.update(values)
+        self._persist_changes = True
+        self._write_to_qsettings()
 
     @classmethod
     def _load_defaults(cls) -> dict[str, Any]:
@@ -78,9 +86,41 @@ class MagScopeSettings(MutableMapping[str, Any]):
             data = yaml.safe_load(file) or {}
         return data
 
+    @classmethod
+    def _qsettings(cls) -> QSettings:
+        return QSettings(cls._QSETTINGS_ORGANIZATION, cls._QSETTINGS_APPLICATION)
+
+    def _load_qsettings_values(self) -> dict[str, Any]:
+        settings = self._qsettings()
+        settings.beginGroup(self._QSETTINGS_GROUP)
+        loaded: dict[str, Any] = {}
+        for key, spec in self._SETTING_SPECS.items():
+            if not settings.contains(key):
+                continue
+            raw_value = settings.value(key)
+            try:
+                loaded[key] = spec.coerce(raw_value)
+            except ValueError:
+                continue
+        settings.endGroup()
+        return loaded
+
+    def _write_to_qsettings(self) -> None:
+        if not self._persist_changes:
+            return
+        settings = self._qsettings()
+        settings.beginGroup(self._QSETTINGS_GROUP)
+        for key, value in self._values.items():
+            settings.setValue(key, value)
+        settings.endGroup()
+        settings.sync()
+
     def reset_to_defaults(self) -> None:
+        self._persist_changes = False
         self._values = {}
         self.update(self._load_defaults())
+        self._persist_changes = True
+        self._write_to_qsettings()
 
     def to_dict(self) -> dict[str, Any]:
         return copy.deepcopy(self._values)
@@ -111,6 +151,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
     def __setitem__(self, key: str, value: Any) -> None:
         coerced = self._coerce_setting(key, value)
         self._values[key] = coerced
+        self._write_to_qsettings()
 
     def __delitem__(self, key: str) -> None:
         raise TypeError("MagScopeSettings does not support deleting settings")
