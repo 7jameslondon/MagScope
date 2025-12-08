@@ -288,6 +288,7 @@ class VideoWorker(Process):
             n_rois = len(bead_rois)
             stack_rois_reshaped = stack_rois.reshape(roi_width, roi_width, n_rois * n_images)
 
+            # "zlut" can be None; magtrack returns NaN z values in that case.
             with self._gpu_lock:
                 y, x, z, profiles = magtrack.stack_to_xyzp_advanced(
                     stack_rois_reshaped,
