@@ -57,7 +57,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
     _QSETTINGS_GROUP = "MagScopeSettings"
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
-        "bead roi width": SettingSpec("bead roi width", int, minimum=1),
+        "ROI": SettingSpec("ROI", int, minimum=1),
         "magnification": SettingSpec("magnification", (int, float), minimum=0.0001),
         "tracks max datapoints": SettingSpec("tracks max datapoints", int, minimum=1),
         "video buffer n images": SettingSpec("video buffer n images", int, minimum=1),
