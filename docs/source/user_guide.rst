@@ -4,7 +4,7 @@ User Guide
 ==========
 This guide explains how to launch MagScope and use its interface. If you have not already read the :doc:`getting_started`.
 
-Launching the Demo GUI
+Launching the Demo Graphical User Interface (GUI)
 ----------------------
 MagScope includes a simulated camera so the interface can be explored without laboratory hardware. Launch the demo from a Python interpreter by running::
 
@@ -63,6 +63,51 @@ MagScope automatically launches with a live video feed. You can zoom by scrollin
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
+Control Panels
+--------------
+Panels for each set of controls can be hidden or revealed by clicking on the panel's title.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Open-Close_Panel_v1.gif
+   :alt: Demonstration of opening and closing a GUI panel in MagScope
+   :align: center
+
+Panels can move arranged by dragging them by the top-right corner. If space permits a new column can be added.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Move-Panel_v1.gif
+   :alt: Demonstration of moving a GUI panel in MagScope
+   :align: center
+
+The interface can be reset to the default arrangement by clicking the "Reset the GUI" button in the top-left corner of the window with the control panels.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Reset-GUI_v1.jpg
+   :alt: The "Reset the GUI" button
+   :align: center
+
+Bead Selection
+--------------
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
+   :alt: Demonstration of beads being added, moved and removed
+   :align: center
+
+Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
+To **add** a bead ROI click on the live video feed. A bead ROI will be created centered on your cursor.
+You can **move** the ROI by dragging the ROI.
+You can **remove** a bead by right-clicking the ROI.
+
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v1.jpg
+   :alt: The bead selection panel
+   :align: center
+
+Each bead ROI will be assigned an ID number in the corner of the ROI.
+The ID number always increases to prevent mixing up beads.
+
+To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
+
+During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
+You can do this by click the 🔓 button on the "Bead Selection" panel.
+This will only affect user interactions (it will not effect the XY-Lock).
+You can click the button again to unlock.
+
 Live Plots
 ----------
 MagScope provides a live plot of bead track.
@@ -101,26 +146,6 @@ This can be useful for debugging but can slow down the user interface and should
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
-Control Panels
---------------
-Panels for each set of controls can be hidden or revealed by clicking on the panel's title.
-
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Open-Close_Panel_v1.gif
-   :alt: Demonstration of opening and closing a GUI panel in MagScope
-   :align: center
-
-Panels can move arranged by dragging them by the top-right corner. If space permits a new column can be added.
-
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Move-Panel_v1.gif
-   :alt: Demonstration of moving a GUI panel in MagScope
-   :align: center
-
-The interface can be reset to the default arrangement by clicking the "Reset the GUI" button in the top-left corner of the window with the control panels.
-
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Reset-GUI_v1.jpg
-   :alt: The "Reset the GUI" button
-   :align: center
-
 Status Panel
 ------------
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Status_Panel_v1.gif
@@ -143,31 +168,6 @@ Purges result in those frames being deleted with out being processed.
 If the buffer is filling all the way up and purging then you may have selected too many beads.
 Optimizing the video buffer size settings may allow you to process more beads.
 Re-launch the program after updating the settings.yaml file.
-
-Bead Selection
---------------
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
-   :alt: Demonstration of beads being added, moved and removed
-   :align: center
-
-Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
-To **add** a bead ROI click on the live video feed. A bead ROI will be created centered on your cursor.
-You can **move** the ROI by dragging the ROI.
-You can **remove** a bead by right-clicking the ROI.
-
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v1.jpg
-   :alt: The bead selection panel
-   :align: center
-
-Each bead ROI will be assigned an ID number in the corner of the ROI.
-The ID number always increases to prevent mixing up beads.
-
-To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
-
-During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
-You can do this by click the 🔓 button on the "Bead Selection" panel.
-This will only affect user interactions (it will not effect the XY-Lock).
-You can click the button again to unlock.
 
 Camera Settings
 ---------------
