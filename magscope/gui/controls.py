@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QPushButton,
     QStackedLayout,
     QTextEdit,
@@ -267,18 +268,17 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self.save_button.clicked.connect(self._on_save_clicked)  # type: ignore
         top_row.addWidget(self.save_button)
 
+        self.defaults_button = QPushButton("Set to Defaults")
+        self.defaults_button.clicked.connect(self._on_defaults_clicked)  # type: ignore
+        top_row.addWidget(self.defaults_button)
+
         bottom_row = QHBoxLayout()
         button_layout.addLayout(bottom_row)
 
-        self.defaults_button = QPushButton("Set to Defaults")
-        self.defaults_button.clicked.connect(self._on_defaults_clicked)  # type: ignore
-        bottom_row.addWidget(self.defaults_button)
-
         self.apply_button = QPushButton("Apply Changes")
         self.apply_button.clicked.connect(self._on_apply_clicked)  # type: ignore
+        self.apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         bottom_row.addWidget(self.apply_button)
-
-        bottom_row.addStretch(1)
 
         for key in MagScopeSettings.defined_keys():
             spec = MagScopeSettings.spec_for(key)
