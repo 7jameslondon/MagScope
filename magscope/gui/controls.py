@@ -496,6 +496,20 @@ class BeadSelectionPanel(ControlPanelBase):
         note.setWordWrap(True)
         self.layout().addWidget(note)
 
+        next_id_row = QHBoxLayout()
+        self.layout().addLayout(next_id_row)
+
+        self.next_bead_id_label = QLabel()
+        next_id_row.addWidget(self.next_bead_id_label)
+
+        next_id_row.addStretch(1)
+
+        self.reset_id_button = QPushButton('Reset IDs')
+        self.reset_id_button.clicked.connect(self.manager.reset_bead_ids)  # type: ignore
+        next_id_row.addWidget(self.reset_id_button)
+
+        self.update_next_bead_id_label(self.manager.bead_next_id)
+
         # ROI
         roi_row = QHBoxLayout()
         self.layout().addLayout(roi_row)
@@ -520,6 +534,9 @@ class BeadSelectionPanel(ControlPanelBase):
         self.clear_button.setEnabled(True)
         self.clear_button.clicked.connect(self.manager.clear_beads)  # type: ignore
         button_row.addWidget(self.clear_button)
+
+    def update_next_bead_id_label(self, next_bead_id: int) -> None:
+        self.next_bead_id_label.setText(f"Next Bead ID: {next_bead_id}")
 
     def callback_lock(self):
         is_locked = self.lock_button.isChecked()
