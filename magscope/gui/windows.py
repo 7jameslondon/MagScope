@@ -278,6 +278,10 @@ class WindowManager(ManagerProcessBase):
     def bead_roi_updates_suppressed(self) -> bool:
         return self._suppress_bead_roi_updates
 
+    @property
+    def bead_next_id(self) -> int:
+        return self._bead_next_id
+
     def create_central_widgets(self):
         match self.n_windows:
             case 1:
@@ -481,6 +485,7 @@ class WindowManager(ManagerProcessBase):
         graphic = BeadGraphic(self, id, x, y, w, view_scene)
         self._bead_graphics[id] = graphic
         self._bead_next_id += 1
+        self._update_next_bead_id_label()
 
         # Update highlight colors to reflect selection/reference
         self._update_bead_highlights()
@@ -508,10 +513,15 @@ class WindowManager(ManagerProcessBase):
             graphics.remove()
         self._bead_graphics.clear()
         self._bead_next_id = 0
+        self._update_next_bead_id_label()
 
         # Update bead ROIs
         command = SetBeadRoisCommand(value={})
         self.send_ipc(command)
+
+    def reset_bead_ids(self):
+        self._bead_next_id = self._calculate_next_bead_id()
+        self._update_next_bead_id_label()
 
     def _update_roi_labels(self, roi: int) -> None:
         if self.controls is None:
@@ -523,6 +533,20 @@ class WindowManager(ManagerProcessBase):
         self.controls.z_lut_generation_panel.roi_size_label.setText(
             f"{roi} x {roi} pixels"
         )
+
+    def _update_next_bead_id_label(self) -> None:
+        if self.controls is None:
+            return
+
+        self.controls.bead_selection_panel.update_next_bead_id_label(
+            self._bead_next_id
+        )
+
+    def _calculate_next_bead_id(self) -> int:
+        if not self._bead_graphics:
+            return 0
+
+        return max(self._bead_graphics.keys()) + 1
 
     def lock_beads(self, locked: bool):
         if self.video_viewer is not None:
