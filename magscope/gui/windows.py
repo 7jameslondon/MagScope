@@ -25,32 +25,7 @@ from PyQt6.QtWidgets import (
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (
-    LoadZLUTCommand,
-    MoveBeadsCommand,
-    RemoveBeadsFromPendingMovesCommand,
-    SetAcquisitionDirCommand,
-    SetAcquisitionDirOnCommand,
-    SetAcquisitionModeCommand,
-    SetAcquisitionOnCommand,
-    SetBeadRoisCommand,
-    ShowErrorCommand,
-    ShowMessageCommand,
-    UnloadZLUTCommand,
-    UpdateCameraSettingCommand,
-    UpdateScriptStatusCommand,
-    UpdateVideoBufferPurgeCommand,
-    UpdateXYLockEnabledCommand,
-    UpdateXYLockIntervalCommand,
-    UpdateXYLockMaxCommand,
-    UpdateXYLockWindowCommand,
-    UpdateZLockBeadCommand,
-    UpdateZLockEnabledCommand,
-    UpdateZLockIntervalCommand,
-    UpdateZLockMaxCommand,
-    UpdateZLockTargetCommand,
-    UpdateZLUTMetadataCommand,
-)
+from magscope.ipc_commands import *
 from magscope.gui import (
     AcquisitionPanel,
     BeadGraphic,
@@ -86,6 +61,7 @@ from magscope.gui.panel_layout import (
 from magscope.gui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
+from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")
@@ -120,12 +96,16 @@ class WindowManager(ManagerProcessBase):
         self.video_viewer: VideoViewer | None = None
         self.windows: list[QMainWindow] = []
         self._suppress_bead_roi_updates: bool = False
+        self._last_applied_roi: int | None = None
 
     def setup(self):
         self.qt_app = QApplication.instance()
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+
+        if self.settings is not None:
+            self._last_applied_roi = self.settings["ROI"]
 
         # If the number of windows is not specified, then use the number of screens
         if self._n_windows is None:
@@ -194,6 +174,23 @@ class WindowManager(ManagerProcessBase):
         # Start app
         self._running = True
         self.qt_app.exec()
+
+    @register_ipc_command(
+        SetSettingsCommand, delivery=Delivery.BROADCAST, target="ManagerProcessBase"
+    )
+    def set_settings(self, settings: MagScopeSettings):
+        """Apply new settings and clear beads if the ROI size changed."""
+
+        previous_roi = self._last_applied_roi
+
+        super().set_settings(settings)
+
+        new_roi = self.settings["ROI"]
+        if previous_roi is not None and new_roi != previous_roi:
+            self.clear_beads()
+
+        self._last_applied_roi = new_roi
+        self._update_roi_labels(new_roi)
 
     def update_plot_figure_size(self, w, h):
         self.plot_worker.figure_size_signal.emit(w, h)
@@ -515,6 +512,17 @@ class WindowManager(ManagerProcessBase):
         # Update bead ROIs
         command = SetBeadRoisCommand(value={})
         self.send_ipc(command)
+
+    def _update_roi_labels(self, roi: int) -> None:
+        if self.controls is None:
+            return
+
+        self.controls.bead_selection_panel.roi_size_label.setText(
+            f"{roi} x {roi} pixels"
+        )
+        self.controls.z_lut_generation_panel.roi_size_label.setText(
+            f"{roi} x {roi} pixels"
+        )
 
     def lock_beads(self, locked: bool):
         if self.video_viewer is not None:
