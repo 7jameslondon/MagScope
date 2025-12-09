@@ -20,7 +20,7 @@
 ## 🚀 Getting Started
 [👉 👉 👉 Get Started Here 👈 👈 👈](https://magscope.readthedocs.io)
 
-## 📖 Documnetation
+## 📖 Documentation
 View the full guide to MagScope at [magscope.readthedocs.io](https://magscope.readthedocs.io)
 
 ## 💬 Support

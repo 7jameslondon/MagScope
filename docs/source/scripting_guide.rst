@@ -10,7 +10,7 @@ Writing Scripts
 You may want to take a look at the included `example script <https://github.com/7jameslondon/MagScope/blob/master/examples/scripts/example_script.py>`_.
 
 To start a script create a new Python file (example: ``my_new_script.py``).
-Then import magscope and create script instance.
+Then import magscope and create a script instance.
 The instance can be called anything (it does not need to be called "my_script").
 For example:
 

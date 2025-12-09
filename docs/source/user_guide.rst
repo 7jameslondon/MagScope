@@ -133,7 +133,7 @@ The "Display Rate" is not the camera's framerate but instead the rate at which t
 It is normal for the display rate to be slower than your cameras framerate.
 The video feed will be processed at the full framerate.
 
-The number of video processor should always be at least 3 and there is little benefit to increating them.
+The number of video processor should always be at least 3 and there is little benefit to increasing them.
 If all processor are constantly in use (for example "3/3") then you may have selected too many beads and the processors can not keep up.
 
 The video buffer size can be adjusted in the settings.yaml file (created after you first launch the program).
@@ -190,9 +190,8 @@ If no directory is selected then no data is saved.
 Several types of data can be saved: tracks, full field-of-view videos, and cropped videos.
 Tracks are saved as text files with the data and time in the name. Each batch of video processed is saved as one file.
 This can result in a lot of files. But these can be combined later with a simple Python script.
-Frequent saves ensure data is never lost.
 Videos are saved as tiff files which can be opened in ImageJ.
-Saveing video files can be very slow and can result in the video buffer filling up and needing to be purged resulting in lost data.
+Saving video files can be very slow and can result in the video buffer filling up and needing to be purged resulting in lost data.
 In general only the tracks should be saved.
 Any combination of tracks and/or video can be selected with the "Mode" selector.
 
@@ -262,7 +261,7 @@ Z-Lock seems similar to XY-Lock but works a little different.
 Z-Lock takes control of the piezo "Z" or "focusing" motor to keep one bead at a specific Z value.
 **You must have a Z-LUT loaded and the selected bead's current focus must be within the range of the Z-LUT.**
 **You must have your piezo motor controlled by MagScope to use this feature.**
-Connecting hardware is covered in the :ref:`custom_guide`.
+Connecting hardware is covered in the :ref:`connect_hardware` guide.
 
 Z-Lock has five settings which must be set before the Z-Lock will take affect:
 

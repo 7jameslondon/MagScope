@@ -46,13 +46,13 @@ To launch the demo run Python, import MagScope, and call the ``start`` method:
    scope = magscope.MagScope()
    scope.start()
 
-This command launches MagScope and begins streaming data.
+This command launches MagScope and begins streaming data. See the :doc:`user_guide` next.
 
 Next Steps
 ----------
-* If you have a NVIDIA GPU you can read the :doc:`gpu_guide` guide for information on adding GPU acceleration for image processing.
 * To learn how to use MagScope read the :doc:`user_guide`.
 * To add your own camera, motor or other hardware see our guides in :doc:`index`.
+* If you have a NVIDIA GPU you can read the :doc:`gpu_guide` guide for information on adding GPU acceleration for image processing.
 
 Support
 -------

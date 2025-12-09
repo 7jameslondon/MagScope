@@ -5,10 +5,10 @@ Connect Your Camera
 
 MagScope ships with a simulated camera so you can explore the interface immediately, but you can swap in a real camera by providing a small adapter class. This guide shows how to implement a :class:`~magscope.camera.CameraBase` subclass for your hardware and register it with MagScope before launching the GUI.
 
-**Do you have a frame grabber**:
+**Do you have a frame grabber?**
 Cameras can be connected to a computer through either a standard built-in interface or through a frame grabber.
 If you have a frame grabber then you are really connecting MagScope with your frame grabber which is then interfacing with your camera.
-For the purpose of this tutorial we will just refer to everything as the camera.
+For the purpose of this tutorial we will just refer to everything as the camera. Make sure you know what you have before starting this tutorial.
 
 0. Test your camera with Python
 -------------------------------
