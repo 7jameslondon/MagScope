@@ -885,6 +885,7 @@ class ProfilePanel(ControlPanelBase):
 
     def _apply_enabled_state(self, enabled: bool) -> None:
         self.set_highlighted(enabled)
+        self.manager.set_live_profile_monitor_enabled(enabled)
         self.clear()
 
     def update_plot(self):
@@ -897,29 +898,30 @@ class ProfilePanel(ControlPanelBase):
         else:
             self.selected_bead_label.setText(str(selected_bead))
 
-        buffer_data = self.manager.profiles_buffer.peak_unsorted()
-        timestamps = buffer_data[:, 0]
-        bead_ids = buffer_data[:, 1]
-        profiles = buffer_data[:, 2:]
+        if not self.manager.shared_values.live_profile_enabled.value:
+            self.clear()
+            return
 
-        bead_selection = bead_ids == selected_bead
-        timestamps = timestamps[bead_selection]
-        profiles = profiles[bead_selection]
+        buffer_data = self.manager.live_profile_buffer.peak_unsorted()
+        latest_entry = buffer_data[0]
+        profile_length = latest_entry[2] if np.isfinite(latest_entry[2]) else 0
+        bead_id = int(latest_entry[1]) if np.isfinite(latest_entry[1]) else -1
 
-        if len(timestamps) > 0:
-            latest_profile = profiles[np.argmax(timestamps), :]
-            cleaned_profile = latest_profile[np.isfinite(latest_profile)]
-            radial_distances = np.arange(len(cleaned_profile))
+        if selected_bead != bead_id or profile_length <= 0:
+            self.clear()
+            return
 
-            self.line.set_xdata(radial_distances)
-            self.line.set_ydata(cleaned_profile)
+        cleaned_profile = latest_entry[3:3 + int(profile_length)]
+        radial_distances = np.arange(profile_length)
+        radial_distances = radial_distances[np.isfinite(cleaned_profile)]
+        cleaned_profile = cleaned_profile[np.isfinite(cleaned_profile)]
 
-            if len(cleaned_profile) > 0:
-                self.axes.set_xlim(0, max(radial_distances))
-                self.axes.set_ylim(0, max(cleaned_profile))
-        else:
-            self.line.set_xdata([])
-            self.line.set_ydata([])
+        self.line.set_xdata(radial_distances)
+        self.line.set_ydata(cleaned_profile)
+
+        if len(cleaned_profile) > 0:
+            self.axes.set_xlim(0, max(radial_distances))
+            self.axes.set_ylim(0, max(cleaned_profile))
 
         self.canvas.draw()
 

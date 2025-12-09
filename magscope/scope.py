@@ -54,7 +54,7 @@ import numpy as np
 from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
-from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import (
@@ -114,7 +114,7 @@ class MagScope(metaclass=SingletonMeta):
         self.command_registry: CommandRegistry = CommandRegistry()
 
         self.locks: dict[str, LockType] = {}
-        self.lock_names: list[str] = ['ProfilesBuffer', 'TracksBuffer', 'VideoBuffer']
+        self.lock_names: list[str] = ['LiveProfileBuffer', 'TracksBuffer', 'VideoBuffer']
         self.pipes: dict[str, Connection] = {}
         self.quitting_events: dict[str, EventType] = {}
         self.shared_values: InterprocessValues = InterprocessValues()
@@ -131,7 +131,7 @@ class MagScope(metaclass=SingletonMeta):
 
         self._terminated: bool = False
 
-        self.profiles_buffer: MatrixBuffer | None = None
+        self.live_profile_buffer: LiveProfileBuffer | None = None
         self.tracks_buffer: MatrixBuffer | None = None
         self.video_buffer: VideoBuffer | None = None
         configure_logging(level=self._log_level)
@@ -542,11 +542,10 @@ class MagScope(metaclass=SingletonMeta):
 
     def _create_shared_buffers(self):
         """Instantiate shared memory buffers used throughout the application."""
-        self.profiles_buffer = MatrixBuffer(
+        self.live_profile_buffer = LiveProfileBuffer(
             create=True,
             locks=self.locks,
-            name='ProfilesBuffer',
-            shape=(1000, 2 + self.settings['ROI']),
+            profile_capacity=2560,
         )
         self.tracks_buffer = MatrixBuffer(
             create=True,

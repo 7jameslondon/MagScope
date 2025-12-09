@@ -240,7 +240,16 @@ class WindowManager(ManagerProcessBase):
 
     def set_selected_bead(self, bead: int):
         self.selected_bead = bead
+        if self.shared_values is not None:
+            self.shared_values.live_profile_bead.value = bead
+        self._clear_live_profile_buffer()
         self._update_bead_highlights()
+
+    def set_live_profile_monitor_enabled(self, enabled: bool) -> None:
+        if self.shared_values is not None:
+            self.shared_values.live_profile_enabled.value = 1 if enabled else 0
+        if not enabled:
+            self._clear_live_profile_buffer()
 
     def set_reference_bead(self, bead: int | None):
         self.reference_bead = bead
@@ -257,6 +266,10 @@ class WindowManager(ManagerProcessBase):
                 graphic.set_selection_state('reference')
             else:
                 graphic.set_selection_state('default')
+
+    def _clear_live_profile_buffer(self) -> None:
+        if self.live_profile_buffer is not None:
+            self.live_profile_buffer.clear()
 
     @property
     def n_windows(self):

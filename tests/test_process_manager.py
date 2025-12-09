@@ -165,7 +165,7 @@ def test_run_validates_dependencies(fake_buffers):
 
     proc._magscope_quitting = FakeEvent()
     proc._pipe = FakePipe()
-    proc.locks = {"ProfilesBuffer": object()}
+    proc.locks = {"LiveProfileBuffer": object()}
     with pytest.raises(RuntimeError, match="DummyProcess has no command registry"):
         proc.run()
 
@@ -177,7 +177,7 @@ def test_run_validates_dependencies(fake_buffers):
         quitting_event=FakeEvent(),
         settings={},
         shared_values=processes.InterprocessValues(),
-        locks={"ProfilesBuffer": object()},
+        locks={"LiveProfileBuffer": object()},
         pipe_end=FakePipe(),
         command_registry=registry,
     )
@@ -205,7 +205,7 @@ def test_receive_ipc_dispatch_and_quit_flag():
         quitting_event=quit_event,
         settings={},
         shared_values=processes.InterprocessValues(),
-        locks={"ProfilesBuffer": object()},
+        locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )
@@ -240,7 +240,7 @@ def test_receive_ipc_errors_on_unknown_command():
         quitting_event=FakeEvent(),
         settings={},
         shared_values=processes.InterprocessValues(),
-        locks={"ProfilesBuffer": object()},
+        locks={"LiveProfileBuffer": object()},
         pipe_end=FakePipe([Unknown()]),
         command_registry=registry,
     )
@@ -262,7 +262,7 @@ def test_quit_broadcasts_and_drains_pipe():
         quitting_event=quitting_event,
         settings={},
         shared_values=processes.InterprocessValues(),
-        locks={"ProfilesBuffer": object()},
+        locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )
@@ -303,7 +303,7 @@ def test_run_reports_exception(monkeypatch):
         quitting_event=FakeEvent(),
         settings={},
         shared_values=processes.InterprocessValues(),
-        locks={"ProfilesBuffer": object()},
+        locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )

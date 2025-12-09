@@ -539,6 +539,70 @@ class MatrixBuffer:
                                        buffer=left)
             return np.vstack((np_array_right, np_array_left))
 
+
+class LiveProfileBuffer:
+    """Shared buffer that stores the latest radial profile for live display.
+
+    The buffer keeps a single row containing ``timestamp``, ``bead_id``,
+    ``profile_length`` and the profile samples. It wraps a
+    :class:`MatrixBuffer` for shared-memory transport but hides the padding
+    logic from callers so profiles can be written at their native length.
+    """
+
+    def __init__(
+        self,
+        *,
+        create: bool,
+        locks: dict[str, Lock],
+        profile_capacity: int | None = None,
+        name: str = 'LiveProfileBuffer',
+    ):
+        if create and profile_capacity is None:
+            raise ValueError('profile_capacity must be provided when creating LiveProfileBuffer')
+
+        shape = None if not create else (1, 3 + profile_capacity)
+        self._buffer = MatrixBuffer(create=create, locks=locks, name=name, shape=shape)
+        self.profile_capacity = self._buffer.shape[1] - 3
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return self._buffer.shape
+
+    def clear(self) -> None:
+        """Reset the buffer contents to ``NaN``."""
+
+        empty_row = np.full((1, 3 + self.profile_capacity), np.nan, dtype=np.float64)
+        self._buffer.write(empty_row)
+
+    def write_profile(self, timestamp: float, bead_id: int, profile: np.ndarray) -> None:
+        """Store the latest profile for a bead.
+
+        Parameters
+        ----------
+        timestamp : float
+            Timestamp associated with the profile.
+        bead_id : int
+            Bead identifier for the profile.
+        profile : numpy.ndarray
+            One-dimensional array of profile samples. Length must not exceed
+            ``profile_capacity``.
+        """
+
+        if profile.shape[0] > self.profile_capacity:
+            raise ValueError(
+                f'Profile length {profile.shape[0]} exceeds live buffer capacity {self.profile_capacity}'
+            )
+
+        row = np.full((1, 3 + self.profile_capacity), np.nan, dtype=np.float64)
+        row[0, 0] = timestamp
+        row[0, 1] = bead_id
+        row[0, 2] = profile.shape[0]
+        row[0, 3:3 + profile.shape[0]] = profile
+        self._buffer.write(row)
+
+    def peak_unsorted(self) -> np.ndarray:
+        return self._buffer.peak_unsorted()
+
 class BufferUnderflow(Exception):
     """Raised when attempting to read from a buffer that contains no data."""
 

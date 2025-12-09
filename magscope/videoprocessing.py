@@ -13,7 +13,7 @@ import numpy as np
 import tifffile
 
 from magscope._logging import get_logger
-from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import (LoadZLUTCommand, SetSettingsCommand, ShowMessageCommand,
                                    UnloadZLUTCommand, UpdateWaitingCommand,
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from multiprocessing.sharedctypes import Synchronized
     from multiprocessing.synchronize import Lock as LockType
     ValueTypeUI8 = Synchronized[int]
+    ValueTypeInt = Synchronized[int]
 
 
 logger = get_logger("videoprocessing")
@@ -70,7 +71,9 @@ class VideoProcessorManager(ManagerProcessBase):
                                  video_flag=self.shared_values.video_process_flag,
                                  busy_count=self.shared_values.video_process_busy_count,
                                  gpu_lock=self._gpu_lock,
-                                 warning_queue=self._warning_queue)
+                                 warning_queue=self._warning_queue,
+                                 live_profile_enabled=self.shared_values.live_profile_enabled,
+                                 live_profile_bead=self.shared_values.live_profile_bead)
             self._workers.append(worker)
 
         # Start the workers
@@ -241,7 +244,9 @@ class VideoWorker(Process):
                  video_flag: ValueTypeUI8,
                  busy_count: ValueTypeUI8,
                  gpu_lock: Lock,
-                 warning_queue: QueueType | None):
+                 warning_queue: QueueType | None,
+                 live_profile_enabled: ValueTypeUI8,
+                 live_profile_bead: ValueTypeInt):
         super().__init__()
         self._gpu_lock: Lock = gpu_lock
         self._tasks: QueueType = tasks
@@ -249,13 +254,14 @@ class VideoWorker(Process):
         self._video_flag: ValueTypeUI8 = video_flag
         self._busy_count: ValueTypeUI8 = busy_count
         self._warning_queue: QueueType | None = warning_queue
+        self._live_profile_enabled = live_profile_enabled
+        self._live_profile_bead = live_profile_bead
         self._video_buffer: VideoBuffer | None = None
         self._tracks_buffer: MatrixBuffer | None = None
 
     def run(self):
-        self._profiles_buffer = MatrixBuffer(
+        self._live_profile_buffer = LiveProfileBuffer(
             create=False,
-            name='ProfilesBuffer',
             locks=self._locks,
         )
         self._tracks_buffer = MatrixBuffer(
@@ -292,6 +298,25 @@ class VideoWorker(Process):
         magnification: float = kwargs['magnification']
 
         bead_rois = bead_rois if len(bead_rois) > 0 else None
+
+        def _update_live_profile(timestamps: np.ndarray, bead_ids: np.ndarray, profiles: np.ndarray) -> None:
+            if self._live_profile_buffer is None or not self._live_profile_enabled.value:
+                return
+
+            target_bead = int(self._live_profile_bead.value)
+            if target_bead < 0:
+                return
+
+            bead_selection = bead_ids == target_bead
+            if not np.any(bead_selection):
+                return
+
+            bead_indices = np.flatnonzero(bead_selection)
+            latest_index = bead_indices[np.argmax(timestamps[bead_selection])]
+            profile = np.asarray(profiles[:, latest_index]).astype(np.float64)
+            self._live_profile_buffer.write_profile(
+                float(timestamps[latest_index]), target_bead, profile
+            )
 
         def save_video_full(first_timestamp, stack, timestamps_str,):
             filepath = os.path.join(acquisition_dir, f'Video {first_timestamp}.tiff')
@@ -370,33 +395,7 @@ class VideoWorker(Process):
             t = np.repeat(timestamps, n_rois)
 
             tracks = np.column_stack((t, x, y, z, b, roi_x, roi_y))
-
-            # ------- Save Profiles (with padding) to RAM ------- #
-
-            # The buffer has two extra columns for the timestamp and bead-ID
-            expected_profiles_width = self._profiles_buffer.shape[1] - 2
-            pad_profiles = profiles
-
-            # If the profiles are shorter than the buffer, pad them with "nan"
-            if pad_profiles.shape[0] < expected_profiles_width:
-                pad_profiles = np.pad(
-                    pad_profiles,
-                    ((0, expected_profiles_width - pad_profiles.shape[0]), (0, 0)),
-                    mode='constant',
-                    constant_values=np.nan
-                )
-            # If the profiles are longer than the buffer, truncate them
-            elif pad_profiles.shape[0] > expected_profiles_width:
-                pad_profiles = pad_profiles[:expected_profiles_width, :]
-
-            # Join the time and bead-id to the profiles
-            pad_profiles = np.vstack((t, b, pad_profiles))
-
-            # Write the profile data(transposed) to the buffer
-            # If there are too many profiles, then truncate
-            max_rows = self._profiles_buffer.shape[0]
-            self._profiles_buffer.write(pad_profiles[:, :max_rows].T)
-
+            _update_live_profile(t, b, profiles)
             return tracks, profiles
 
         def process_mode_tracks():
