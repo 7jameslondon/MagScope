@@ -912,7 +912,9 @@ class ProfilePanel(ControlPanelBase):
             return
 
         cleaned_profile = latest_entry[3:3 + int(profile_length)]
-        radial_distances = np.arange(len(cleaned_profile))
+        radial_distances = np.arange(profile_length)
+        radial_distances = radial_distances[np.isfinite(cleaned_profile)]
+        cleaned_profile = cleaned_profile[np.isfinite(cleaned_profile)]
 
         self.line.set_xdata(radial_distances)
         self.line.set_ydata(cleaned_profile)

@@ -545,7 +545,7 @@ class MagScope(metaclass=SingletonMeta):
         self.live_profile_buffer = LiveProfileBuffer(
             create=True,
             locks=self.locks,
-            profile_capacity=self.settings['ROI'],
+            profile_capacity=2560,
         )
         self.tracks_buffer = MatrixBuffer(
             create=True,
