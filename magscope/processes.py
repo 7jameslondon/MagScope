@@ -36,7 +36,7 @@ class InterprocessValues:
         self.video_process_busy_count: ValueTypeUI8 = Value(c_uint8, 0)
         self.video_process_flag: ValueTypeUI8 = Value(c_uint8, 0)
         self.live_profile_enabled: ValueTypeUI8 = Value(c_uint8, 0)
-        self.live_profile_bead: Value[c_int] = Value(c_int, -1)
+        self.live_profile_bead: Value[c_int] = Value(c_int, 0)
 
 
 class SingletonMeta(type):
