@@ -25,32 +25,7 @@ from PyQt6.QtWidgets import (
 from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (
-    LoadZLUTCommand,
-    MoveBeadsCommand,
-    RemoveBeadsFromPendingMovesCommand,
-    SetAcquisitionDirCommand,
-    SetAcquisitionDirOnCommand,
-    SetAcquisitionModeCommand,
-    SetAcquisitionOnCommand,
-    SetBeadRoisCommand,
-    ShowErrorCommand,
-    ShowMessageCommand,
-    UnloadZLUTCommand,
-    UpdateCameraSettingCommand,
-    UpdateScriptStatusCommand,
-    UpdateVideoBufferPurgeCommand,
-    UpdateXYLockEnabledCommand,
-    UpdateXYLockIntervalCommand,
-    UpdateXYLockMaxCommand,
-    UpdateXYLockWindowCommand,
-    UpdateZLockBeadCommand,
-    UpdateZLockEnabledCommand,
-    UpdateZLockIntervalCommand,
-    UpdateZLockMaxCommand,
-    UpdateZLockTargetCommand,
-    UpdateZLUTMetadataCommand,
-)
+from magscope.ipc_commands import *
 from magscope.gui import (
     AcquisitionPanel,
     BeadGraphic,
@@ -86,6 +61,7 @@ from magscope.gui.panel_layout import (
 from magscope.gui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
+from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("gui.windows")

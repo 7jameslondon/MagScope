@@ -10,7 +10,7 @@
       3. Local package or relative imports
    2. **Ordering**
       - Within each group, sort imports alphabetically by module path.
-      - Use explicit module paths instead of wildcard imports.
+      - Use explicit module paths instead of wildcard imports. Except for "from magscope.ipc_commands import *".
    3. **Formatting**
       - Combine imports from the same module on a single line when possible (e.g., `from module import A, B`).
       - If the imported names do not fit within 100 characters, use parentheses with one import per line and a trailing comma.
