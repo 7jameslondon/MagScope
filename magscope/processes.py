@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, ABCMeta, abstractmethod
-from ctypes import c_uint8
+from ctypes import c_int, c_uint8
 from multiprocessing import Event, Process, Value
 import sys
 import traceback
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 from magscope._logging import get_logger
-from magscope.datatypes import MatrixBuffer, VideoBuffer
+from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import (CommandRegistry, Delivery, UnknownCommandError, command_kwargs,
                           drain_pipe_until_quit, register_ipc_command)
 from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
@@ -35,6 +35,8 @@ class InterprocessValues:
     def __init__(self):
         self.video_process_busy_count: ValueTypeUI8 = Value(c_uint8, 0)
         self.video_process_flag: ValueTypeUI8 = Value(c_uint8, 0)
+        self.live_profile_enabled: ValueTypeUI8 = Value(c_uint8, 0)
+        self.live_profile_bead: Value[c_int] = Value(c_int, -1)
 
 
 class SingletonMeta(type):
@@ -74,7 +76,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._magscope_quitting: EventType | None = None
         self.name: str = type(self).__name__ # Read-only
         self._pipe: Connection | None = None # Pipe back to the 'MagScope' for inter-process communication
-        self.profiles_buffer: MatrixBuffer | None = None
+        self.live_profile_buffer: LiveProfileBuffer | None = None
         self._quitting: EventType = Event()
         self._quit_requested: bool = False # A flag to prevent repeated calls to 'quit()' after one process asks the others to quit
         self._running: bool = False
@@ -146,10 +148,9 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             if self._command_registry is None:
                 raise RuntimeError(f'{self.name} has no command registry')
 
-            self.profiles_buffer = MatrixBuffer(
+            self.live_profile_buffer = LiveProfileBuffer(
                 create=False,
                 locks=self.locks,
-                name='ProfilesBuffer',
             )
             self.tracks_buffer = MatrixBuffer(
                 create=False,
