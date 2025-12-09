@@ -16,6 +16,7 @@ sys.modules.setdefault("magscope", magscope_pkg)
 
 qt_module = types.ModuleType("PyQt6")
 qt_gui_module = types.ModuleType("PyQt6.QtGui")
+qt_core_module = types.ModuleType("PyQt6.QtCore")
 
 
 class _DummyQImage:
@@ -24,9 +25,43 @@ class _DummyQImage:
         Format_Grayscale16 = object()
 
 
+class _DummyQSettings:
+    _store: dict[str, object] = {}
+
+    def __init__(self, *args, **kwargs):
+        self._values = self._store
+
+    def beginGroup(self, _):  # noqa: N802 - Qt naming
+        return None
+
+    def contains(self, key: str) -> bool:  # noqa: N802 - Qt naming
+        return key in self._values
+
+    def endGroup(self):  # noqa: N802 - Qt naming
+        return None
+
+    def remove(self, key: str):  # noqa: N802 - Qt naming
+        if key in ("", None):
+            self._values.clear()
+        else:
+            self._values.pop(key, None)
+
+    def setValue(self, key: str, value: object):  # noqa: N802 - Qt naming
+        self._values[key] = value
+
+    def sync(self):  # noqa: N802 - Qt naming
+        return None
+
+    def value(self, key: str):  # noqa: N802 - Qt naming
+        return self._values.get(key)
+
+
 qt_gui_module.QImage = _DummyQImage
+qt_core_module.QSettings = _DummyQSettings
+qt_module.QtCore = qt_core_module
 qt_module.QtGui = qt_gui_module
 sys.modules.setdefault("PyQt6", qt_module)
+sys.modules.setdefault("PyQt6.QtCore", qt_core_module)
 sys.modules.setdefault("PyQt6.QtGui", qt_gui_module)
 
 datatypes_spec = importlib.util.spec_from_file_location(
@@ -100,6 +135,11 @@ class FakePipe:
         self.closed = True
 
 
+class FakeSettings(dict):
+    def clone(self):
+        return FakeSettings(self)
+
+
 class DummyProcess(processes.ManagerProcessBase):
     def __init__(self):
         super().__init__()
@@ -139,6 +179,16 @@ def fake_buffers(monkeypatch):
             self.kwargs = kwargs
             created["VideoBuffer"].append({"args": args, "kwargs": kwargs})
 
+    class FakeLiveProfileBuffer:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            created.setdefault("LiveProfileBuffer", []).append({"args": args, "kwargs": kwargs})
+            locks = kwargs.get("locks", {})
+            name = kwargs.get("name", "LiveProfileBuffer")
+            FakeMatrixBuffer(create=kwargs.get("create", False), locks=locks, name=name, shape=None)
+
+    monkeypatch.setattr(processes, "LiveProfileBuffer", FakeLiveProfileBuffer)
     monkeypatch.setattr(processes, "MatrixBuffer", FakeMatrixBuffer)
     monkeypatch.setattr(processes, "VideoBuffer", FakeVideoBuffer)
     return created
@@ -175,7 +225,7 @@ def test_run_validates_dependencies(fake_buffers):
         camera_type=None,
         hardware_types={},
         quitting_event=FakeEvent(),
-        settings={},
+        settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
         locks={"LiveProfileBuffer": object()},
         pipe_end=FakePipe(),
@@ -203,7 +253,7 @@ def test_receive_ipc_dispatch_and_quit_flag():
         camera_type=None,
         hardware_types={},
         quitting_event=quit_event,
-        settings={},
+        settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
         locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,
@@ -238,7 +288,7 @@ def test_receive_ipc_errors_on_unknown_command():
         camera_type=None,
         hardware_types={},
         quitting_event=FakeEvent(),
-        settings={},
+        settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
         locks={"LiveProfileBuffer": object()},
         pipe_end=FakePipe([Unknown()]),
@@ -260,7 +310,7 @@ def test_quit_broadcasts_and_drains_pipe():
         camera_type=None,
         hardware_types={},
         quitting_event=quitting_event,
-        settings={},
+        settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
         locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,
@@ -301,7 +351,7 @@ def test_run_reports_exception(monkeypatch):
         camera_type=None,
         hardware_types={},
         quitting_event=FakeEvent(),
-        settings={},
+        settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
         locks={"LiveProfileBuffer": object()},
         pipe_end=pipe,

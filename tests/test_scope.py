@@ -141,6 +141,10 @@ def load_scope_with_stubs(monkeypatch):
         def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
 
+    class LiveProfileBuffer:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
     class BeadLockManager(StubManagerProcessBase):
         def __init__(self):
             super().__init__(name="BeadLockManager")
@@ -174,7 +178,11 @@ def load_scope_with_stubs(monkeypatch):
     stub_modules = {
         "magscope.beadlock": {"BeadLockManager": BeadLockManager},
         "magscope.camera": {"CameraManager": CameraManager},
-        "magscope.datatypes": {"MatrixBuffer": MatrixBuffer, "VideoBuffer": VideoBuffer},
+        "magscope.datatypes": {
+            "LiveProfileBuffer": LiveProfileBuffer,
+            "MatrixBuffer": MatrixBuffer,
+            "VideoBuffer": VideoBuffer,
+        },
         "magscope.gui": {
             "ControlPanelBase": type("ControlPanelBase", (), {}),
             "TimeSeriesPlotBase": type("TimeSeriesPlotBase", (), {}),
