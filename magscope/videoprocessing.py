@@ -8,17 +8,18 @@ from typing import TYPE_CHECKING
 import warnings
 
 import magtrack
+from magtrack._cupy import cp, is_cupy_available
 import numpy as np
 import tifffile
-from magtrack._cupy import cp, is_cupy_available
 
 from magscope._logging import get_logger
 from magscope.datatypes import MatrixBuffer, VideoBuffer
-from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, ShowMessageCommand, UnloadZLUTCommand,
-                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
-                                   WaitUntilAcquisitionOnCommand)
+from magscope.ipc import Delivery, register_ipc_command
+from magscope.ipc_commands import (LoadZLUTCommand, SetSettingsCommand, ShowMessageCommand,
+                                   UnloadZLUTCommand, UpdateWaitingCommand,
+                                   UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand)
 from magscope.processes import ManagerProcessBase
+from magscope.settings import MagScopeSettings
 from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
                             register_script_command)
 
@@ -51,6 +52,11 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_metadata: dict[str, float | int] | None = None
         self._zlut = None
         self._load_default_zlut()
+
+    @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    def set_settings(self, settings: MagScopeSettings):
+        super().set_settings(settings)
+        self._lookup_z_warning_reported = False
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
