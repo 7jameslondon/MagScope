@@ -253,6 +253,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
 
         self._current_settings = manager.settings.clone()
         self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
+        self._last_settings_update: datetime.datetime | None = None
 
         button_layout = QVBoxLayout()
         self.layout().addLayout(button_layout)
@@ -292,10 +293,16 @@ class MagScopeSettingsPanel(ControlPanelBase):
             self.layout().addWidget(widget)
 
         self.status_label = FlashLabel()
+        self.status_label.setText(self._format_last_updated_text())
         self.layout().addWidget(self.status_label)
 
     def _notify(self, text: str) -> None:
         self.status_label.setText(text)
+
+    def _format_last_updated_text(self) -> str:
+        if self._last_settings_update is None:
+            return "Last Updated: "
+        return f"Last Updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Settings", message)
@@ -319,7 +326,8 @@ class MagScopeSettingsPanel(ControlPanelBase):
         command = UpdateSettingsCommand(settings=settings.clone())
         self.manager.send_ipc(command)
         self._refresh_fields()
-        self._notify("Settings updated")
+        self._last_settings_update = datetime.datetime.now()
+        self._notify(self._format_last_updated_text())
 
     def _refresh_fields(self) -> None:
         for key, widget in self._setting_inputs.items():
@@ -351,7 +359,9 @@ class MagScopeSettingsPanel(ControlPanelBase):
             self._show_error(str(exc))
             return
         self._push_settings(settings)
-        self._notify(f"Loaded settings from {os.path.basename(path)}")
+        self._notify(
+            f"Loaded settings from {os.path.basename(path)}; {self._format_last_updated_text()}"
+        )
 
     def _on_save_clicked(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
