@@ -301,7 +301,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
 
     def _format_last_updated_text(self) -> str:
         if self._last_settings_update is None:
-            return "Last Updated: not yet"
+            return "Last Updated: "
         return f"Last Updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
     def _show_error(self, message: str) -> None:
