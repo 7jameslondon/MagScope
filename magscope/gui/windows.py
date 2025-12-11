@@ -633,6 +633,10 @@ class WindowManager(ManagerProcessBase):
     def update_script_status(self, status: ScriptStatus):
         self.controls.script_panel.update_status(status)
 
+    @register_ipc_command(UpdateScriptStepCommand)
+    def update_script_step(self, current_step: int | None, total_steps: int, description: str | None):
+        self.controls.script_panel.update_step(current_step, total_steps, description)
+
     @register_ipc_command(ShowMessageCommand)
     @register_script_command(ShowMessageCommand)
     def print(self, text: str, details: str | None = None):

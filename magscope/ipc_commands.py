@@ -137,6 +137,15 @@ class UpdateScriptStatusCommand(Command):
 
 
 @dataclass(frozen=True)
+class UpdateScriptStepCommand(Command):
+    """Report the currently executing script step to the GUI."""
+
+    current_step: int | None
+    total_steps: int
+    description: str | None
+
+
+@dataclass(frozen=True)
 class ShowMessageCommand(Command):
     text: str
     details: str | None = None
