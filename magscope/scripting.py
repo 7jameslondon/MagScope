@@ -22,7 +22,7 @@ from magscope._logging import get_logger
 from magscope.ipc import UnknownCommandError, register_ipc_command
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
                                    ShowErrorCommand, SleepCommand, StartScriptCommand,
-                                   UpdateScriptStatusCommand, UpdateWaitingCommand)
+                                   UpdateScriptStatusCommand, UpdateScriptStepCommand, UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -227,6 +227,10 @@ class ScriptManager(ManagerProcessBase):
 
             # Execute next step in script
             try:
+                self._send_script_step_update(
+                    self._script_index + 1,
+                    description=self._format_script_step(self._script[self._script_index]),
+                )
                 self._execute_script_step(self._script[self._script_index])
             except Exception:
                 self._handle_script_error(
@@ -350,6 +354,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_duration = None
         self._script_sleep_start = 0
         self._set_script_status(status)
+        self._send_script_step_update(None)
 
         if error_message is not None:
             self.send_ipc(ShowErrorCommand(text=error_message, details=error_details))
@@ -405,11 +410,32 @@ class ScriptManager(ManagerProcessBase):
             self._script_sleep_duration = None
             self.update_waiting()
 
+    def _send_script_step_update(self, current_step: int | None, *, description: str | None = None):
+        """Notify the GUI of the current script position."""
+
+        command = UpdateScriptStepCommand(
+            current_step=current_step,
+            total_steps=self._script_length,
+            description=description,
+        )
+        self.send_ipc(command)
+
+    @staticmethod
+    def _format_script_step(step: ScriptStep) -> str:
+        """Return a user-friendly description of a script step."""
+
+        try:
+            return repr(step.command)
+        except Exception:
+            return type(step.command).__name__
+
     def _set_script_status(self, status):
         """Notify the GUI that the script status has changed."""
         self._script_status = status
         command = UpdateScriptStatusCommand(status=status)
         self.send_ipc(command)
+        if status in (ScriptStatus.EMPTY, ScriptStatus.ERROR, ScriptStatus.FINISHED):
+            self._send_script_step_update(None)
 
     def _handle_script_error(self, message: str, *, details: str | None):
         """Report a script error to the GUI and transition to the error state."""

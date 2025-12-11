@@ -58,6 +58,7 @@ from magscope.ipc_commands import (
     SetZLockOnCommand,
     SetZLockTargetCommand,
     StartScriptCommand,
+    UpdateScriptStepCommand,
     UpdateSettingsCommand,
 )
 from magscope.scripting import ScriptStatus
@@ -968,6 +969,15 @@ class ScriptPanel(ControlPanelBase):
         self.status_label = QLabel('Status: Empty')
         self.layout().addWidget(self.status_label)
 
+        self.step_position_label = QLabel()
+        self.step_position_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.layout().addWidget(self.step_position_label)
+
+        self.step_description_label = QLabel()
+        self.step_description_label.setWordWrap(True)
+        self.step_description_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.layout().addWidget(self.step_description_label)
+
         # Button Layout
         self.button_layout = QHBoxLayout()
         self.layout().addLayout(self.button_layout)
@@ -995,6 +1005,7 @@ class ScriptPanel(ControlPanelBase):
         self.layout().addWidget(self.filepath_textedit)
 
         self.update_status(ScriptStatus.EMPTY)
+        self.update_step(None, 0, None)
 
     def update_status(self, status: ScriptStatus):
         self.status_label.setText(f'{self.status_prefix}: {status}')
@@ -1011,6 +1022,21 @@ class ScriptPanel(ControlPanelBase):
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         elif status == ScriptStatus.ERROR:
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def update_step(self, current_step: int | None, total_steps: int, description: str | None):
+        total_steps = max(total_steps, 0)
+        current_text = '-' if current_step is None else str(current_step)
+        total_text = '-' if total_steps == 0 else str(total_steps)
+        position_text = f'{current_text}/{total_text}'
+
+        self.step_position_label.setText(f'Step: {position_text}')
+
+        if description:
+            self.step_description_label.setText(description)
+            self.step_description_label.setVisible(True)
+        else:
+            self.step_description_label.clear()
+            self.step_description_label.setVisible(False)
 
     def callback_load(self):
         settings = QSettings('MagScope', 'MagScope')
