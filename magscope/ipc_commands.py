@@ -137,6 +137,13 @@ class UpdateScriptStatusCommand(Command):
 
 
 @dataclass(frozen=True)
+class UpdateScriptProgressCommand(Command):
+    current_step: int
+    total_steps: int
+    description: str | None
+
+
+@dataclass(frozen=True)
 class ShowMessageCommand(Command):
     text: str
     details: str | None = None

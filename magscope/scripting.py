@@ -22,7 +22,8 @@ from magscope._logging import get_logger
 from magscope.ipc import UnknownCommandError, register_ipc_command
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
                                    ShowErrorCommand, SleepCommand, StartScriptCommand,
-                                   UpdateScriptStatusCommand, UpdateWaitingCommand)
+                                   UpdateScriptProgressCommand, UpdateScriptStatusCommand,
+                                   UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -205,6 +206,7 @@ class ScriptManager(ManagerProcessBase):
         self._script_waiting: bool = False
         self._script_sleep_duration: float | None = None
         self._script_sleep_start: float = 0
+        self._current_step_description: str | None = None
 
     def setup(self):
         """Initialise process state.
@@ -349,7 +351,9 @@ class ScriptManager(ManagerProcessBase):
         self._script_index = 0
         self._script_sleep_duration = None
         self._script_sleep_start = 0
+        self._current_step_description = None
         self._set_script_status(status)
+        self._send_script_progress(current_step=0, description=None)
 
         if error_message is not None:
             self.send_ipc(ShowErrorCommand(text=error_message, details=error_details))
@@ -361,6 +365,12 @@ class ScriptManager(ManagerProcessBase):
             raise RuntimeError("ScriptManager cannot dispatch commands without a registry")
 
         registration = self.script_registry(type(step.command))
+        description = f"{registration.cls_name}.{registration.meth_name}"
+        self._current_step_description = description
+        self._send_script_progress(
+            current_step=self._script_index + 1,
+            description=description,
+        )
 
         if step.wait or isinstance(step.command, SleepCommand):
             self._script_waiting = True
@@ -410,6 +420,11 @@ class ScriptManager(ManagerProcessBase):
         self._script_status = status
         command = UpdateScriptStatusCommand(status=status)
         self.send_ipc(command)
+        if status == ScriptStatus.FINISHED:
+            self._send_script_progress(
+                current_step=self._script_length,
+                description=self._current_step_description,
+            )
 
     def _handle_script_error(self, message: str, *, details: str | None):
         """Report a script error to the GUI and transition to the error state."""
@@ -422,3 +437,12 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_start = 0
         self._set_script_status(ScriptStatus.ERROR)
         self.send_ipc(ShowErrorCommand(text=message, details=details))
+
+    def _send_script_progress(self, *, current_step: int, description: str | None):
+        self.send_ipc(
+            UpdateScriptProgressCommand(
+                current_step=current_step,
+                total_steps=self._script_length,
+                description=description,
+            )
+        )

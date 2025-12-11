@@ -968,6 +968,9 @@ class ScriptPanel(ControlPanelBase):
         self.status_label = QLabel('Status: Empty')
         self.layout().addWidget(self.status_label)
 
+        self.progress_label = QLabel('Step: -- / --')
+        self.layout().addWidget(self.progress_label)
+
         # Button Layout
         self.button_layout = QHBoxLayout()
         self.layout().addLayout(self.button_layout)
@@ -995,6 +998,7 @@ class ScriptPanel(ControlPanelBase):
         self.layout().addWidget(self.filepath_textedit)
 
         self.update_status(ScriptStatus.EMPTY)
+        self.update_progress(current_step=0, total_steps=0, description=None)
 
     def update_status(self, status: ScriptStatus):
         self.status_label.setText(f'{self.status_prefix}: {status}')
@@ -1009,6 +1013,7 @@ class ScriptPanel(ControlPanelBase):
         if status == ScriptStatus.EMPTY:
             self.filepath_textedit.setText(self.NO_SCRIPT_SELECTED_TEXT)
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.update_progress(current_step=0, total_steps=0, description=None)
         elif status == ScriptStatus.ERROR:
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -1045,6 +1050,18 @@ class ScriptPanel(ControlPanelBase):
         else:
             command = ResumeScriptCommand()
             self.manager.send_ipc(command)
+
+    def update_progress(self, *, current_step: int, total_steps: int, description: str | None):
+        if total_steps <= 0:
+            text = 'Step: -- / --'
+        else:
+            bounded_step = max(0, min(current_step, total_steps))
+            step_text = f'Step: {bounded_step} / {total_steps}'
+            if description:
+                step_text = f'{step_text} ({description})'
+            text = step_text
+
+        self.progress_label.setText(text)
 
 
 class StatusPanel(ControlPanelBase):
