@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import ClassVar, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from magscope.scripting import ScriptStatus
@@ -12,6 +12,13 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class Command:
     """Typed IPC payload sent between processes."""
+
+    # Controls how the command is surfaced while a script runs. Custom commands can
+    # override these attributes or expose a ``script_progress_text`` method to
+    # provide a user-facing description in the GUI. When ``script_visible`` is
+    # False, the scripting UI will skip the step entirely.
+    script_visible: ClassVar[bool] = True
+    script_progress_text: ClassVar[str | None] = None
 
 
 @dataclass(frozen=True)
@@ -33,10 +40,16 @@ class UpdateSettingsCommand(Command):
 class SetAcquisitionOnCommand(Command):
     value: bool
 
+    def script_progress_text(self) -> str:
+        return "Start acquisition" if self.value else "Stop acquisition"
+
 
 @dataclass(frozen=True)
 class WaitUntilAcquisitionOnCommand(Command):
     value: bool
+
+    def script_progress_text(self) -> str:
+        return "Wait until acquisition is on" if self.value else "Wait until acquisition is off"
 
 
 @dataclass(frozen=True)
@@ -47,6 +60,9 @@ class SetAcquisitionDirOnCommand(Command):
 @dataclass(frozen=True)
 class SetAcquisitionModeCommand(Command):
     mode: "AcquisitionMode"
+
+    def script_progress_text(self) -> str:
+        return f"Set acquisition mode to {self.mode.name}"
 
 
 @dataclass(frozen=True)
@@ -188,50 +204,80 @@ class RemoveBeadsFromPendingMovesCommand(Command):
 class SetXYLockOnCommand(Command):
     value: bool
 
+    def script_progress_text(self) -> str:
+        return "Enable XY lock" if self.value else "Disable XY lock"
+
 
 @dataclass(frozen=True)
 class ExecuteXYLockCommand(Command):
     now: float | None = None
+
+    def script_progress_text(self) -> str:
+        return "Execute XY lock adjustment"
 
 
 @dataclass(frozen=True)
 class SetXYLockIntervalCommand(Command):
     value: float
 
+    def script_progress_text(self) -> str:
+        return f"Set XY lock interval to {self.value} seconds"
+
 
 @dataclass(frozen=True)
 class SetXYLockMaxCommand(Command):
     value: float
+
+    def script_progress_text(self) -> str:
+        return f"Set XY lock max displacement to {self.value}"
 
 
 @dataclass(frozen=True)
 class SetXYLockWindowCommand(Command):
     value: int
 
+    def script_progress_text(self) -> str:
+        return f"Set XY lock window to {self.value}"
+
 
 @dataclass(frozen=True)
 class SetZLockOnCommand(Command):
     value: bool
+
+    def script_progress_text(self) -> str:
+        return "Enable Z lock" if self.value else "Disable Z lock"
 
 
 @dataclass(frozen=True)
 class SetZLockBeadCommand(Command):
     value: int
 
+    def script_progress_text(self) -> str:
+        return f"Set Z lock bead to {self.value}"
+
 
 @dataclass(frozen=True)
 class SetZLockTargetCommand(Command):
     value: float
+
+    def script_progress_text(self) -> str:
+        return f"Set Z lock target to {self.value}"
 
 
 @dataclass(frozen=True)
 class SetZLockIntervalCommand(Command):
     value: float
 
+    def script_progress_text(self) -> str:
+        return f"Set Z lock interval to {self.value} seconds"
+
 
 @dataclass(frozen=True)
 class SetZLockMaxCommand(Command):
     value: float
+
+    def script_progress_text(self) -> str:
+        return f"Set Z lock max displacement to {self.value}"
 
 
 @dataclass(frozen=True)
@@ -268,6 +314,9 @@ class ResumeScriptCommand(Command):
 @dataclass(frozen=True)
 class SleepCommand(Command):
     duration: float
+
+    def script_progress_text(self) -> str:
+        return f"Wait for {self.duration} seconds"
 
 
 @dataclass(frozen=True)

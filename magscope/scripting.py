@@ -207,6 +207,8 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_duration: float | None = None
         self._script_sleep_start: float = 0
         self._current_step_description: str | None = None
+        self._visible_steps_total: int = 0
+        self._visible_steps_completed: int = 0
 
     def setup(self):
         """Initialise process state.
@@ -352,6 +354,8 @@ class ScriptManager(ManagerProcessBase):
         self._script_sleep_duration = None
         self._script_sleep_start = 0
         self._current_step_description = None
+        self._visible_steps_total = self._count_visible_steps(self._script)
+        self._visible_steps_completed = 0
         self._set_script_status(status)
         self._send_script_progress(current_step=0, description=None)
 
@@ -365,12 +369,14 @@ class ScriptManager(ManagerProcessBase):
             raise RuntimeError("ScriptManager cannot dispatch commands without a registry")
 
         registration = self.script_registry(type(step.command))
-        description = f"{registration.cls_name}.{registration.meth_name}"
-        self._current_step_description = description
-        self._send_script_progress(
-            current_step=self._script_index + 1,
-            description=description,
-        )
+        description = self._describe_step(step.command, registration)
+        if self._is_step_visible(step.command):
+            self._visible_steps_completed += 1
+            self._current_step_description = description
+            self._send_script_progress(
+                current_step=self._visible_steps_completed,
+                description=description,
+            )
 
         if step.wait or isinstance(step.command, SleepCommand):
             self._script_waiting = True
@@ -421,8 +427,9 @@ class ScriptManager(ManagerProcessBase):
         command = UpdateScriptStatusCommand(status=status)
         self.send_ipc(command)
         if status == ScriptStatus.FINISHED:
+            self._visible_steps_completed = self._visible_steps_total
             self._send_script_progress(
-                current_step=self._script_length,
+                current_step=self._visible_steps_completed,
                 description=self._current_step_description,
             )
 
@@ -442,7 +449,46 @@ class ScriptManager(ManagerProcessBase):
         self.send_ipc(
             UpdateScriptProgressCommand(
                 current_step=current_step,
-                total_steps=self._script_length,
+                total_steps=self._visible_steps_total,
                 description=description,
             )
         )
+
+    def _count_visible_steps(self, script: list[ScriptStep]) -> int:
+        return sum(1 for step in script if self._is_step_visible(step.command))
+
+    @staticmethod
+    def _is_step_visible(command: Command) -> bool:
+        try:
+            visible = getattr(command, "script_visible")
+        except Exception:
+            return True
+
+        return bool(visible)
+
+    @staticmethod
+    def _describe_step(command: Command, registration: ScriptCommandRegistration) -> str:
+        description = ScriptManager._get_description_from_command(command)
+        if description:
+            return description
+
+        return f"{registration.cls_name}.{registration.meth_name}"
+
+    @staticmethod
+    def _get_description_from_command(command: Command) -> str | None:
+        provider = getattr(command, "script_progress_text", None)
+        if provider is None:
+            return None
+
+        if callable(provider):
+            try:
+                description = provider()
+            except TypeError:
+                description = provider(command)
+        else:
+            description = provider
+
+        if description:
+            return str(description)
+
+        return None
