@@ -158,9 +158,9 @@ def load_scope_with_stubs(monkeypatch):
         def __init__(self):
             super().__init__(name="VideoProcessorManager")
 
-    class WindowManager(StubManagerProcessBase):
+    class UIManager(StubManagerProcessBase):
         def __init__(self):
-            super().__init__(name="WindowManager")
+            super().__init__(name="UIManager")
             self.controls_to_add = []
             self.plots_to_add = []
 
@@ -183,10 +183,10 @@ def load_scope_with_stubs(monkeypatch):
             "MatrixBuffer": MatrixBuffer,
             "VideoBuffer": VideoBuffer,
         },
-        "magscope.gui": {
+        "magscope.ui": {
             "ControlPanelBase": type("ControlPanelBase", (), {}),
             "TimeSeriesPlotBase": type("TimeSeriesPlotBase", (), {}),
-            "WindowManager": WindowManager,
+            "UIManager": UIManager,
         },
         "magscope.hardware": {"HardwareManagerBase": HardwareManagerBase},
         "magscope.processes": {

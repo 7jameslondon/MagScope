@@ -30,13 +30,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from magscope.gui import (
+from magscope.ui import (
     CollapsibleGroupBox,
     LabeledCheckbox,
     LabeledLineEdit,
     LabeledLineEditWithValue,
 )
-from magscope.gui.widgets import FlashLabel
+from magscope.ui.widgets import FlashLabel
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
     GetCameraSettingCommand,
@@ -66,13 +66,13 @@ from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import
 if TYPE_CHECKING:
-    from magscope.gui.windows import WindowManager
+    from magscope.ui.ui import UIManager
 
 
 class ControlPanelBase(QWidget):
-    def __init__(self, manager: 'WindowManager', title: str, collapsed_by_default: bool = False):
+    def __init__(self, manager: 'UIManager', title: str, collapsed_by_default: bool = False):
         super().__init__()
-        self.manager: WindowManager = manager
+        self.manager: UIManager = manager
         self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(
             title=title,
             collapsed=collapsed_by_default,
@@ -111,7 +111,7 @@ class HelpPanel(QFrame):
 
     HELP_URL = QUrl("https://magscope.readthedocs.io")
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__()
         self.manager = manager
         self.setObjectName("HelpPanelFrame")
@@ -177,7 +177,7 @@ class HelpPanel(QFrame):
 class ResetPanel(QFrame):
     """Clickable panel that resets the GUI layout to defaults."""
 
-    def __init__(self, manager: "WindowManager"):
+    def __init__(self, manager: "UIManager"):
         super().__init__()
         self.manager = manager
         self.setObjectName("ResetPanelFrame")
@@ -248,7 +248,7 @@ class ResetPanel(QFrame):
 class MagScopeSettingsPanel(ControlPanelBase):
     """Allow loading, saving, and editing MagScope configuration values."""
 
-    def __init__(self, manager: "WindowManager"):
+    def __init__(self, manager: "UIManager"):
         super().__init__(manager=manager, title="MagScope Settings", collapsed_by_default=True)
 
         self._current_settings = manager.settings.clone()
@@ -383,7 +383,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
 class AcquisitionPanel(ControlPanelBase):
     NO_DIRECTORY_SELECTED_TEXT = 'No save directory selected'
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Acquisition', collapsed_by_default=True)
         acquisition_controls_row = QHBoxLayout()
         self.layout().addLayout(acquisition_controls_row)
@@ -481,7 +481,7 @@ class AcquisitionPanel(ControlPanelBase):
 
 class BeadSelectionPanel(ControlPanelBase):
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Bead Selection', collapsed_by_default=False)
 
         # Instructions
@@ -548,7 +548,7 @@ class BeadSelectionPanel(ControlPanelBase):
 
 class CameraPanel(ControlPanelBase):
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Camera Settings', collapsed_by_default=True)
 
         self.layout().setSpacing(2)
@@ -603,7 +603,7 @@ class CameraPanel(ControlPanelBase):
 
 class HistogramPanel(ControlPanelBase):
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Histogram', collapsed_by_default=True)
 
         self.update_interval: float = 1  # seconds
@@ -709,7 +709,7 @@ class HistogramPanel(ControlPanelBase):
 
 
 class PlotSettingsPanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Plot Settings', collapsed_by_default=True)
 
         # Selected Bead
@@ -856,7 +856,7 @@ class PlotSettingsPanel(ControlPanelBase):
 
 
 class ProfilePanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Radial Profile Monitor', collapsed_by_default=True)
 
         # Enable
@@ -961,7 +961,7 @@ class ProfilePanel(ControlPanelBase):
 class ScriptPanel(ControlPanelBase):
     NO_SCRIPT_SELECTED_TEXT = 'No script loaded'
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Scripting', collapsed_by_default=True)
 
         self.status_prefix = 'Status'
@@ -1048,7 +1048,7 @@ class ScriptPanel(ControlPanelBase):
 
 
 class StatusPanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Status', collapsed_by_default=False)
 
         self.layout().setSpacing(0)
@@ -1107,7 +1107,7 @@ class StatusPanel(ControlPanelBase):
 
 
 class XYLockPanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='XY-Lock', collapsed_by_default=True)
 
         # Note
@@ -1254,7 +1254,7 @@ class XYLockPanel(ControlPanelBase):
 
 
 class ZLockPanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-Lock', collapsed_by_default=True)
 
         # Note
@@ -1419,7 +1419,7 @@ class ZLockPanel(ControlPanelBase):
 
 
 class ZLUTGenerationPanel(ControlPanelBase):
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-LUT Generation', collapsed_by_default=True)
 
         # ROI
@@ -1484,7 +1484,7 @@ class ZLUTPanel(ControlPanelBase):
 
     NO_ZLUT_SELECTED_TEXT = 'No Z-LUT file selected'
 
-    def __init__(self, manager: 'WindowManager'):
+    def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-LUT', collapsed_by_default=True)
 
         # Controls row

@@ -12,7 +12,7 @@ Timing and messaging
 
 * :class:`~magscope.ipc_commands.SleepCommand` ``(duration: float)`` → :meth:`~magscope.scripting.ScriptManager.start_sleep`  
   Pause script execution for the given duration in seconds.
-* :class:`~magscope.ipc_commands.ShowMessageCommand` ``(text: str, details: str | None = None)`` → :meth:`~magscope.gui.windows.WindowManager.print`  
+* :class:`~magscope.ipc_commands.ShowMessageCommand` ``(text: str, details: str | None = None)`` → :meth:`~magscope.ui.ui.UIManager.print`
   Display an information dialog in the GUI. Optional ``details`` are shown in the dialog's expandable details area.
 
 Acquisition

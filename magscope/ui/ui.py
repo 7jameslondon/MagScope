@@ -26,7 +26,7 @@ from magscope._logging import get_logger
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
-from magscope.gui import (
+from magscope.ui import (
     AcquisitionPanel,
     BeadGraphic,
     BeadSelectionPanel,
@@ -41,7 +41,7 @@ from magscope.gui import (
     TimeSeriesPlotBase,
     VideoViewer,
 )
-from magscope.gui.controls import (
+from magscope.ui.controls import (
     HelpPanel,
     MagScopeSettingsPanel,
     PlotSettingsPanel,
@@ -52,21 +52,21 @@ from magscope.gui.controls import (
     ZLUTPanel,
     ZLockPanel,
 )
-from magscope.gui.panel_layout import (
+from magscope.ui.panel_layout import (
     PANEL_MIME_TYPE,
     PanelLayoutManager,
     PanelWrapper,
     ReorderableColumn,
 )
-from magscope.gui.widgets import CollapsibleGroupBox
+from magscope.ui.widgets import CollapsibleGroupBox
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
-logger = get_logger("gui.windows")
+logger = get_logger("ui.ui")
 
-class WindowManager(ManagerProcessBase):
+class UIManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self._bead_graphics: dict[int, BeadGraphic] = {}
@@ -207,7 +207,7 @@ class WindowManager(ManagerProcessBase):
             window.close()
 
     def do_main_loop(self):
-        # Because the WindowManager is a special case with a GUI
+        # Because the UIManager is a special case with a GUI
         # the main loop is actually called by a timer, not the
         # run method of it's super()
 
@@ -885,7 +885,7 @@ class Controls(QWidget):
 
     LAYOUT_SETTINGS_GROUP = "controls/layout"
 
-    def __init__(self, manager: WindowManager):
+    def __init__(self, manager: UIManager):
         super().__init__()
         self.manager = manager
         self.panels: dict[str, ControlPanelBase | QWidget] = {}
