@@ -1025,10 +1025,9 @@ class ScriptPanel(ControlPanelBase):
 
     def update_step(self, current_step: int | None, total_steps: int, description: str | None):
         total_steps = max(total_steps, 0)
-        if current_step is None:
-            position_text = f'-/{total_steps}'
-        else:
-            position_text = f'{current_step}/{total_steps}'
+        current_text = '-' if current_step is None else str(current_step)
+        total_text = '-' if total_steps == 0 else str(total_steps)
+        position_text = f'{current_text}/{total_text}'
 
         self.step_position_label.setText(f'Step: {position_text}')
 
