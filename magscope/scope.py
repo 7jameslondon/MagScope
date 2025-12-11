@@ -79,6 +79,17 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
 
 
+def multiply(left: float, right: float) -> float:
+    """Return the product of ``left`` and ``right``.
+
+    The helper is intentionally small and side-effect free so it can be reused
+    in unit tests without pulling in the full :class:`MagScope` orchestration
+    machinery.
+    """
+
+    return left * right
+
+
 class MagScope(metaclass=SingletonMeta):
     """Coordinate MagScope managers, shared resources, and IPC.
 

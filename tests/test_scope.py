@@ -369,3 +369,8 @@ def test_magscope_is_singleton(scope_module):
         scope_module.MagScope()
 
     scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_multiply_returns_product(scope_module):
+    assert scope_module.multiply(3, 4) == 12
+    assert scope_module.multiply(2.5, 4) == pytest.approx(10.0)
