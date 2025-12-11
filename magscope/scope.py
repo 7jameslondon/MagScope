@@ -87,7 +87,7 @@ def multiply(left: float, right: float) -> float:
     machinery.
     """
 
-    return left * right
+    return left * r
 
 
 class MagScope(metaclass=SingletonMeta):
