@@ -56,6 +56,9 @@ class WaitUntilAcquisitionOnCommand(Command):
 class SetAcquisitionDirOnCommand(Command):
     value: bool
 
+    def script_progress_text(self) -> str:
+        return "Enable acquisition directory" if self.value else "Disable acquisition directory"
+
 
 @dataclass(frozen=True)
 class SetAcquisitionModeCommand(Command):
@@ -68,6 +71,9 @@ class SetAcquisitionModeCommand(Command):
 @dataclass(frozen=True)
 class SetAcquisitionDirCommand(Command):
     value: str | None
+
+    def script_progress_text(self) -> str:
+        return "Clear acquisition directory" if self.value is None else f"Set acquisition directory to {self.value}"
 
 
 @dataclass(frozen=True)
@@ -163,6 +169,9 @@ class UpdateScriptProgressCommand(Command):
 class ShowMessageCommand(Command):
     text: str
     details: str | None = None
+
+    def script_progress_text(self) -> str:
+        return self.text
 
 
 @dataclass(frozen=True)
