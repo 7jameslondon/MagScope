@@ -30,6 +30,11 @@ class UpdateSettingsCommand(Command):
 
 
 @dataclass(frozen=True)
+class UpdateTrackingOptionsCommand(Command):
+    value: dict
+
+
+@dataclass(frozen=True)
 class SetAcquisitionOnCommand(Command):
     value: bool
 

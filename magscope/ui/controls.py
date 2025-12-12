@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import os
 import textwrap
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -52,6 +53,7 @@ from magscope.ipc_commands import (
     SetZLockTargetCommand,
     StartScriptCommand,
     UpdateScriptStepCommand,
+    UpdateTrackingOptionsCommand,
     UpdateSettingsCommand,
 )
 from magscope.scripting import ScriptStatus
@@ -957,6 +959,246 @@ class ProfilePanel(ControlPanelBase):
         self.line.set_xdata([])
         self.line.set_ydata([])
         self.canvas.draw()
+
+
+class TrackingOptionsPanel(ControlPanelBase):
+    _DEFAULTS: dict[str, Any] = {
+        'center_of_mass': {'background': 'none'},
+        'n auto_conv_multiline_sub_pixel': 5,
+        'auto_conv_multiline_sub_pixel': {'line_ratio': 0.1, 'n_local': 5},
+        'use fft_profile': False,
+        'fft_profile': {'oversample': 4, 'rmin': 0.0, 'rmax': 0.5, 'gaus_factor': 6.0},
+        'radial_profile': {'oversample': 1},
+        'lookup_z': {'n_local': 7},
+    }
+
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager=manager, title='Tracking Options', collapsed_by_default=True)
+        self._current_options: dict[str, Any] = copy.deepcopy(self._DEFAULTS)
+
+        note = QLabel(
+            textwrap.dedent(
+                """
+                Configure the arguments forwarded to MagTrack's
+                stack_to_xyzp_advanced pipeline. Leave fields blank to keep
+                existing values. Defaults reflect MagTrack's standard
+                parameters.
+                """
+            ).strip()
+        )
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
+
+        background_row = QHBoxLayout()
+        background_row.addWidget(QLabel('Center-of-mass background:'))
+        self.background_combo = QComboBox()
+        self.background_combo.addItems(['none', 'mean', 'median'])
+        self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+        background_row.addWidget(self.background_combo)
+        background_row.addStretch(1)
+        self.layout().addLayout(background_row)
+
+        self.iterations = LabeledLineEditWithValue(
+            label_text='Auto-conv iterations',
+            default=str(self._current_options['n auto_conv_multiline_sub_pixel']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.iterations)
+
+        self.line_ratio = LabeledLineEditWithValue(
+            label_text='Line ratio',
+            default=str(self._current_options['auto_conv_multiline_sub_pixel']['line_ratio']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.line_ratio)
+
+        self.n_local = LabeledLineEditWithValue(
+            label_text='n_local (auto-conv)',
+            default=str(self._current_options['auto_conv_multiline_sub_pixel']['n_local']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.n_local)
+
+        self.use_fft = LabeledCheckbox(
+            label_text='Use FFT profile',
+            callback=self._use_fft_changed,
+        )
+        self.layout().addWidget(self.use_fft)
+
+        self.fft_oversample = LabeledLineEditWithValue(
+            label_text='FFT oversample',
+            default=str(self._current_options['fft_profile']['oversample']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.fft_oversample)
+
+        self.fft_rmin = LabeledLineEditWithValue(
+            label_text='FFT rmin',
+            default=str(self._current_options['fft_profile']['rmin']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.fft_rmin)
+
+        self.fft_rmax = LabeledLineEditWithValue(
+            label_text='FFT rmax',
+            default=str(self._current_options['fft_profile']['rmax']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.fft_rmax)
+
+        self.fft_gaus_factor = LabeledLineEditWithValue(
+            label_text='FFT gaus_factor',
+            default=str(self._current_options['fft_profile']['gaus_factor']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.fft_gaus_factor)
+
+        self.radial_oversample = LabeledLineEditWithValue(
+            label_text='Radial oversample',
+            default=str(self._current_options['radial_profile']['oversample']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.radial_oversample)
+
+        self.lookup_n_local = LabeledLineEditWithValue(
+            label_text='lookup_z n_local',
+            default=str(self._current_options['lookup_z']['n_local']),
+            widths=(150, 60, 0),
+        )
+        self.layout().addWidget(self.lookup_n_local)
+
+        buttons_row = QHBoxLayout()
+        apply_button = QPushButton('Apply')
+        apply_button.clicked.connect(self.apply_options)  # type: ignore
+        reset_button = QPushButton('Reset to defaults')
+        reset_button.clicked.connect(self.reset_defaults)  # type: ignore
+        buttons_row.addWidget(apply_button)
+        buttons_row.addWidget(reset_button)
+        buttons_row.addStretch(1)
+        self.layout().addLayout(buttons_row)
+
+        self.status_label = FlashLabel()
+        self.layout().addWidget(self.status_label)
+
+        self._update_value_labels()
+        self._sync_fft_enabled_state()
+
+    def _parse_int(self, widget: LabeledLineEditWithValue, fallback: int, *, minimum: int | None = None) -> int:
+        text = widget.lineedit.text().strip()
+        widget.lineedit.setText('')
+        if text:
+            try:
+                value = int(text)
+                if minimum is not None and value < minimum:
+                    return fallback
+                return value
+            except ValueError:
+                return fallback
+        return fallback
+
+    def _parse_float(
+        self,
+        widget: LabeledLineEditWithValue,
+        fallback: float,
+        *,
+        minimum: float | None = None,
+    ) -> float:
+        text = widget.lineedit.text().strip()
+        widget.lineedit.setText('')
+        if text:
+            try:
+                value = float(text)
+                if minimum is not None and value < minimum:
+                    return fallback
+                return value
+            except ValueError:
+                return fallback
+        return fallback
+
+    def _update_value_labels(self) -> None:
+        self.iterations.value_label.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
+        self.line_ratio.value_label.setText(str(self._current_options['auto_conv_multiline_sub_pixel']['line_ratio']))
+        self.n_local.value_label.setText(str(self._current_options['auto_conv_multiline_sub_pixel']['n_local']))
+        self.radial_oversample.value_label.setText(str(self._current_options['radial_profile']['oversample']))
+        self.lookup_n_local.value_label.setText(str(self._current_options['lookup_z']['n_local']))
+
+        fft_settings = self._current_options['fft_profile']
+        self.fft_oversample.value_label.setText(str(fft_settings['oversample']))
+        self.fft_rmin.value_label.setText(str(fft_settings['rmin']))
+        self.fft_rmax.value_label.setText(str(fft_settings['rmax']))
+        self.fft_gaus_factor.value_label.setText(str(fft_settings['gaus_factor']))
+
+        self.use_fft.checkbox.blockSignals(True)
+        self.use_fft.checkbox.setChecked(bool(self._current_options['use fft_profile']))
+        self.use_fft.checkbox.blockSignals(False)
+
+    def _sync_fft_enabled_state(self) -> None:
+        use_fft = self.use_fft.checkbox.isChecked()
+        for widget in (self.fft_oversample, self.fft_rmin, self.fft_rmax, self.fft_gaus_factor):
+            widget.setEnabled(use_fft)
+        self.radial_oversample.setEnabled(not use_fft)
+
+    def _use_fft_changed(self, value: bool) -> None:
+        self._current_options['use fft_profile'] = value
+        self._sync_fft_enabled_state()
+
+    def apply_options(self) -> None:
+        options = copy.deepcopy(self._current_options)
+        options['center_of_mass']['background'] = self.background_combo.currentText()
+
+        iterations = self._parse_int(self.iterations, options['n auto_conv_multiline_sub_pixel'], minimum=1)
+        options['n auto_conv_multiline_sub_pixel'] = iterations
+
+        line_ratio = self._parse_float(
+            self.line_ratio,
+            options['auto_conv_multiline_sub_pixel']['line_ratio'],
+            minimum=0.0,
+        )
+        options['auto_conv_multiline_sub_pixel']['line_ratio'] = line_ratio
+
+        n_local = self._parse_int(self.n_local, options['auto_conv_multiline_sub_pixel']['n_local'], minimum=3)
+        if n_local % 2 == 0:
+            n_local += 1
+        options['auto_conv_multiline_sub_pixel']['n_local'] = n_local
+
+        options['use fft_profile'] = self.use_fft.checkbox.isChecked()
+
+        fft_oversample = self._parse_int(self.fft_oversample, options['fft_profile']['oversample'], minimum=1)
+        fft_rmin = self._parse_float(self.fft_rmin, options['fft_profile']['rmin'], minimum=0.0)
+        fft_rmax = self._parse_float(self.fft_rmax, options['fft_profile']['rmax'], minimum=0.0)
+        fft_gaus_factor = self._parse_float(
+            self.fft_gaus_factor,
+            options['fft_profile']['gaus_factor'],
+            minimum=0.0,
+        )
+
+        options['fft_profile'] = {
+            'oversample': fft_oversample,
+            'rmin': fft_rmin,
+            'rmax': fft_rmax,
+            'gaus_factor': fft_gaus_factor,
+        }
+
+        radial_oversample = self._parse_int(self.radial_oversample, options['radial_profile']['oversample'], minimum=1)
+        options['radial_profile']['oversample'] = radial_oversample
+
+        lookup_n_local = self._parse_int(self.lookup_n_local, options['lookup_z']['n_local'], minimum=3)
+        if lookup_n_local % 2 == 0:
+            lookup_n_local += 1
+        options['lookup_z']['n_local'] = lookup_n_local
+
+        self._current_options = options
+        self._update_value_labels()
+        self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(options)))
+        self.status_label.setText('Tracking options updated')
+
+    def reset_defaults(self) -> None:
+        self._current_options = copy.deepcopy(self._DEFAULTS)
+        self.background_combo.setCurrentText(self._DEFAULTS['center_of_mass']['background'])
+        self._update_value_labels()
+        self._sync_fft_enabled_state()
+        self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
+        self.status_label.setText('Defaults restored')
 
 
 class ScriptPanel(ControlPanelBase):

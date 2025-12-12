@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
@@ -16,8 +17,9 @@ from magscope._logging import get_logger
 from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import (LoadZLUTCommand, SetSettingsCommand, ShowMessageCommand,
-                                   UnloadZLUTCommand, UpdateWaitingCommand,
-                                   UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand)
+                                   UnloadZLUTCommand, UpdateTrackingOptionsCommand,
+                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
+                                   WaitUntilAcquisitionOnCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.settings import MagScopeSettings
 from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
@@ -52,12 +54,17 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_path: Path | None = Path(__file__).with_name('simulation_zlut.txt')
         self._zlut_metadata: dict[str, float | int] | None = None
         self._zlut = None
+        self._tracking_options: dict = {}
         self._load_default_zlut()
 
     @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_settings(self, settings: MagScopeSettings):
         super().set_settings(settings)
         self._lookup_z_warning_reported = False
+
+    @register_ipc_command(UpdateTrackingOptionsCommand)
+    def update_tracking_options(self, value: dict):
+        self._tracking_options = value or {}
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
@@ -198,6 +205,7 @@ class VideoProcessorManager(ManagerProcessBase):
             'magnification': self.settings['magnification'],
             'nm_per_px': self.camera_type.nm_per_px,
             'save_profiles': self._save_profiles,
+            'tracking_options': copy.deepcopy(self._tracking_options),
             'zlut': self._zlut
         }
 
@@ -296,6 +304,7 @@ class VideoWorker(Process):
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
+        tracking_options: dict = kwargs.get('tracking_options', {}) or {}
 
         bead_rois = bead_rois if len(bead_rois) > 0 else None
 
@@ -369,7 +378,11 @@ class VideoWorker(Process):
             with warnings.catch_warnings(record=True) as warning_records:
                 warnings.simplefilter('always')
                 with self._gpu_lock:
-                    y, x, z, profiles = magtrack.stack_to_xyzp_advanced(stack_rois_reshaped, zlut)
+                    y, x, z, profiles = magtrack.stack_to_xyzp_advanced(
+                        stack_rois_reshaped,
+                        zlut,
+                        **tracking_options,
+                    )
             if is_cupy_available():
                 cp.get_default_memory_pool().free_all_blocks()
             self._notify_lookup_profile_warning(warning_records)
