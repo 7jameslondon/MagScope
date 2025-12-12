@@ -963,7 +963,7 @@ class ProfilePanel(ControlPanelBase):
 
 class TrackingOptionsPanel(ControlPanelBase):
     _DEFAULTS: dict[str, Any] = {
-        'center_of_mass': {'background': 'none'},
+        'center_of_mass': {'background': 'median'},
         'n auto_conv_multiline_sub_pixel': 5,
         'auto_conv_multiline_sub_pixel': {'line_ratio': 0.1, 'n_local': 5},
         'use fft_profile': False,

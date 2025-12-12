@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 logger = get_logger("videoprocessing")
 
 _LOOKUP_Z_PROFILE_WARNING = 'lookup_z_profile_size_warning'
+_DEFAULT_TRACKING_OPTIONS = {'center_of_mass': {'background': 'median'}}
 
 class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
@@ -54,7 +55,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_path: Path | None = Path(__file__).with_name('simulation_zlut.txt')
         self._zlut_metadata: dict[str, float | int] | None = None
         self._zlut = None
-        self._tracking_options: dict = {}
+        self._tracking_options: dict = copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
         self._load_default_zlut()
 
     @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
@@ -64,7 +65,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
     @register_ipc_command(UpdateTrackingOptionsCommand)
     def update_tracking_options(self, value: dict):
-        self._tracking_options = value or {}
+        self._tracking_options = copy.deepcopy(value) if value else copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
