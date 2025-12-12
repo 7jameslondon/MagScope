@@ -215,16 +215,6 @@ class MagScope(metaclass=SingletonMeta):
         self.ui_manager.plots_to_add.append(plot)
 
     @property
-    def window_manager(self) -> UIManager:
-        """Backward-compatible alias for :attr:`ui_manager`."""
-
-        return self.ui_manager
-
-    @window_manager.setter
-    def window_manager(self, manager: UIManager) -> None:
-        self.ui_manager = manager
-
-    @property
     def print_ipc_commands(self) -> bool:
         """Return whether :meth:`start` should print IPC commands and exit early."""
 
