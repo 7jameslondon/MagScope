@@ -224,6 +224,7 @@ def test_run_validates_dependencies(fake_buffers):
     proc.configure_shared_resources(
         camera_type=None,
         hardware_types={},
+        focus_motor_name=None,
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
@@ -252,6 +253,7 @@ def test_receive_ipc_dispatch_and_quit_flag():
     proc.configure_shared_resources(
         camera_type=None,
         hardware_types={},
+        focus_motor_name=None,
         quitting_event=quit_event,
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
@@ -287,6 +289,7 @@ def test_receive_ipc_errors_on_unknown_command():
     proc.configure_shared_resources(
         camera_type=None,
         hardware_types={},
+        focus_motor_name=None,
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
@@ -309,6 +312,7 @@ def test_quit_broadcasts_and_drains_pipe():
     proc.configure_shared_resources(
         camera_type=None,
         hardware_types={},
+        focus_motor_name=None,
         quitting_event=quitting_event,
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
@@ -350,6 +354,7 @@ def test_run_reports_exception(monkeypatch):
     proc.configure_shared_resources(
         camera_type=None,
         hardware_types={},
+        focus_motor_name=None,
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),

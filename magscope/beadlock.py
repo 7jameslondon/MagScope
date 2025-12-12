@@ -5,10 +5,12 @@ import numpy as np
 
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (
+    FocusMoveCommand,
     ExecuteXYLockCommand,
     MoveBeadsCommand,
     RemoveBeadFromPendingMovesCommand,
     RemoveBeadsFromPendingMovesCommand,
+    ShowMessageCommand,
     SetXYLockIntervalCommand,
     SetXYLockMaxCommand,
     SetXYLockOnCommand,
@@ -53,6 +55,7 @@ class BeadLockManager(ManagerProcessBase):
         self.z_lock_interval: float
         self.z_lock_max: float
         self._z_lock_last_time: float = 0.0
+        self._focus_motor_missing_notified: bool = False
 
     def setup(self):
         self.xy_lock_interval = self.settings['xy-lock default interval']
@@ -153,8 +156,64 @@ class BeadLockManager(ManagerProcessBase):
         if now is None:
             now = time()
         self._z_lock_last_time = now
+        if not self._ensure_focus_motor():
+            return
 
-        raise NotImplementedError
+        if self.z_lock_target is None or self.tracks_buffer is None:
+            return
+
+        if self.focus_status is None:
+            self.request_focus_status()
+            return
+
+        tracks = self.tracks_buffer.peak_unsorted().copy()
+        bead_tracks = tracks[tracks[:, 4] == self.z_lock_bead, :]
+        valid = bead_tracks[~np.isnan(bead_tracks[:, [0, 3]]).any(axis=1)]
+        if valid.shape[0] == 0:
+            return
+
+        order = np.argsort(valid[:, 0])
+        latest_track = valid[order[-1], :]
+        z_position = float(latest_track[3])
+
+        z_error = self.z_lock_target - z_position
+        if np.isclose(z_error, 0.0):
+            return
+
+        motor_status = self.focus_status
+        if motor_status is None:
+            return
+
+        unclamped_target = motor_status.position + z_error
+        safe_target = np.clip(
+            unclamped_target,
+            motor_status.min_position,
+            motor_status.max_position,
+        )
+
+        delta = safe_target - motor_status.position
+        limited_delta = copysign(min(abs(delta), self.z_lock_max), delta)
+        if np.isclose(limited_delta, 0.0):
+            return
+
+        target_position = motor_status.position + limited_delta
+        self.send_ipc(FocusMoveCommand(position=target_position))
+        self.request_focus_status()
+
+    def _ensure_focus_motor(self) -> bool:
+        if self.focus_motor_name:
+            self._focus_motor_missing_notified = False
+            return True
+
+        if not self._focus_motor_missing_notified:
+            command = ShowMessageCommand(
+                text='Z-lock requires a focus motor',
+                details='Attach a FocusMotorBase hardware manager via MagScope.add_hardware.',
+            )
+            self.send_ipc(command)
+            self._focus_motor_missing_notified = True
+
+        return False
 
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         previous_bead_rois = getattr(self, 'bead_rois', {}).copy()
@@ -235,10 +294,16 @@ class BeadLockManager(ManagerProcessBase):
     @register_ipc_command(SetZLockOnCommand)
     @register_script_command(SetZLockOnCommand)
     def set_z_lock_on(self, value: bool):
+        if value and not self._ensure_focus_motor():
+            value = False
+
         self.z_lock_on = value
 
         command = UpdateZLockEnabledCommand(value=value)
         self.send_ipc(command)
+
+        if self.z_lock_on:
+            self.request_focus_status()
 
     @register_ipc_command(SetZLockBeadCommand)
     @register_script_command(SetZLockBeadCommand)

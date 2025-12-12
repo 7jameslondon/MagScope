@@ -55,8 +55,8 @@ from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
+from magscope.hardware import FocusMotorBase, HardwareManagerBase
 from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
-from magscope.hardware import HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
     command_kwargs,
@@ -110,6 +110,7 @@ class MagScope(metaclass=SingletonMeta):
 
         self._hardware: dict[str, HardwareManagerBase] = {}
         self._hardware_buffers: dict[str, MatrixBuffer] = {}
+        self._focus_motor_name: str | None = None
         self.processes: dict[str, ManagerProcessBase] = {}
         self.command_registry: CommandRegistry = CommandRegistry()
 
@@ -204,6 +205,12 @@ class MagScope(metaclass=SingletonMeta):
     def add_hardware(self, hardware: HardwareManagerBase):
         """Register a hardware manager so its process launches with MagScope."""
         self._hardware[hardware.name] = hardware
+        if isinstance(hardware, FocusMotorBase):
+            if self._focus_motor_name and self._focus_motor_name != hardware.name:
+                warn(
+                    f'Replacing focus motor {self._focus_motor_name} with {hardware.name}',
+                )
+            self._focus_motor_name = hardware.name
         self.command_registry.register_manager(hardware)
 
     def add_control(self, control_type: type(ControlPanelBase), column: int):
@@ -531,6 +538,7 @@ class MagScope(metaclass=SingletonMeta):
             proc.configure_shared_resources(
                 camera_type=camera_type,
                 hardware_types=hardware_types,
+                focus_motor_name=self._focus_motor_name,
                 quitting_event=self._quitting,
                 settings=self._settings.clone(),
                 shared_values=self.shared_values,
