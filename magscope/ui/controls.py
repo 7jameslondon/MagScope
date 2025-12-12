@@ -51,6 +51,7 @@ from magscope.ipc_commands import (
     SetZLockOnCommand,
     SetZLockTargetCommand,
     StartScriptCommand,
+    ShowMessageCommand,
     UpdateScriptStepCommand,
     UpdateSettingsCommand,
 )
@@ -1496,12 +1497,58 @@ class ZLUTGenerationPanel(ControlPanelBase):
         except ValueError:
             return
 
+        if self.manager.focus_motor_name is None:
+            command = ShowMessageCommand(
+                text='No focus motor available for Z-LUT generation',
+                details='Attach a focus motor hardware manager before generating a Z-LUT.',
+            )
+            self.manager.send_ipc(command)
+            return
+
+        status = self.manager.focus_status
+        if status is None:
+            self.manager.request_focus_status()
+            command = ShowMessageCommand(
+                text='Waiting for focus motor status',
+                details='Focus position and limits are required before generating a Z-LUT.',
+            )
+            self.manager.send_ipc(command)
+            return
+
+        if start_nm < status.min_position or start_nm > status.max_position or stop_nm < status.min_position or stop_nm > status.max_position:
+            command = ShowMessageCommand(
+                text='Z-LUT range outside focus motor limits',
+                details=(
+                    f'Requested range {start_nm}–{stop_nm} nm exceeds '
+                    f'focus motor bounds of {status.min_position}–{status.max_position} nm.'
+                ),
+            )
+            self.manager.send_ipc(command)
+            return
+
+        if step_nm <= 0:
+            command = ShowMessageCommand(
+                text='Z-LUT step must be positive',
+                details='Enter a positive step size in nanometers.',
+            )
+            self.manager.send_ipc(command)
+            return
+
+        n_steps = int(abs(stop_nm - start_nm) / step_nm) + 1
+
         # Output file name
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
         roi = self.manager.settings['ROI']
         filename = f'Z-LUT {timestamp} {roi} {start_nm:.0f} {step_nm:.0f} {stop_nm:.0f}.txt'
 
-        raise NotImplementedError
+        command = ShowMessageCommand(
+            text='Z-LUT generation request queued',
+            details=(
+                f'Validated {n_steps} steps from {start_nm} nm to {stop_nm} nm '
+                f'at {step_nm} nm increments. Intended output file: {filename}.'
+            ),
+        )
+        self.manager.send_ipc(command)
 
 
 class ZLUTPanel(ControlPanelBase):

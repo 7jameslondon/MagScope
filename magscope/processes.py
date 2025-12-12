@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, ABCMeta, abstractmethod
 from ctypes import c_int, c_uint8
+from dataclasses import dataclass
 from multiprocessing import Event, Process, Value
 import sys
 import traceback
@@ -13,9 +14,10 @@ from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import (CommandRegistry, Delivery, UnknownCommandError, command_kwargs,
                           drain_pipe_until_quit, register_ipc_command)
 from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
-                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
-                                   SetAcquisitionModeCommand, SetAcquisitionOnCommand,
-                                   SetBeadRoisCommand, SetSettingsCommand)
+                                   RequestFocusStatusCommand, SetAcquisitionDirCommand,
+                                   SetAcquisitionDirOnCommand, SetAcquisitionModeCommand,
+                                   SetAcquisitionOnCommand, SetBeadRoisCommand,
+                                   SetSettingsCommand, UpdateFocusStatusCommand)
 from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, register_script_command
 
@@ -29,6 +31,13 @@ if TYPE_CHECKING:
     ValueTypeUI8 = Synchronized[int]
     from magscope.camera import CameraBase
     from magscope.hardware import HardwareManagerBase
+
+
+@dataclass(frozen=True)
+class FocusStatus:
+    position: float
+    min_position: float
+    max_position: float
 
 
 class InterprocessValues:
@@ -72,6 +81,8 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self.bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
         self.camera_type: type[CameraBase] | None = None
         self.hardware_types: dict[str, type[HardwareManagerBase]] = {}
+        self.focus_motor_name: str | None = None
+        self.focus_status: FocusStatus | None = None
         self.locks: dict[str, LockType] | None = None
         self._magscope_quitting: EventType | None = None
         self.name: str = type(self).__name__ # Read-only
@@ -97,6 +108,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         *,
         camera_type: type[CameraBase] | None,
         hardware_types: dict[str, type[HardwareManagerBase]],
+        focus_motor_name: str | None,
         quitting_event: EventType,
         settings: MagScopeSettings,
         shared_values: InterprocessValues,
@@ -112,6 +124,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         """
         self.camera_type = camera_type
         self.hardware_types = hardware_types
+        self.focus_motor_name = focus_motor_name
         self._magscope_quitting = quitting_event
         self.settings = settings.clone()
         self.shared_values = shared_values
@@ -239,6 +252,24 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
             )
 
         handler(**command_kwargs(command))
+
+    def request_focus_status(self) -> None:
+        """Request an updated focus status broadcast from the focus motor."""
+
+        if self.focus_motor_name is None:
+            return
+
+        self.send_ipc(RequestFocusStatusCommand())
+
+    @register_ipc_command(UpdateFocusStatusCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    def update_focus_status(self, position: float, min_position: float, max_position: float):
+        """Cache the most recent focus motor status."""
+
+        self.focus_status = FocusStatus(
+            position=position,
+            min_position=min_position,
+            max_position=max_position,
+        )
 
     @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     @register_script_command(SetAcquisitionDirCommand)
