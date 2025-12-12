@@ -976,6 +976,7 @@ class TrackingOptionsPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Tracking Options', collapsed_by_default=True)
         self._current_options: dict[str, Any] = copy.deepcopy(self._DEFAULTS)
+        self._last_options_update: datetime.datetime | None = None
 
         note = QLabel(
             textwrap.dedent(
@@ -1091,6 +1092,8 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.status_label = FlashLabel()
         self.layout().addWidget(self.status_label)
 
+        self.status_label.setText(self._format_last_updated_text())
+
         self._update_value_labels()
         self._sync_fft_enabled_state()
 
@@ -1161,7 +1164,13 @@ class TrackingOptionsPanel(ControlPanelBase):
         if populate_inputs:
             self._populate_inputs_from_options()
         self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
-        self.status_label.setText(message)
+        self._last_options_update = datetime.datetime.now()
+        self.status_label.setText(f"{message}. {self._format_last_updated_text()}")
+
+    def _format_last_updated_text(self) -> str:
+        if self._last_options_update is None:
+            return 'Last Updated: '
+        return f"Last Updated: {self._last_options_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
     def _populate_inputs_from_options(self) -> None:
         self.iterations.lineedit.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
