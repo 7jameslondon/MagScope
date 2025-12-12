@@ -17,16 +17,16 @@
       - Keep import statements at the top of the file, after any module-level docstring and before other code.
 
 # Circular Import Safety
-   - When adjusting imports, double-check that reordering does not change when modules are first executed. Many packages (notably `magscope.gui`) rely on specific initialization order, so moving an import between groups can introduce circular dependencies.
+   - When adjusting imports, double-check that reordering does not change when modules are first executed. Many packages (notably `magscope.ui`) rely on specific initialization order, so moving an import between groups can introduce circular dependencies.
    - Prefer importing from a module that defines the symbol directly instead of going through package-level re-exports when there is any risk of a cycle (e.g., import `AcquisitionMode` from `magscope.utils`, not from `magscope`).
    - If you must refactor imports across modules, run `python -c "import magscope"` locally to confirm no circular import errors are introduced.
 
 # Project overview
-   You are working on a scientific Python application called MagScope. MagScope is a GUI-driven microscope control and acquisition framework for magnetic-tweezers experiments. It uses multiple manager processes (e.g., CameraManager, BeadLockManager, VideoProcessorManager, ScriptManager, WindowManager and hardware managers) that subclass ManagerProcessBase and run in separate multiprocessing.Process instances.
+   You are working on a scientific Python application called MagScope. MagScope is a GUI-driven microscope control and acquisition framework for magnetic-tweezers experiments. It uses multiple manager processes (e.g., CameraManager, BeadLockManager, VideoProcessorManager, ScriptManager, UIManager and hardware managers) that subclass ManagerProcessBase and run in separate multiprocessing.Process instances.
 
    Shared state is stored in ring buffers and matrices backed by shared memory (VideoBuffer, MatrixBuffer, InterprocessValues) with per-buffer locks. Processes exchange commands and status via Message objects sent over multiprocessing.Pipe connections created by create_pipes. The MagScope class in scope.py is the top-level orchestrator: it constructs managers, shared buffers, locks, and pipes, calls configure_shared_resources(...) on each manager, runs the main IPC loop, and supervises shutdown.
 
-   The GUI lives in WindowManager, which runs a Qt event loop and uses timers to pull images from VideoBuffer, overlay bead tracks from MatrixBuffer, and update plots and control panels. Cameras implement CameraBase (e.g., DummyCameraBeads) and are managed by CameraManager. Video processing is handled by VideoProcessorManager and VideoWorker, which read stacks from VideoBuffer, call MagTrack to compute bead positions/profiles (CPU/GPU), and write into MatrixBuffer.
+   The GUI lives in UIManager, which runs a Qt event loop and uses timers to pull images from VideoBuffer, overlay bead tracks from MatrixBuffer, and update plots and control panels. Cameras implement CameraBase (e.g., DummyCameraBeads) and are managed by CameraManager. Video processing is handled by VideoProcessorManager and VideoWorker, which read stacks from VideoBuffer, call MagTrack to compute bead positions/profiles (CPU/GPU), and write into MatrixBuffer.
 
 # Global constraints for all changes
    - Preserve all existing user-visible behavior, public APIs, configuration formats, and on-disk file formats unless explicitly instructed otherwise.

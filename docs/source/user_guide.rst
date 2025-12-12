@@ -30,7 +30,7 @@ Alternatively, you can specify the number of windows between 1-3 using the follo
    import magscope
 
    scope = magscope.MagScope()
-   scope.window_manager.n_windows = 1
+   scope.ui_manager.n_windows = 1
    scope.start()
 
 .. list-table::
