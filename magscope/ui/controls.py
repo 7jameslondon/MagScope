@@ -7,9 +7,9 @@ import textwrap
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import numpy as np
 from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QFont, QPalette, QTextOption
 from PyQt6.QtWidgets import (
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import yaml
 
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
@@ -1067,6 +1068,16 @@ class TrackingOptionsPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.lookup_n_local)
 
+        file_buttons_row = QHBoxLayout()
+        load_button = QPushButton('Load')
+        load_button.clicked.connect(self._on_load_clicked)  # type: ignore
+        save_button = QPushButton('Save')
+        save_button.clicked.connect(self._on_save_clicked)  # type: ignore
+        file_buttons_row.addWidget(load_button)
+        file_buttons_row.addWidget(save_button)
+        file_buttons_row.addStretch(1)
+        self.layout().addLayout(file_buttons_row)
+
         buttons_row = QHBoxLayout()
         apply_button = QPushButton('Apply')
         apply_button.clicked.connect(self.apply_options)  # type: ignore
@@ -1142,6 +1153,217 @@ class TrackingOptionsPanel(ControlPanelBase):
         self._current_options['use fft_profile'] = value
         self._sync_fft_enabled_state()
 
+    def _set_options(self, options: dict[str, Any], message: str, *, populate_inputs: bool = False) -> None:
+        self._current_options = copy.deepcopy(options)
+        self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+        self._update_value_labels()
+        self._sync_fft_enabled_state()
+        if populate_inputs:
+            self._populate_inputs_from_options()
+        self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
+        self.status_label.setText(message)
+
+    def _populate_inputs_from_options(self) -> None:
+        self.iterations.lineedit.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
+        self.line_ratio.lineedit.setText(str(self._current_options['auto_conv_multiline_sub_pixel']['line_ratio']))
+        self.n_local.lineedit.setText(str(self._current_options['auto_conv_multiline_sub_pixel']['n_local']))
+        self.fft_oversample.lineedit.setText(str(self._current_options['fft_profile']['oversample']))
+        self.fft_rmin.lineedit.setText(str(self._current_options['fft_profile']['rmin']))
+        self.fft_rmax.lineedit.setText(str(self._current_options['fft_profile']['rmax']))
+        self.fft_gaus_factor.lineedit.setText(str(self._current_options['fft_profile']['gaus_factor']))
+        self.radial_oversample.lineedit.setText(str(self._current_options['radial_profile']['oversample']))
+        self.lookup_n_local.lineedit.setText(str(self._current_options['lookup_z']['n_local']))
+
+    def _coerce_int_value(
+        self,
+        raw: Any,
+        *,
+        name: str,
+        fallback: int,
+        minimum: int | None = None,
+        enforce_odd: bool = False,
+    ) -> int:
+        if raw is None:
+            return fallback
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f'{name} must be an integer')
+        if minimum is not None and value < minimum:
+            raise ValueError(f'{name} must be at least {minimum}')
+        if enforce_odd and value % 2 == 0:
+            value += 1
+        return value
+
+    def _coerce_float_value(
+        self,
+        raw: Any,
+        *,
+        name: str,
+        fallback: float,
+        minimum: float | None = None,
+    ) -> float:
+        if raw is None:
+            return fallback
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f'{name} must be a number')
+        if minimum is not None and value < minimum:
+            raise ValueError(f'{name} must be at least {minimum}')
+        return value
+
+    def _coerce_bool_value(self, raw: Any, *, fallback: bool) -> bool:
+        if raw is None:
+            return fallback
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            normalized = raw.strip().lower()
+            if normalized in {'true', '1', 'yes'}:
+                return True
+            if normalized in {'false', '0', 'no'}:
+                return False
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        raise ValueError('use fft_profile must be a boolean')
+
+    def _load_options_from_mapping(self, loaded: Any) -> dict[str, Any]:
+        if loaded is None:
+            raise ValueError('Tracking options file is empty')
+        if not isinstance(loaded, dict):
+            raise ValueError('Tracking options file must be a YAML mapping')
+
+        options = copy.deepcopy(self._DEFAULTS)
+
+        center_of_mass = loaded.get('center_of_mass')
+        if center_of_mass is not None:
+            if not isinstance(center_of_mass, dict):
+                raise ValueError('center_of_mass must be a mapping')
+            background = center_of_mass.get('background', options['center_of_mass']['background'])
+            if background not in {'none', 'mean', 'median'}:
+                raise ValueError('center_of_mass.background must be one of none, mean, median')
+            options['center_of_mass']['background'] = background
+
+        options['n auto_conv_multiline_sub_pixel'] = self._coerce_int_value(
+            loaded.get('n auto_conv_multiline_sub_pixel'),
+            name='n auto_conv_multiline_sub_pixel',
+            fallback=options['n auto_conv_multiline_sub_pixel'],
+            minimum=1,
+        )
+
+        auto_conv_multiline = loaded.get('auto_conv_multiline_sub_pixel')
+        if auto_conv_multiline is not None:
+            if not isinstance(auto_conv_multiline, dict):
+                raise ValueError('auto_conv_multiline_sub_pixel must be a mapping')
+            options['auto_conv_multiline_sub_pixel']['line_ratio'] = self._coerce_float_value(
+                auto_conv_multiline.get('line_ratio'),
+                name='auto_conv_multiline_sub_pixel.line_ratio',
+                fallback=options['auto_conv_multiline_sub_pixel']['line_ratio'],
+                minimum=0.0,
+            )
+            options['auto_conv_multiline_sub_pixel']['n_local'] = self._coerce_int_value(
+                auto_conv_multiline.get('n_local'),
+                name='auto_conv_multiline_sub_pixel.n_local',
+                fallback=options['auto_conv_multiline_sub_pixel']['n_local'],
+                minimum=3,
+                enforce_odd=True,
+            )
+
+        options['use fft_profile'] = self._coerce_bool_value(
+            loaded.get('use fft_profile'),
+            fallback=options['use fft_profile'],
+        )
+
+        fft_profile = loaded.get('fft_profile')
+        if fft_profile is not None:
+            if not isinstance(fft_profile, dict):
+                raise ValueError('fft_profile must be a mapping')
+            options['fft_profile']['oversample'] = self._coerce_int_value(
+                fft_profile.get('oversample'),
+                name='fft_profile.oversample',
+                fallback=options['fft_profile']['oversample'],
+                minimum=1,
+            )
+            options['fft_profile']['rmin'] = self._coerce_float_value(
+                fft_profile.get('rmin'),
+                name='fft_profile.rmin',
+                fallback=options['fft_profile']['rmin'],
+                minimum=0.0,
+            )
+            options['fft_profile']['rmax'] = self._coerce_float_value(
+                fft_profile.get('rmax'),
+                name='fft_profile.rmax',
+                fallback=options['fft_profile']['rmax'],
+                minimum=0.0,
+            )
+            options['fft_profile']['gaus_factor'] = self._coerce_float_value(
+                fft_profile.get('gaus_factor'),
+                name='fft_profile.gaus_factor',
+                fallback=options['fft_profile']['gaus_factor'],
+                minimum=0.0,
+            )
+
+        radial_profile = loaded.get('radial_profile')
+        if radial_profile is not None:
+            if not isinstance(radial_profile, dict):
+                raise ValueError('radial_profile must be a mapping')
+            options['radial_profile']['oversample'] = self._coerce_int_value(
+                radial_profile.get('oversample'),
+                name='radial_profile.oversample',
+                fallback=options['radial_profile']['oversample'],
+                minimum=1,
+            )
+
+        lookup_z = loaded.get('lookup_z')
+        if lookup_z is not None:
+            if not isinstance(lookup_z, dict):
+                raise ValueError('lookup_z must be a mapping')
+            options['lookup_z']['n_local'] = self._coerce_int_value(
+                lookup_z.get('n_local'),
+                name='lookup_z.n_local',
+                fallback=options['lookup_z']['n_local'],
+                minimum=3,
+                enforce_odd=True,
+            )
+
+        return options
+
+    def _on_load_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Load tracking options',
+            '',
+            'YAML Files (*.yaml);;All Files (*)',
+        )
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as file:
+                loaded = yaml.safe_load(file)
+            options = self._load_options_from_mapping(loaded)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Tracking options', str(exc))
+            return
+        self._set_options(options, f'Loaded {os.path.basename(path)}', populate_inputs=True)
+
+    def _on_save_clicked(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            'Save tracking options',
+            'tracking_options.yaml',
+            'YAML Files (*.yaml);;All Files (*)',
+        )
+        if not path:
+            return
+        try:
+            with open(path, 'w', encoding='utf-8') as file:
+                yaml.safe_dump(self._current_options, file)
+        except OSError as exc:
+            QMessageBox.critical(self, 'Tracking options', str(exc))
+            return
+        self.status_label.setText(f'Saved to {os.path.basename(path)}')
+
     def apply_options(self) -> None:
         options = copy.deepcopy(self._current_options)
         options['center_of_mass']['background'] = self.background_combo.currentText()
@@ -1187,18 +1409,10 @@ class TrackingOptionsPanel(ControlPanelBase):
             lookup_n_local += 1
         options['lookup_z']['n_local'] = lookup_n_local
 
-        self._current_options = options
-        self._update_value_labels()
-        self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(options)))
-        self.status_label.setText('Tracking options updated')
+        self._set_options(options, 'Tracking options updated')
 
     def reset_defaults(self) -> None:
-        self._current_options = copy.deepcopy(self._DEFAULTS)
-        self.background_combo.setCurrentText(self._DEFAULTS['center_of_mass']['background'])
-        self._update_value_labels()
-        self._sync_fft_enabled_state()
-        self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
-        self.status_label.setText('Defaults restored')
+        self._set_options(copy.deepcopy(self._DEFAULTS), 'Defaults restored', populate_inputs=True)
 
 
 class ScriptPanel(ControlPanelBase):
