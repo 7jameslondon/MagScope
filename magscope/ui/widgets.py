@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem
                              QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
-    from magscope.gui.windows import WindowManager
+    from magscope.ui.ui import UIManager
 
 
 class LabeledLineEditWithValue(QWidget):
@@ -409,8 +409,8 @@ class GripSplitter(QSplitter):
 
 class BeadGraphic(QGraphicsRectItem):
 
-    def __init__(self, parent: WindowManager, id: int, x, y, width, view_scene):
-        self._parent: WindowManager = parent
+    def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
+        self._parent: UIManager = parent
         self.id: int = id
         self._is_moving: bool = False
         self._locked: bool

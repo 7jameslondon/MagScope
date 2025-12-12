@@ -32,9 +32,9 @@ invoking :meth:`MagScope.start`::
 
 ``MagScope`` constructs the following high-level pipeline:
 
-``CameraManager`` → ``VideoBuffer`` → ``VideoProcessorManager`` → ``WindowManager``
+``CameraManager`` → ``VideoBuffer`` → ``VideoProcessorManager`` → ``UIManager``
 and
-``BeadLockManager`` → ``MatrixBuffer`` → ``WindowManager``
+``BeadLockManager`` → ``MatrixBuffer`` → ``UIManager``
 
 Every manager receives shared locks, pipes, and configuration from the main
 process so that real-time video frames, bead tracking data, and scripted events
@@ -55,7 +55,7 @@ from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
-from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
+from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
@@ -105,7 +105,7 @@ class MagScope(metaclass=SingletonMeta):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self.video_processor_manager = VideoProcessorManager()
-        self.window_manager = WindowManager()
+        self.ui_manager = UIManager()
         self.script_manager = ScriptManager()
 
         self._hardware: dict[str, HardwareManagerBase] = {}
@@ -207,12 +207,12 @@ class MagScope(metaclass=SingletonMeta):
         self.command_registry.register_manager(hardware)
 
     def add_control(self, control_type: type(ControlPanelBase), column: int):
-        """Schedule a GUI control panel to be added when the window manager starts."""
-        self.window_manager.controls_to_add.append((control_type, column))
+        """Schedule a GUI control panel to be added when the UI manager starts."""
+        self.ui_manager.controls_to_add.append((control_type, column))
 
     def add_timeplot(self, plot: TimeSeriesPlotBase):
         """Schedule a time-series plot for inclusion in the GUI at startup."""
-        self.window_manager.plots_to_add.append(plot)
+        self.ui_manager.plots_to_add.append(plot)
 
     @property
     def print_ipc_commands(self) -> bool:
@@ -307,7 +307,7 @@ class MagScope(metaclass=SingletonMeta):
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,
-            self.window_manager,
+            self.ui_manager,
         ]
         proc_list.extend(self._hardware.values())
 

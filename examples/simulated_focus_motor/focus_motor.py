@@ -117,7 +117,7 @@ FOCUS_MOTOR_BUFFER_NAME: Final[str] = SimulatedFocusMotor.__name__
 class FocusMotorControls(magscope.ControlPanelBase):
     """Simple GUI controls for the simulated focus motor."""
 
-    def __init__(self, manager: magscope.WindowManager):
+    def __init__(self, manager: magscope.UIManager):
         super().__init__(title="Simulated Focus Motor", manager=manager)
 
         self._buffer = MatrixBuffer(

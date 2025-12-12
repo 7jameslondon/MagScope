@@ -1,7 +1,7 @@
-import magscope.gui
+import magscope.ui
 from magscope.camera import CameraBase, CameraManager
 from magscope.datatypes import MatrixBuffer
-from magscope.gui import ControlPanelBase, TimeSeriesPlotBase, WindowManager
+from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
 from magscope.ipc_commands import Command
