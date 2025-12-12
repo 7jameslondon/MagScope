@@ -1162,7 +1162,13 @@ class TrackingOptionsPanel(ControlPanelBase):
         self._current_options['use fft_profile'] = value
         self._sync_fft_enabled_state()
 
-    def _set_options(self, options: dict[str, Any], message: str, *, populate_inputs: bool = False) -> None:
+    def _set_options(
+        self,
+        options: dict[str, Any],
+        message: str | None = None,
+        *,
+        populate_inputs: bool = False,
+    ) -> None:
         self._current_options = copy.deepcopy(options)
         self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
         self._update_value_labels()
@@ -1171,7 +1177,10 @@ class TrackingOptionsPanel(ControlPanelBase):
             self._populate_inputs_from_options()
         self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
         self._last_options_update = datetime.datetime.now()
-        self.status_label.setText(f"{message}. {self._format_last_updated_text()}")
+        if message:
+            self.status_label.setText(f"{message}; {self._format_last_updated_text()}")
+        else:
+            self.status_label.setText(self._format_last_updated_text())
 
     def _format_last_updated_text(self) -> str:
         if self._last_options_update is None:
@@ -1424,7 +1433,7 @@ class TrackingOptionsPanel(ControlPanelBase):
             lookup_n_local += 1
         options['lookup_z']['n_local'] = lookup_n_local
 
-        self._set_options(options, 'Tracking options updated')
+        self._set_options(options)
 
     def reset_defaults(self) -> None:
         self._set_options(copy.deepcopy(self._DEFAULTS), 'Defaults restored', populate_inputs=True)
