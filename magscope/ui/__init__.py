@@ -20,6 +20,7 @@ from magscope.ui.controls import (
     PlotSettingsPanel,
     ScriptPanel,
     StatusPanel,
+    TrackingOptionsPanel,
     MagScopeSettingsPanel,
 )
 from magscope.ui.ui import Controls, UIManager

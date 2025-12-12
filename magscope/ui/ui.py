@@ -47,6 +47,7 @@ from magscope.ui.controls import (
     PlotSettingsPanel,
     ProfilePanel,
     ResetPanel,
+    TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationPanel,
     ZLUTPanel,
@@ -938,6 +939,7 @@ class Controls(QWidget):
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
+        self.tracking_options_panel = TrackingOptionsPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
         self.profile_panel = ProfilePanel(self.manager)
         self.script_panel = ScriptPanel(self.manager)
@@ -958,6 +960,7 @@ class Controls(QWidget):
             ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
+            ("TrackingOptionsPanel", self.tracking_options_panel, "left", True),
             ("HistogramPanel", self.histogram_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
