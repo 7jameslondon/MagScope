@@ -1069,25 +1069,31 @@ class TrackingOptionsPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.lookup_n_local)
 
-        file_buttons_row = QHBoxLayout()
+        button_layout = QVBoxLayout()
+        self.layout().addLayout(button_layout)
+
+        top_row = QHBoxLayout()
+        button_layout.addLayout(top_row)
+
         load_button = QPushButton('Load')
         load_button.clicked.connect(self._on_load_clicked)  # type: ignore
+        top_row.addWidget(load_button)
+
         save_button = QPushButton('Save')
         save_button.clicked.connect(self._on_save_clicked)  # type: ignore
-        file_buttons_row.addWidget(load_button)
-        file_buttons_row.addWidget(save_button)
-        file_buttons_row.addStretch(1)
-        self.layout().addLayout(file_buttons_row)
+        top_row.addWidget(save_button)
 
-        buttons_row = QHBoxLayout()
-        apply_button = QPushButton('Apply')
-        apply_button.clicked.connect(self.apply_options)  # type: ignore
-        reset_button = QPushButton('Reset to defaults')
+        reset_button = QPushButton('Set to Defaults')
         reset_button.clicked.connect(self.reset_defaults)  # type: ignore
-        buttons_row.addWidget(apply_button)
-        buttons_row.addWidget(reset_button)
-        buttons_row.addStretch(1)
-        self.layout().addLayout(buttons_row)
+        top_row.addWidget(reset_button)
+
+        bottom_row = QHBoxLayout()
+        button_layout.addLayout(bottom_row)
+
+        apply_button = QPushButton('Apply Changes')
+        apply_button.clicked.connect(self.apply_options)  # type: ignore
+        apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        bottom_row.addWidget(apply_button)
 
         self.status_label = FlashLabel()
         self.layout().addWidget(self.status_label)
