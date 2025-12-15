@@ -31,6 +31,7 @@ class PlotWorker(QObject):
     reference_bead_signal = pyqtSignal(int)
     stop_signal = pyqtSignal()
     figure_size_signal = pyqtSignal(int, int)
+    relative_time_settings_signal = pyqtSignal(bool, object)
 
     def __init__(self):
         """ Called before the parent process is started """
@@ -42,6 +43,8 @@ class PlotWorker(QObject):
         self._is_running: bool = False
         self.plots = []
         self.limits: dict[str, tuple[float, float]] = {}
+        self.use_relative_time: bool = False
+        self.relative_time_window: float | None = None
         self.selected_bead: int | None = 0
         self.reference_bead: int | None = None
         self.n_plots: int
@@ -59,6 +62,7 @@ class PlotWorker(QObject):
         self.reference_bead_signal.connect(self._set_reference_bead)
         self.stop_signal.connect(self._stop)
         self.figure_size_signal.connect(self._update_figure_size)
+        self.relative_time_settings_signal.connect(self._set_relative_time_settings)
 
         # Thread safety
         self.mutex: QMutex
@@ -146,6 +150,10 @@ class PlotWorker(QObject):
 
     def set_locks(self, locks: dict[str, LockType]):
         self.locks = locks
+
+    def _set_relative_time_settings(self, enabled: bool, window: float | None):
+        self.use_relative_time = enabled and window is not None
+        self.relative_time_window = window if self.use_relative_time else None
 
     def _stop(self):
         self._is_running = False
@@ -255,8 +263,11 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
         v = v[selection]
 
         # Remove value outside of axis limits
-        xmin = self.parent.limits.get('Time', (None, None))[0]
-        xmax = self.parent.limits.get('Time', (None, None))[1]
+        xmin, xmax = self.parent.limits.get('Time', (None, None))
+        if self.parent.use_relative_time and self.parent.relative_time_window is not None:
+            current_time = time()
+            xmin = current_time - self.parent.relative_time_window
+            xmax = current_time
         ymin = self.parent.limits.get(self.ylabel, (None, None))[0]
         ymax = self.parent.limits.get(self.ylabel, (None, None))[1]
         selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf)) & ((ymin or -np.inf) <= v) & (v <= (ymax or np.inf))

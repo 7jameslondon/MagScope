@@ -772,6 +772,21 @@ class PlotSettingsPanel(ControlPanelBase):
         self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
         self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
 
+        # Relative time window
+        self.relative_time_checkbox = LabeledCheckbox(
+            label_text='Use relative time window',
+            default=False,
+            callback=self.relative_time_toggle_callback,
+        )
+        self.layout().addWidget(self.relative_time_checkbox)
+
+        self.relative_time_window = LabeledLineEdit(
+            label_text='Relative window (s or H:M:S)',
+            default='300',
+            callback=self.relative_time_window_callback,
+        )
+        self.layout().addWidget(self.relative_time_window)
+
         # Show beads on view
         self.beads_in_view_on = LabeledCheckbox(
             label_text='Show beads on video? (slow)',
@@ -795,6 +810,8 @@ class PlotSettingsPanel(ControlPanelBase):
             callback=self.beads_in_view_marker_size_callback,
         )
         self.layout().addWidget(self.beads_in_view_marker_size)
+
+        self._emit_relative_time_settings()
 
     def selected_bead_callback(self, value):
         try:
@@ -857,6 +874,50 @@ class PlotSettingsPanel(ControlPanelBase):
         except ValueError:
             size = 100
         self.manager.beads_in_view_marker_size = size
+
+    def relative_time_toggle_callback(self):
+        self._emit_relative_time_settings()
+
+    def relative_time_window_callback(self, _=None):
+        self._emit_relative_time_settings()
+
+    def _emit_relative_time_settings(self):
+        enabled = self.relative_time_checkbox.checkbox.isChecked()
+        window = self._parse_duration_seconds(self.relative_time_window.lineedit.text())
+        self.manager.plot_worker.relative_time_settings_signal.emit(enabled, window)
+
+    @staticmethod
+    def _parse_duration_seconds(raw_value: str) -> float | None:
+        if raw_value is None:
+            return None
+
+        stripped_value = raw_value.strip()
+        if stripped_value == '':
+            return None
+
+        try:
+            return float(stripped_value)
+        except ValueError:
+            pass
+
+        try:
+            parts = [float(part) for part in stripped_value.replace('.', ':').split(':')]
+        except ValueError:
+            return None
+
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+        elif len(parts) == 2:
+            hours = 0
+            minutes, seconds = parts
+        elif len(parts) == 1:
+            hours = 0
+            minutes = 0
+            seconds = parts[0]
+        else:
+            return None
+
+        return hours * 3600 + minutes * 60 + seconds
 
 
 class ProfilePanel(ControlPanelBase):
