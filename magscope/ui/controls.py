@@ -772,13 +772,21 @@ class PlotSettingsPanel(ControlPanelBase):
         self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
         self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
 
+        bead_view_group = CollapsibleGroupBox(
+            title='Bead overlay options',
+            collapsed=True,
+        )
+        bead_view_layout = QVBoxLayout()
+        bead_view_layout.setContentsMargins(0, 0, 0, 0)
+        bead_view_layout.setSpacing(4)
+
         # Show beads on view
         self.beads_in_view_on = LabeledCheckbox(
             label_text='Show beads on video? (slow)',
             default=False,
             callback=self.beads_in_view_on_callback,
         )
-        self.layout().addWidget(self.beads_in_view_on)
+        bead_view_layout.addWidget(self.beads_in_view_on)
 
         # Number of timepoints to show
         self.beads_in_view_count = LabeledLineEdit(
@@ -786,7 +794,7 @@ class PlotSettingsPanel(ControlPanelBase):
             default='1',
             callback=self.beads_in_view_count_callback,
         )
-        self.layout().addWidget(self.beads_in_view_count)
+        bead_view_layout.addWidget(self.beads_in_view_count)
 
         # Marker size
         self.beads_in_view_marker_size = LabeledLineEdit(
@@ -794,7 +802,10 @@ class PlotSettingsPanel(ControlPanelBase):
             default='20',
             callback=self.beads_in_view_marker_size_callback,
         )
-        self.layout().addWidget(self.beads_in_view_marker_size)
+        bead_view_layout.addWidget(self.beads_in_view_marker_size)
+
+        bead_view_group.setContentLayout(bead_view_layout)
+        self.layout().addWidget(bead_view_group)
 
     def selected_bead_callback(self, value):
         try:
