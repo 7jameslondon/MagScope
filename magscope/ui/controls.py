@@ -793,22 +793,23 @@ class PlotSettingsPanel(ControlPanelBase):
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.translate(size / 2, size / 2)
-            rotation = {
-                Qt.ArrowType.RightArrow: -90.0,
-                Qt.ArrowType.DownArrow: 180.0,
-            }.get(direction, 0.0)
-            painter.rotate(rotation)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(self.palette().color(QPalette.ColorRole.WindowText))
-            painter.drawPolygon(
-                QPolygonF(
-                    [
-                        QPointF(0, -2 * height / 3),
-                        QPointF(-side / 2, height / 3),
-                        QPointF(side / 2, height / 3),
-                    ]
-                )
-            )
+
+            if direction == Qt.ArrowType.DownArrow:
+                points = [
+                    QPointF(0, height),
+                    QPointF(-side / 2, 0),
+                    QPointF(side / 2, 0),
+                ]
+            else:
+                points = [
+                    QPointF(height, 0),
+                    QPointF(0, -side / 2),
+                    QPointF(0, side / 2),
+                ]
+
+            painter.drawPolygon(QPolygonF(points))
             painter.end()
 
             return QIcon(pixmap)
@@ -822,7 +823,7 @@ class PlotSettingsPanel(ControlPanelBase):
         )
 
         bead_options_toggle = QToolButton()
-        bead_options_toggle.setText('Display bead centers (Advanced Options)')
+        bead_options_toggle.setText('Advanced Options: Display bead centers')
         bead_options_toggle.setCheckable(True)
         bead_options_toggle.setChecked(False)
         bead_options_toggle.setIcon(right_triangle_icon)
