@@ -742,22 +742,6 @@ class PlotSettingsPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.reference_bead)
 
-        time_mode_row = QHBoxLayout()
-        time_mode_row.addWidget(QLabel('Time axis mode'))
-        self.time_mode = QComboBox()
-        self.time_mode.addItems(['Absolute', 'Relative'])
-        self.time_mode.currentTextChanged.connect(self.time_mode_callback)
-        time_mode_row.addWidget(self.time_mode)
-        self.layout().addLayout(time_mode_row)
-
-        self.relative_time_window = LabeledLineEdit(
-            label_text='Relative window (minutes)',
-            default='5',
-            callback=self.relative_time_window_callback,
-        )
-        self.relative_time_window.setEnabled(False)
-        self.layout().addWidget(self.relative_time_window)
-
         # =============== Limits ===============
         self.limits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
 
@@ -788,16 +772,53 @@ class PlotSettingsPanel(ControlPanelBase):
             self.grid_layout.addWidget(self.limits[ylabel][0], row_index, 1)
             self.grid_layout.addWidget(self.limits[ylabel][1], row_index, 2)
 
+        # Time axis mode selector sits between Z and Time rows
+        row_index += 1
+        self.grid_layout.addWidget(QLabel('Time axis mode'), row_index, 0)
+        self.time_mode = QComboBox()
+        self.time_mode.addItems(['Absolute', 'Relative'])
+        self.time_mode.currentTextChanged.connect(self.time_mode_callback)
+        self.grid_layout.addWidget(self.time_mode, row_index, 1, 1, 2)
+
         # Last row for "Time"
         row_index += 1
-        self.limits['Time'] = (QLineEdit(), QLineEdit())
-        self.limits['Time'][0].textChanged.connect(self.limits_callback)
-        self.limits['Time'][1].textChanged.connect(self.limits_callback)
-        self.limits['Time'][0].setPlaceholderText('auto')
-        self.limits['Time'][1].setPlaceholderText('auto')
-        self.grid_layout.addWidget(QLabel('Time (H:M:S)'), row_index, 0)
-        self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
-        self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
+        self.time_label = QLabel('Time (H:M:S)')
+        self.grid_layout.addWidget(self.time_label, row_index, 0)
+
+        # Absolute time inputs (min/max)
+        time_absolute_widget = QWidget()
+        time_absolute_layout = QHBoxLayout()
+        time_absolute_layout.setContentsMargins(0, 0, 0, 0)
+        time_absolute_layout.setSpacing(4)
+        time_absolute_widget.setLayout(time_absolute_layout)
+
+        self.time_limits_absolute = (QLineEdit(), QLineEdit())
+        self.time_limits_absolute[0].setPlaceholderText('auto')
+        self.time_limits_absolute[1].setPlaceholderText('auto')
+        self.time_limits_absolute[0].textChanged.connect(self.limits_callback)
+        self.time_limits_absolute[1].textChanged.connect(self.limits_callback)
+        time_absolute_layout.addWidget(self.time_limits_absolute[0])
+        time_absolute_layout.addWidget(self.time_limits_absolute[1])
+
+        # Relative time input (single window box)
+        time_relative_widget = QWidget()
+        time_relative_layout = QHBoxLayout()
+        time_relative_layout.setContentsMargins(0, 0, 0, 0)
+        time_relative_layout.setSpacing(4)
+        time_relative_widget.setLayout(time_relative_layout)
+
+        self.time_relative_window = QLineEdit('00:05:00')
+        self.time_relative_window.textChanged.connect(self.relative_time_window_callback)
+        time_relative_layout.addWidget(self.time_relative_window)
+
+        self.time_inputs_stack = QStackedLayout()
+        self.time_inputs_stack.addWidget(time_absolute_widget)
+        self.time_inputs_stack.addWidget(time_relative_widget)
+        time_inputs_container = QWidget()
+        time_inputs_container.setLayout(self.time_inputs_stack)
+
+        self.grid_layout.addWidget(time_inputs_container, row_index, 1, 1, 2)
+        self.limits['Time'] = self.time_limits_absolute
 
         def _triangle_icon(direction: Qt.ArrowType) -> QIcon:
             side = 9.0
@@ -916,19 +937,27 @@ class PlotSettingsPanel(ControlPanelBase):
     def time_mode_callback(self, value: str):
         mode = value.lower()
         is_relative = mode == 'relative'
-        self.relative_time_window.setEnabled(is_relative)
+        self.time_inputs_stack.setCurrentIndex(1 if is_relative else 0)
+        self.time_label.setText('Relative Time (H:M:S)' if is_relative else 'Time (H:M:S)')
         self.manager.plot_worker.time_mode_signal.emit(mode)
         if is_relative:
-            self.relative_time_window_callback(self.relative_time_window.lineedit.text())
+            self.relative_time_window_callback(self.time_relative_window.text())
+        else:
+            self.limits_callback(None)
 
     def relative_time_window_callback(self, _value):
-        text = self.relative_time_window.lineedit.text()
+        text = self.time_relative_window.text()
+        window_seconds: float | None
         try:
-            minutes = float(text)
-            if minutes > 0:
-                window_seconds: float | None = minutes * 60
+            if ':' in text or '.' in text:
+                time_parts = text.replace('.', ':').split(':')
+                # Pad to hours, minutes, seconds
+                time_parts = ['0'] * (3 - len(time_parts)) + time_parts
+                hours, minutes, seconds = map(int, time_parts)
+                window_seconds = hours * 3600 + minutes * 60 + seconds
             else:
-                window_seconds = None
+                minutes = float(text)
+                window_seconds = minutes * 60 if minutes > 0 else None
         except (TypeError, ValueError):
             window_seconds = None
         self.manager.plot_worker.relative_window_signal.emit(window_seconds)
@@ -941,14 +970,17 @@ class PlotSettingsPanel(ControlPanelBase):
             parsed_limits: list[float | None] = []
             for raw_value in raw_values:
                 if axis_label == 'Time':
-                    try:
-                        time_parts = raw_value.replace('.', ':').split(':')
-                        parsed_value = datetime.datetime.combine(
-                            today,
-                            datetime.time(*map(int, time_parts)),
-                        ).timestamp()
-                    except (TypeError, ValueError):
+                    if self.time_mode.currentText().lower() == 'relative':
                         parsed_value = None
+                    else:
+                        try:
+                            time_parts = raw_value.replace('.', ':').split(':')
+                            parsed_value = datetime.datetime.combine(
+                                today,
+                                datetime.time(*map(int, time_parts)),
+                            ).timestamp()
+                        except (TypeError, ValueError):
+                            parsed_value = None
                 else:
                     try:
                         parsed_value = float(raw_value)
