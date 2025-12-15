@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import math
 import os
 import textwrap
 import time
@@ -10,8 +11,17 @@ from typing import TYPE_CHECKING, Any
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
-from PyQt6.QtCore import QSettings, QUrl, Qt, QVariant, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QFont, QPalette, QTextOption
+from PyQt6.QtCore import QPointF, QSettings, QSize, QUrl, Qt, QVariant, pyqtSignal
+from PyQt6.QtGui import (
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QPalette,
+    QPainter,
+    QPixmap,
+    QPolygonF,
+    QTextOption,
+)
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QComboBox,
@@ -23,10 +33,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
     QPushButton,
+    QSizePolicy,
     QStackedLayout,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -772,13 +783,76 @@ class PlotSettingsPanel(ControlPanelBase):
         self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
         self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
 
+        def _triangle_icon(direction: Qt.ArrowType) -> QIcon:
+            side = 9.0
+            height = math.sqrt(3) / 2 * side
+            size = int(math.ceil(max(side, height))) + 4
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.translate(size / 2, size / 2)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.palette().color(QPalette.ColorRole.WindowText))
+
+            if direction == Qt.ArrowType.DownArrow:
+                points = [
+                    QPointF(0, height),
+                    QPointF(-side / 2, 0),
+                    QPointF(side / 2, 0),
+                ]
+            else:
+                points = [
+                    QPointF(height, 0),
+                    QPointF(0, -side / 2),
+                    QPointF(0, side / 2),
+                ]
+
+            painter.drawPolygon(QPolygonF(points))
+            painter.end()
+
+            return QIcon(pixmap)
+
+        right_triangle_icon = _triangle_icon(Qt.ArrowType.RightArrow)
+        down_triangle_icon = _triangle_icon(Qt.ArrowType.DownArrow)
+        icon_size = (
+            right_triangle_icon.availableSizes()[0]
+            if right_triangle_icon.availableSizes()
+            else QSize(12, 12)
+        )
+
+        bead_options_toggle = QToolButton()
+        bead_options_toggle.setText('Advanced Options: Display bead centers')
+        bead_options_toggle.setCheckable(True)
+        bead_options_toggle.setChecked(False)
+        bead_options_toggle.setIcon(right_triangle_icon)
+        bead_options_toggle.setIconSize(icon_size)
+        bead_options_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        subtitle_font = bead_options_toggle.font()
+        subtitle_font.setPointSize(subtitle_font.pointSize() - 1)
+        subtitle_font.setBold(False)
+        bead_options_toggle.setFont(subtitle_font)
+        bead_options_toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.layout().addWidget(bead_options_toggle)
+
+        bead_view_container = QWidget()
+        bead_view_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        bead_view_layout = QVBoxLayout()
+        bead_view_layout.setContentsMargins(0, 0, 0, 0)
+        bead_view_layout.setSpacing(4)
+        bead_view_container.setLayout(bead_view_layout)
+
         # Show beads on view
         self.beads_in_view_on = LabeledCheckbox(
             label_text='Show beads on video? (slow)',
             default=False,
             callback=self.beads_in_view_on_callback,
         )
-        self.layout().addWidget(self.beads_in_view_on)
+        bead_view_layout.addWidget(self.beads_in_view_on)
 
         # Number of timepoints to show
         self.beads_in_view_count = LabeledLineEdit(
@@ -786,7 +860,7 @@ class PlotSettingsPanel(ControlPanelBase):
             default='1',
             callback=self.beads_in_view_count_callback,
         )
-        self.layout().addWidget(self.beads_in_view_count)
+        bead_view_layout.addWidget(self.beads_in_view_count)
 
         # Marker size
         self.beads_in_view_marker_size = LabeledLineEdit(
@@ -794,7 +868,17 @@ class PlotSettingsPanel(ControlPanelBase):
             default='20',
             callback=self.beads_in_view_marker_size_callback,
         )
-        self.layout().addWidget(self.beads_in_view_marker_size)
+        bead_view_layout.addWidget(self.beads_in_view_marker_size)
+        bead_view_container.setVisible(False)
+
+        def _toggle_bead_overlay_options(checked: bool) -> None:
+            bead_options_toggle.setIcon(
+                down_triangle_icon if checked else right_triangle_icon)
+            bead_view_container.setVisible(checked)
+            self.groupbox.layout().activate()
+
+        bead_options_toggle.toggled.connect(_toggle_bead_overlay_options)
+        self.layout().addWidget(bead_view_container)
 
     def selected_bead_callback(self, value):
         try:
