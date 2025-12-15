@@ -1940,6 +1940,8 @@ class ZLockPanel(ControlPanelBase):
         except ValueError:
             return
 
+        self.update_target(target_nm)
+
         # Send value
         command = SetZLockTargetCommand(value=target_nm)
         self.manager.send_ipc(command)
