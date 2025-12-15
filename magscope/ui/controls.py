@@ -776,6 +776,12 @@ class PlotSettingsPanel(ControlPanelBase):
             title='Bead overlay options',
             collapsed=True,
         )
+        subtitle_font = bead_view_group.toggle_button.font()
+        subtitle_font.setPointSize(subtitle_font.pointSize() - 1)
+        subtitle_font.setBold(False)
+        bead_view_group.toggle_button.setFont(subtitle_font)
+        bead_view_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         bead_view_layout = QVBoxLayout()
         bead_view_layout.setContentsMargins(0, 0, 0, 0)
         bead_view_layout.setSpacing(4)
@@ -805,6 +811,9 @@ class PlotSettingsPanel(ControlPanelBase):
         bead_view_layout.addWidget(self.beads_in_view_marker_size)
 
         bead_view_group.setContentLayout(bead_view_layout)
+        bead_view_group.toggle_button.toggled.connect(
+            lambda _: self.groupbox.adjustSize())
+        bead_view_group.animation.finished.connect(self.groupbox.adjustSize)
         self.layout().addWidget(bead_view_group)
 
     def selected_bead_callback(self, value):
