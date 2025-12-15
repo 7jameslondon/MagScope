@@ -949,15 +949,19 @@ class PlotSettingsPanel(ControlPanelBase):
         text = self.time_relative_window.text()
         window_seconds: float | None
         try:
-            if ':' in text or '.' in text:
-                time_parts = text.replace('.', ':').split(':')
-                # Pad to hours, minutes, seconds
-                time_parts = ['0'] * (3 - len(time_parts)) + time_parts
+            time_parts = text.replace('.', ':').split(':')
+            if len(time_parts) == 1:
+                hours, minutes, seconds = int(time_parts[0]), 0, 0
+            elif len(time_parts) == 2:
+                hours, minutes = map(int, time_parts)
+                seconds = 0
+            elif len(time_parts) == 3:
                 hours, minutes, seconds = map(int, time_parts)
-                window_seconds = hours * 3600 + minutes * 60 + seconds
             else:
-                minutes = float(text)
-                window_seconds = minutes * 60 if minutes > 0 else None
+                raise ValueError
+            window_seconds = hours * 3600 + minutes * 60 + seconds
+            if window_seconds <= 0:
+                window_seconds = None
         except (TypeError, ValueError):
             window_seconds = None
         self.manager.plot_worker.relative_window_signal.emit(window_seconds)
