@@ -1877,7 +1877,7 @@ class ZLockPanel(ControlPanelBase):
         # Target
         self.target = LabeledLineEditWithValue(
             label_text='Target (nm)',
-            default='',
+            default='Not set',
             callback=self.target_callback,
             widths=(75, 100, 0),
         )
@@ -1995,7 +1995,8 @@ class ZLockPanel(ControlPanelBase):
 
     def update_target(self, value: float):
         if value is None:
-            value = ''
+            self.target.value_label.setText('Not set')
+            return
         self.target.value_label.setText(f'{value} nm')
 
     def update_interval(self, value: float):
