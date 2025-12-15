@@ -570,10 +570,22 @@ class CameraPanel(ControlPanelBase):
 
         self._last_settings_update: datetime.datetime | None = None
 
+        label_map = {
+            'framerate': 'Frame Rate',
+            'fixed_n': '# Ref Beads',
+            'fixed_z': 'Ref Z Value',
+            'tethered_n': '# Tethered Beads',
+            'tethered_z': 'Tethered Z Value',
+            'tethered_z_sigma': 'Tethered Z Fluctuations',
+            'tethered_xy_sigma': 'Tethered XY Fluctuations',
+            'gain': 'Gain',
+            'seed': 'Seed',
+        }
+
         self.settings = {}
         for setting_name in self.manager.camera_type.settings:
             self.settings[setting_name] = LabeledLineEditWithValue(
-                label_text=setting_name,
+                label_text=label_map.get(setting_name, setting_name),
                 widths=(0, 100, 50),
                 callback=lambda n=setting_name: self.callback_set_camera_setting(n))
             self.layout().addWidget(self.settings[setting_name])
