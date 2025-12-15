@@ -23,10 +23,11 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
     QPushButton,
+    QSizePolicy,
     QStackedLayout,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -772,19 +773,26 @@ class PlotSettingsPanel(ControlPanelBase):
         self.grid_layout.addWidget(self.limits['Time'][0], row_index, 1)
         self.grid_layout.addWidget(self.limits['Time'][1], row_index, 2)
 
-        bead_view_group = CollapsibleGroupBox(
-            title='Bead overlay options',
-            collapsed=True,
-        )
-        subtitle_font = bead_view_group.toggle_button.font()
+        bead_options_toggle = QToolButton()
+        bead_options_toggle.setText('Bead overlay options')
+        bead_options_toggle.setCheckable(True)
+        bead_options_toggle.setChecked(False)
+        bead_options_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        bead_options_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        subtitle_font = bead_options_toggle.font()
         subtitle_font.setPointSize(subtitle_font.pointSize() - 1)
         subtitle_font.setBold(False)
-        bead_view_group.toggle_button.setFont(subtitle_font)
-        bead_view_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        bead_options_toggle.setFont(subtitle_font)
+        bead_options_toggle.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.layout().addWidget(bead_options_toggle)
+
+        bead_view_container = QWidget()
         bead_view_layout = QVBoxLayout()
         bead_view_layout.setContentsMargins(0, 0, 0, 0)
         bead_view_layout.setSpacing(4)
+        bead_view_container.setLayout(bead_view_layout)
 
         # Show beads on view
         self.beads_in_view_on = LabeledCheckbox(
@@ -809,12 +817,16 @@ class PlotSettingsPanel(ControlPanelBase):
             callback=self.beads_in_view_marker_size_callback,
         )
         bead_view_layout.addWidget(self.beads_in_view_marker_size)
+        bead_view_container.setVisible(False)
 
-        bead_view_group.setContentLayout(bead_view_layout)
-        bead_view_group.toggle_button.toggled.connect(
-            lambda _: self.groupbox.adjustSize())
-        bead_view_group.animation.finished.connect(self.groupbox.adjustSize)
-        self.layout().addWidget(bead_view_group)
+        def _toggle_bead_overlay_options(checked: bool) -> None:
+            bead_options_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+            bead_view_container.setVisible(checked)
+            self.groupbox.adjustSize()
+
+        bead_options_toggle.toggled.connect(_toggle_bead_overlay_options)
+        self.layout().addWidget(bead_view_container)
 
     def selected_bead_callback(self, value):
         try:
