@@ -742,6 +742,22 @@ class PlotSettingsPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.reference_bead)
 
+        time_mode_row = QHBoxLayout()
+        time_mode_row.addWidget(QLabel('Time axis mode'))
+        self.time_mode = QComboBox()
+        self.time_mode.addItems(['Absolute', 'Relative'])
+        self.time_mode.currentTextChanged.connect(self.time_mode_callback)
+        time_mode_row.addWidget(self.time_mode)
+        self.layout().addLayout(time_mode_row)
+
+        self.relative_time_window = LabeledLineEdit(
+            label_text='Relative window (minutes)',
+            default='5',
+            callback=self.relative_time_window_callback,
+        )
+        self.relative_time_window.setEnabled(False)
+        self.layout().addWidget(self.relative_time_window)
+
         # =============== Limits ===============
         self.limits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
 
@@ -896,6 +912,26 @@ class PlotSettingsPanel(ControlPanelBase):
             bead = -1
         self.manager.plot_worker.reference_bead_signal.emit(bead)
         self.manager.set_reference_bead(bead)
+
+    def time_mode_callback(self, value: str):
+        mode = value.lower()
+        is_relative = mode == 'relative'
+        self.relative_time_window.setEnabled(is_relative)
+        self.manager.plot_worker.time_mode_signal.emit(mode)
+        if is_relative:
+            self.relative_time_window_callback(self.relative_time_window.lineedit.text())
+
+    def relative_time_window_callback(self, _value):
+        text = self.relative_time_window.lineedit.text()
+        try:
+            minutes = float(text)
+            if minutes > 0:
+                window_seconds: float | None = minutes * 60
+            else:
+                window_seconds = None
+        except (TypeError, ValueError):
+            window_seconds = None
+        self.manager.plot_worker.relative_window_signal.emit(window_seconds)
 
     def limits_callback(self, _):
         limits_payload = {}
