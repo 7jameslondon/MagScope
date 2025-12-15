@@ -822,7 +822,7 @@ class PlotSettingsPanel(ControlPanelBase):
         )
 
         bead_options_toggle = QToolButton()
-        bead_options_toggle.setText('Bead overlay options')
+        bead_options_toggle.setText('Display bead centers (Advanced Options)')
         bead_options_toggle.setCheckable(True)
         bead_options_toggle.setChecked(False)
         bead_options_toggle.setIcon(right_triangle_icon)
