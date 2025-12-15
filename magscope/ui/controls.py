@@ -982,9 +982,8 @@ class TrackingOptionsPanel(ControlPanelBase):
             textwrap.dedent(
                 """
                 Configure the arguments forwarded to MagTrack's
-                stack_to_xyzp_advanced pipeline. Leave fields blank to keep
-                existing values. Defaults reflect MagTrack's standard
-                parameters.
+                stack_to_xyzp_advanced pipeline. Leave fields blank to
+                keep existing values. Defaults reflect MagTrack's standard parameters.
                 """
             ).strip()
         )

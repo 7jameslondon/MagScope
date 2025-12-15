@@ -239,6 +239,7 @@ class CollapsibleGroupBox(QGroupBox):
                                             b'maximumHeight')
         self.animation.setDuration(300)
         self.animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.animation.finished.connect(self._animation_finished)
 
         # Start collapsed
         self.collapsed = collapsed
@@ -246,6 +247,12 @@ class CollapsibleGroupBox(QGroupBox):
             self.content_area.setMaximumHeight(0)
         else:
             self.content_area.setMaximumHeight(16777215)  # QT default maximum
+
+    def _animation_finished(self) -> None:
+        if self.collapsed:
+            self.content_area.setMaximumHeight(0)
+        else:
+            self.content_area.setMaximumHeight(16777215)
 
     @property
     def settings_key(self) -> str:
