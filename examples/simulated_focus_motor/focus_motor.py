@@ -12,18 +12,11 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton
 
 import magscope
 from magscope.datatypes import MatrixBuffer
-from magscope.hardware import HardwareManagerBase
-from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command, SetSimulatedFocusCommand
+from magscope.hardware import FocusLimits, FocusMotorBase
+from magscope.ipc_commands import FocusMoveCommand, SetSimulatedFocusCommand
 
 if TYPE_CHECKING:
     from magscope.camera import DummyCameraBeads
-
-
-@dataclass(frozen=True)
-class MoveFocusMotorCommand(Command):
-    target: float | None = None
-    speed: float | None = None
 
 
 @dataclass
@@ -33,7 +26,7 @@ class FocusMotorState:
     speed: float
 
 
-class SimulatedFocusMotor(HardwareManagerBase):
+class SimulatedFocusMotor(FocusMotorBase):
     """Simulated focus/Z motor that publishes telemetry and adjusts camera focus."""
 
     position_min_max: Final[tuple[float, float]] = (-10000.0, 10000.0)
@@ -51,6 +44,7 @@ class SimulatedFocusMotor(HardwareManagerBase):
     def connect(self):
         self._is_connected = True
         self._update_camera_focus(force=True)
+        self._publish_focus_status(force=True)
 
     def disconnect(self):
         self._is_connected = False
@@ -67,15 +61,20 @@ class SimulatedFocusMotor(HardwareManagerBase):
             self._buffer.write(
                 np.array([[now, self._state.position, self._state.target]], dtype=float)
             )
+            self._publish_focus_status()
+    def get_limits(self) -> FocusLimits:
+        minimum, maximum = self.position_min_max
+        return FocusLimits(minimum=minimum, maximum=maximum)
 
-    @register_ipc_command(MoveFocusMotorCommand)
-    def move(self, target: float | None = None, speed: float | None = None):
-        if target is not None:
-            clipped_target = float(np.clip(target, *self.position_min_max))
-            self._state.target = clipped_target
-        if speed is not None:
-            clipped_speed = float(np.clip(speed, *self.speed_min_max))
-            self._state.speed = clipped_speed
+    def get_position(self) -> float:
+        return self._state.position
+
+    def move_to(self, position: float) -> None:
+        self._state.target = position
+
+    def _apply_speed(self, speed: float) -> None:
+        clipped_speed = float(np.clip(speed, *self.speed_min_max))
+        self._state.speed = clipped_speed
 
     def _advance_motion(self, now: float) -> bool:
         dt = now - self._last_time
@@ -167,6 +166,9 @@ class FocusMotorControls(magscope.ControlPanelBase):
         target = self._to_float(self.target_text.text())
         speed = self._to_float(self.speed_text.text())
 
+        if target is None:
+            return
+
         if target is not None and not (SimulatedFocusMotor.position_min_max[0] <= target <= SimulatedFocusMotor.position_min_max[1]):
             warn(
                 f"Target position {target} outside of range {SimulatedFocusMotor.position_min_max}",
@@ -179,7 +181,7 @@ class FocusMotorControls(magscope.ControlPanelBase):
             )
             return
 
-        self.manager.send_ipc(MoveFocusMotorCommand(target=target, speed=speed))
+        self.manager.send_ipc(FocusMoveCommand(position=target, speed=speed))
 
     @staticmethod
     def _to_float(value: str) -> float | None:

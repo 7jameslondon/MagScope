@@ -93,6 +93,7 @@ def load_scope_with_stubs(monkeypatch):
             *,
             camera_type,
             hardware_types,
+            focus_motor_name,
             quitting_event,
             settings,
             shared_values,
@@ -188,7 +189,10 @@ def load_scope_with_stubs(monkeypatch):
             "TimeSeriesPlotBase": type("TimeSeriesPlotBase", (), {}),
             "UIManager": UIManager,
         },
-        "magscope.hardware": {"HardwareManagerBase": HardwareManagerBase},
+        "magscope.hardware": {
+            "HardwareManagerBase": HardwareManagerBase,
+            "FocusMotorBase": HardwareManagerBase,
+        },
         "magscope.processes": {
             "InterprocessValues": InterprocessValues,
             "ManagerProcessBase": StubManagerProcessBase,

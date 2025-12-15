@@ -92,6 +92,24 @@ class MoveBeadsCommand(Command):
 
 
 @dataclass(frozen=True)
+class FocusMoveCommand(Command):
+    position: float
+    speed: float | None = None
+
+
+@dataclass(frozen=True)
+class RequestFocusStatusCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class UpdateFocusStatusCommand(Command):
+    position: float
+    min_position: float
+    max_position: float
+
+
+@dataclass(frozen=True)
 class UpdateXYLockEnabledCommand(Command):
     value: bool
 
