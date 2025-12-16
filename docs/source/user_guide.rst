@@ -248,6 +248,12 @@ The bead XY-positions are relative to the top-left of the camera's field of view
 Therefore, moving the ROI does not affect the bead's detected position, unless it is near the edge of the ROI.
 Generally you should not see any "jumps" in the beads position when using the XY-Lock.
 
+XY-Lock has three settings:
+
+* Interval - The frequency at which the ROI will move in an attempt to center the bead.
+* Max - An upper limit you can set. The ROI will not move more than this amount of pixels at a given time. If the XY-Lock is overcorrecting for bead motion try decreasing this value.
+* Averaging Window - Sets how many of the latest valid bead positions are averaged together before calculating where the ROI should move to.
+
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/XY-Lock_Panel_v1.jpg
          :alt: Screenshot of the XY-Lock panel.
          :height: 166px
