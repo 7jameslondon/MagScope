@@ -1708,6 +1708,7 @@ class StatusPanel(ControlPanelBase):
 
         # ROI
         roi_row = QHBoxLayout()
+        roi_row.setContentsMargins(0, 0, 0, 6)
         roi_row.addWidget(QLabel('Current ROI:'))
         roi = self.manager.settings['ROI']
         self.roi_size_label = QLabel(f'{roi} x {roi} pixels')
