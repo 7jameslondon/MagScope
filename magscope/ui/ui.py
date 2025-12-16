@@ -526,7 +526,6 @@ class UIManager(ManagerProcessBase):
         for graphics in self._bead_graphics.values():
             graphics.remove()
         self._bead_graphics.clear()
-        self._bead_next_id = 0
         self._update_next_bead_id_label()
 
         # Update bead ROIs
@@ -534,7 +533,32 @@ class UIManager(ManagerProcessBase):
         self.send_ipc(command)
 
     def reset_bead_ids(self):
-        self._bead_next_id = self._calculate_next_bead_id()
+        if not self._bead_graphics:
+            self._bead_next_id = 0
+            self._update_next_bead_id_label()
+            return
+
+        new_graphics: dict[int, BeadGraphic] = {}
+        id_mapping: dict[int, int] = {}
+        for new_id, (old_id, graphic) in enumerate(sorted(self._bead_graphics.items())):
+            id_mapping[old_id] = new_id
+            graphic.id = new_id
+            graphic.label.setPlainText(f"{new_id}")
+            new_graphics[new_id] = graphic
+
+        self._bead_graphics = new_graphics
+
+        if self.selected_bead is not None:
+            new_selected = id_mapping.get(self.selected_bead, -1)
+            self.set_selected_bead(new_selected)
+
+        if self.reference_bead is not None:
+            new_reference = id_mapping.get(self.reference_bead)
+            self.set_reference_bead(new_reference)
+
+        self._bead_next_id = len(self._bead_graphics)
+        self._update_bead_highlights()
+        self.update_bead_rois()
         self._update_next_bead_id_label()
 
     def _update_roi_labels(self, roi: int) -> None:

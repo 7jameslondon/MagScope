@@ -519,7 +519,7 @@ class BeadSelectionPanel(ControlPanelBase):
 
         next_id_row.addStretch(1)
 
-        self.reset_id_button = QPushButton('Reset IDs')
+        self.reset_id_button = QPushButton('Reassign IDs')
         self.reset_id_button.clicked.connect(self.manager.reset_bead_ids)  # type: ignore
         next_id_row.addWidget(self.reset_id_button)
 
