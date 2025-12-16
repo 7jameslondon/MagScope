@@ -214,6 +214,8 @@ class BeadLockManager(ManagerProcessBase):
     @register_ipc_command(SetXYLockIntervalCommand)
     @register_script_command(SetXYLockIntervalCommand)
     def set_xy_lock_interval(self, value: float):
+        if value <= 0:
+            return
         self.xy_lock_interval = value
 
         command = UpdateXYLockIntervalCommand(value=value)
@@ -264,6 +266,8 @@ class BeadLockManager(ManagerProcessBase):
     @register_ipc_command(SetZLockIntervalCommand)
     @register_script_command(SetZLockIntervalCommand)
     def set_z_lock_interval(self, value: float):
+        if value <= 0:
+            return
         self.z_lock_interval = value
 
         command = UpdateZLockIntervalCommand(value=value)

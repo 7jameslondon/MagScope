@@ -1778,7 +1778,7 @@ class XYLockPanel(ControlPanelBase):
             interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
 
         # Send value
@@ -1960,7 +1960,7 @@ class ZLockPanel(ControlPanelBase):
             interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
 
         self.update_interval(interval_seconds)
