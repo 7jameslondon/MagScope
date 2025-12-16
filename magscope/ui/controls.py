@@ -2067,7 +2067,14 @@ class ZLUTGenerationPanel(ControlPanelBase):
         roi = self.manager.settings['ROI']
         filename = f'Z-LUT {timestamp} {roi} {start_nm:.0f} {step_nm:.0f} {stop_nm:.0f}.txt'
 
-        raise NotImplementedError
+        QMessageBox.information(
+            self,
+            'Z-LUT Generation',
+            (
+                'Z-LUT generation is not implemented yet. '
+                'Please generate a Z-LUT using an external script or existing data.'
+            )
+        )
 
 
 class ZLUTPanel(ControlPanelBase):
