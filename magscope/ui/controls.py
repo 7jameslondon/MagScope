@@ -1773,11 +1773,12 @@ class XYLockPanel(ControlPanelBase):
         self.interval.lineedit.setText('')
 
         # Check value
+        stripped_value = value.strip()
         try:
-            interval_seconds = float(value)
+            interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0:
+        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
 
         # Send value
@@ -1925,6 +1926,8 @@ class ZLockPanel(ControlPanelBase):
         if bead_index < 0:
             return
 
+        self.update_bead(bead_index)
+
         # Send value
         command = SetZLockBeadCommand(value=bead_index)
         self.manager.send_ipc(command)
@@ -1952,12 +1955,15 @@ class ZLockPanel(ControlPanelBase):
         self.interval.lineedit.setText('')
 
         # Check value
+        stripped_value = value.strip()
         try:
-            interval_seconds = float(value)
+            interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0:
+        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
+
+        self.update_interval(interval_seconds)
 
         # Send value
         command = SetZLockIntervalCommand(value=interval_seconds)
@@ -1975,6 +1981,8 @@ class ZLockPanel(ControlPanelBase):
             return
         if max_nm <= 1:
             return
+
+        self.update_max(max_nm)
 
         # Send value
         command = SetZLockMaxCommand(value=max_nm)
