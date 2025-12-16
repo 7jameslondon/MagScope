@@ -36,6 +36,8 @@ class LabeledLineEditWithValue(QWidget):
 
         # Label
         self.label = QLabel(label_text)
+        self.label.setWordWrap(True)
+        self.label.setToolTip(label_text)
         if widths[0] > 0:
             self.label.setFixedWidth(widths[0])
         self.layout.addWidget(self.label)
