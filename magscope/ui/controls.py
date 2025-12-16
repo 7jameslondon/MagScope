@@ -1773,11 +1773,12 @@ class XYLockPanel(ControlPanelBase):
         self.interval.lineedit.setText('')
 
         # Check value
+        stripped_value = value.strip()
         try:
-            interval_seconds = float(value)
+            interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0:
+        if interval_seconds < 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
 
         # Send value
@@ -1954,11 +1955,12 @@ class ZLockPanel(ControlPanelBase):
         self.interval.lineedit.setText('')
 
         # Check value
+        stripped_value = value.strip()
         try:
-            interval_seconds = float(value)
+            interval_seconds = float(stripped_value)
         except ValueError:
             return
-        if interval_seconds < 0:
+        if interval_seconds < 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
             return
 
         self.update_interval(interval_seconds)
