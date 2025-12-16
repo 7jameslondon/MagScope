@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import matplotlib
 import matplotlib.dates as mdates
 import matplotlib.style as mplstyle
+import matplotlib.ticker as mticker
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -31,6 +32,8 @@ class PlotWorker(QObject):
     reference_bead_signal = pyqtSignal(int)
     stop_signal = pyqtSignal()
     figure_size_signal = pyqtSignal(int, int)
+    time_mode_signal = pyqtSignal(str)
+    relative_window_signal = pyqtSignal(object)
 
     def __init__(self):
         """ Called before the parent process is started """
@@ -53,12 +56,17 @@ class PlotWorker(QObject):
         self.fig_height = 4
         self.dpi = 100
 
+        self.time_mode = "absolute"
+        self.relative_window_seconds: float | None = 300
+
         # Connect internal signal to slot
         self.limits_signal.connect(self._set_limits)
         self.selected_bead_signal.connect(self._set_selected_bead)
         self.reference_bead_signal.connect(self._set_reference_bead)
         self.stop_signal.connect(self._stop)
         self.figure_size_signal.connect(self._update_figure_size)
+        self.time_mode_signal.connect(self._set_time_mode)
+        self.relative_window_signal.connect(self._set_relative_window)
 
         # Thread safety
         self.mutex: QMutex
@@ -96,6 +104,8 @@ class PlotWorker(QObject):
 
         for plot in self.plots:
             plot.setup()
+
+        self._apply_time_axis_format()
 
     def run(self):
         self._is_running = True
@@ -169,6 +179,30 @@ class PlotWorker(QObject):
             self.figure.set_size_inches(self.fig_width, self.fig_height)
             self.figure_size_changed  = False
         self.mutex.unlock()
+
+    def _set_time_mode(self, time_mode: str):
+        self.time_mode = time_mode
+        self._apply_time_axis_format()
+
+    def _set_relative_window(self, window_seconds: float | None):
+        self.relative_window_seconds = window_seconds
+
+    def _apply_time_axis_format(self):
+        if self.axes is None:
+            return
+
+        if self.time_mode == "relative":
+            formatter = mticker.FuncFormatter(
+                lambda seconds, _pos: datetime.utcfromtimestamp(seconds).strftime('%H:%M:%S')
+            )
+            xlabel = 'Time (relative h:m:s)'
+        else:
+            formatter = mdates.DateFormatter('%H:%M:%S')
+            xlabel = 'Time (h:m:s)'
+
+        for ax in self.axes:
+            ax.xaxis.set_major_formatter(formatter)
+        self.axes[-1].set_xlabel(xlabel)
 
 
 class TimeSeriesPlotBase(metaclass=ABCMeta):
@@ -254,38 +288,62 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
         t = t[selection]
         v = v[selection]
 
-        # Remove value outside of axis limits
-        xmin = self.parent.limits.get('Time', (None, None))[0]
-        xmax = self.parent.limits.get('Time', (None, None))[1]
         ymin = self.parent.limits.get(self.ylabel, (None, None))[0]
         ymax = self.parent.limits.get(self.ylabel, (None, None))[1]
-        selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf)) & ((ymin or -np.inf) <= v) & (v <= (ymax or np.inf))
-        t = t[selection]
-        v = v[selection]
+        ymin_limit = ymin if ymin is not None else -np.inf
+        ymax_limit = ymax if ymax is not None else np.inf
 
-        # Convert time to timepoints
-        t = [datetime.fromtimestamp(t_) for t_ in t]
+        if self.parent.time_mode == "relative":
+            if t.size == 0:
+                self.line.set_xdata([])
+                self.line.set_ydata([])
+                self.axes.relim()
+                self.axes.autoscale_view()
+                return
 
-        # Update the plot data
-        self.line.set_xdata(t)
+            window = self.parent.relative_window_seconds
+            t_max = np.max(t)
+            xmin_value = t_max - window if window else np.min(t)
+            selection = t >= xmin_value
+            t = t[selection]
+            v = v[selection]
+
+            selection = (ymin_limit <= v) & (v <= ymax_limit)
+            t = t[selection]
+            v = v[selection]
+
+            t_relative = t - xmin_value
+            xmin = 0
+            xmax = window if window else None
+            xdata = t_relative
+        else:
+            xmin = self.parent.limits.get('Time', (None, None))[0]
+            xmax = self.parent.limits.get('Time', (None, None))[1]
+            xmin_limit = xmin if xmin is not None else -np.inf
+            xmax_limit = xmax if xmax is not None else np.inf
+            selection = (xmin_limit <= t) & (t <= xmax_limit)
+            selection &= (ymin_limit <= v) & (v <= ymax_limit)
+            t = t[selection]
+            v = v[selection]
+
+            xdata = [datetime.fromtimestamp(t_) for t_ in t]
+
+        self.line.set_xdata(xdata)
         self.line.set_ydata(v)
 
-        # Prevent equal limits error
-        if xmin is not None and xmin==xmax:
-            xmax += 1
-        if ymin is not None and ymin==ymax:
-            ymax += 1
+        if xmin is not None and xmin == xmax:
+            xmax = xmin + 1
+        if ymin is not None and ymin == ymax:
+            ymax = ymin + 1
 
-        # Prevent unintended axis inversion
         if xmin is None or xmax is None:
             self.axes.xaxis.set_inverted(False)
         if ymin is None or ymax is None:
             self.axes.yaxis.set_inverted(False)
 
-        # Convert the x-limits to timestamps
-        xmin, xmax = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
+        if self.parent.time_mode == "absolute":
+            xmin, xmax = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
 
-        # Update the axis limits
         self.axes.autoscale()
         self.axes.autoscale_view()
         self.axes.set_xlim(xmin=xmin, xmax=xmax)
