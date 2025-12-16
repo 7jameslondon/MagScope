@@ -1805,7 +1805,7 @@ class XYLockPanel(ControlPanelBase):
             label_text='Interval (sec)',
             default=f'{default_interval} sec',
             callback=self.interval_callback,
-            widths=(75, 100, 0),
+            widths=(105, 100, 0),
         )
         self.layout().addWidget(self.interval)
 
@@ -1815,17 +1815,17 @@ class XYLockPanel(ControlPanelBase):
             label_text='Max (pixels)',
             default=f'{default_max} pixels',
             callback=self.max_callback,
-            widths=(75, 100, 0),
+            widths=(105, 100, 0),
         )
         self.layout().addWidget(self.max)
 
-        # Window
+        # Averaging Window
         default_window = self.manager.settings.get('xy-lock default window', '')
         self.window = LabeledLineEditWithValue(
-            label_text='Window',
-            default=f'{default_window} window',
+            label_text='Averaging Window',
+            default=f'{default_window} frames',
             callback=self.window_callback,
-            widths=(75, 100, 0),
+            widths=(105, 100, 0),
         )
         self.layout().addWidget(self.window)
 
@@ -1870,7 +1870,7 @@ class XYLockPanel(ControlPanelBase):
             max_distance = float(value)
         except ValueError:
             return
-        if max_distance <= 1:
+        if max_distance < 1:
             return
 
         # Send value
@@ -1915,7 +1915,7 @@ class XYLockPanel(ControlPanelBase):
     def update_window(self, value: int):
         if value is None:
             value = ''
-        self.window.value_label.setText(f'{value} window')
+        self.window.value_label.setText(f'{value} frames')
 
 
 class ZLockPanel(ControlPanelBase):
