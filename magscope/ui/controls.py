@@ -525,15 +525,6 @@ class BeadSelectionPanel(ControlPanelBase):
 
         self.update_next_bead_id_label(self.manager.bead_next_id)
 
-        # ROI
-        roi_row = QHBoxLayout()
-        self.layout().addLayout(roi_row)
-        roi_row.addWidget(QLabel('Current ROI:'))
-        roi = self.manager.settings['ROI']
-        self.roi_size_label = QLabel(f'{roi} x {roi} pixels')
-        roi_row.addWidget(self.roi_size_label)
-        roi_row.addStretch(1)
-
         # Row
         button_row = QHBoxLayout()
         self.layout().addLayout(button_row)
@@ -1714,6 +1705,15 @@ class StatusPanel(ControlPanelBase):
 
         self.layout().setSpacing(0)
         self.dot_count = 0
+
+        # ROI
+        roi_row = QHBoxLayout()
+        roi_row.addWidget(QLabel('Current ROI:'))
+        roi = self.manager.settings['ROI']
+        self.roi_size_label = QLabel(f'{roi} x {roi} pixels')
+        roi_row.addWidget(self.roi_size_label)
+        roi_row.addStretch(1)
+        self.layout().addLayout(roi_row)
 
         # GUI display rate
         self.display_rate_status = QLabel()
