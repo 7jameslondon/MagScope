@@ -1137,12 +1137,15 @@ class TrackingOptionsPanel(ControlPanelBase):
         note = QLabel(
             textwrap.dedent(
                 """
-                Configure the arguments forwarded to MagTrack's
+                <a href="https://magtrack.readthedocs.io/en/stable/api/magtrack/core/index.html#magtrack.core.stack_to_xyzp_advanced">Advanced Tracking Options Guide</a>
+                <br>Configure the arguments forwarded to MagTrack's
                 stack_to_xyzp_advanced pipeline. Leave fields blank to
                 keep existing values. Defaults reflect MagTrack's standard parameters.
                 """
             ).strip()
         )
+        note.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        note.setOpenExternalLinks(True)
         note.setWordWrap(True)
         self.layout().addWidget(note)
 
