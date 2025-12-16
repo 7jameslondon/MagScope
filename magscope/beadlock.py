@@ -1,5 +1,6 @@
 from math import copysign
 from time import time
+from warnings import warn
 
 import numpy as np
 
@@ -53,6 +54,7 @@ class BeadLockManager(ManagerProcessBase):
         self.z_lock_interval: float
         self.z_lock_max: float
         self._z_lock_last_time: float = 0.0
+        self._z_lock_warning_emitted: bool = False
 
     def setup(self):
         self.xy_lock_interval = self.settings['xy-lock default interval']
@@ -154,7 +156,9 @@ class BeadLockManager(ManagerProcessBase):
             now = time()
         self._z_lock_last_time = now
 
-        raise NotImplementedError
+        if not self._z_lock_warning_emitted:
+            warn('Z-lock is not yet implemented; skipping Z-lock iteration', stacklevel=1)
+            self._z_lock_warning_emitted = True
 
     def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
         previous_bead_rois = getattr(self, 'bead_rois', {}).copy()

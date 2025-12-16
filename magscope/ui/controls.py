@@ -1925,6 +1925,8 @@ class ZLockPanel(ControlPanelBase):
         if bead_index < 0:
             return
 
+        self.update_bead(bead_index)
+
         # Send value
         command = SetZLockBeadCommand(value=bead_index)
         self.manager.send_ipc(command)
@@ -1959,6 +1961,8 @@ class ZLockPanel(ControlPanelBase):
         if interval_seconds < 0:
             return
 
+        self.update_interval(interval_seconds)
+
         # Send value
         command = SetZLockIntervalCommand(value=interval_seconds)
         self.manager.send_ipc(command)
@@ -1975,6 +1979,8 @@ class ZLockPanel(ControlPanelBase):
             return
         if max_nm <= 1:
             return
+
+        self.update_max(max_nm)
 
         # Send value
         command = SetZLockMaxCommand(value=max_nm)
