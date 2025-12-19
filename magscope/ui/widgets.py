@@ -36,8 +36,12 @@ class LabeledLineEditWithValue(QWidget):
 
         # Label
         self.label = QLabel(label_text)
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+        self.label.setToolTip(label_text)
         if widths[0] > 0:
-            self.label.setFixedWidth(widths[0])
+            self.label.setMaximumWidth(widths[0])
         self.layout.addWidget(self.label)
 
         # Lineedit
