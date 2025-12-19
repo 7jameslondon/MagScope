@@ -2157,10 +2157,12 @@ class ZLUTPanel(ControlPanelBase):
     zlut_file_selected = pyqtSignal(str)
     zlut_clear_requested = pyqtSignal()
 
-    NO_ZLUT_SELECTED_TEXT = 'No Z-LUT file selected'
+    NO_ZLUT_SELECTED_TEXT = 'Drop Z-LUT (.txt) here or click "Select Z-LUT File"'
 
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-LUT', collapsed_by_default=True)
+        self.setAcceptDrops(True)
+        self.groupbox.setAcceptDrops(True)
 
         # Controls row
         controls_row = QHBoxLayout()
@@ -2179,6 +2181,7 @@ class ZLUTPanel(ControlPanelBase):
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filepath_textedit.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.filepath_textedit.setAcceptDrops(False)
         self.filepath_textedit.setFixedHeight(40)
         self.filepath_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.filepath_textedit.setVerticalScrollBarPolicy(
@@ -2218,13 +2221,7 @@ class ZLUTPanel(ControlPanelBase):
         if not path:
             return
 
-        directory = os.path.dirname(path) or last_value
-        settings.setValue('last zlut directory', QVariant(directory))
-
-        self.filepath_textedit.setText(path)
-        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.clear_metadata()
-        self.zlut_file_selected.emit(path)
+        self._apply_zlut_path(path, last_value)
 
     def _clear_zlut(self):
         self.set_filepath(None)
@@ -2235,13 +2232,36 @@ class ZLUTPanel(ControlPanelBase):
             self.filepath_textedit.setText(self.NO_ZLUT_SELECTED_TEXT)
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.clear_metadata()
+            self._set_drop_highlight(False)
             return
 
         self.filepath_textedit.setText(path)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_drop_highlight(False)
 
         settings = QSettings('MagScope', 'MagScope')
         settings.setValue('last zlut directory', QVariant(os.path.dirname(path)))
+
+    def dragEnterEvent(self, event) -> None:
+        if self._has_valid_zlut_drop(event.mimeData()):
+            self._set_drop_highlight(True)
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        if self._has_valid_zlut_drop(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._set_drop_highlight(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        path = self._first_zlut_path(event.mimeData())
+        self._set_drop_highlight(False)
+        if not path:
+            return
+        self._apply_zlut_path(path, os.path.dirname(path))
+        event.acceptProposedAction()
 
     def update_metadata(self,
                         z_min: float | None = None,
@@ -2263,3 +2283,44 @@ class ZLUTPanel(ControlPanelBase):
         if isinstance(value, float):
             return f'{int(value):d}{suffix}'
         return f'{value}{suffix}'
+
+    @staticmethod
+    def _has_valid_zlut_drop(mime_data) -> bool:
+        if not mime_data.hasUrls():
+            return False
+        return any(ZLUTPanel._is_zlut_path(url.toLocalFile())
+                   for url in mime_data.urls())
+
+    @staticmethod
+    def _first_zlut_path(mime_data) -> str | None:
+        if not mime_data.hasUrls():
+            return None
+        for url in mime_data.urls():
+            path = url.toLocalFile()
+            if ZLUTPanel._is_zlut_path(path):
+                return path
+        return None
+
+    @staticmethod
+    def _is_zlut_path(path: str) -> bool:
+        return bool(path) and os.path.isfile(path) and path.lower().endswith('.txt')
+
+    def _apply_zlut_path(self, path: str, fallback_directory: str) -> None:
+        directory = os.path.dirname(path) or fallback_directory
+        settings = QSettings('MagScope', 'MagScope')
+        settings.setValue('last zlut directory', QVariant(directory))
+
+        self.filepath_textedit.setText(path)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_drop_highlight(False)
+        self.clear_metadata()
+        self.zlut_file_selected.emit(path)
+
+    def _set_drop_highlight(self, enabled: bool) -> None:
+        if enabled:
+            highlight = self.palette().color(QPalette.ColorRole.Highlight)
+            self.filepath_textedit.setStyleSheet(
+                f"border: 2px dashed {highlight.name()};"
+            )
+            return
+        self.filepath_textedit.setStyleSheet("")
