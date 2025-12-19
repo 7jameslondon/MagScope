@@ -2157,7 +2157,7 @@ class ZLUTPanel(ControlPanelBase):
     zlut_file_selected = pyqtSignal(str)
     zlut_clear_requested = pyqtSignal()
 
-    NO_ZLUT_SELECTED_TEXT = 'No Z-LUT file selected'
+    NO_ZLUT_SELECTED_TEXT = 'Drop Z-LUT (.txt) here or click "Select Z-LUT File"'
 
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-LUT', collapsed_by_default=True)
@@ -2232,20 +2232,32 @@ class ZLUTPanel(ControlPanelBase):
             self.filepath_textedit.setText(self.NO_ZLUT_SELECTED_TEXT)
             self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.clear_metadata()
+            self._set_drop_highlight(False)
             return
 
         self.filepath_textedit.setText(path)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_drop_highlight(False)
 
         settings = QSettings('MagScope', 'MagScope')
         settings.setValue('last zlut directory', QVariant(os.path.dirname(path)))
 
     def dragEnterEvent(self, event) -> None:
         if self._has_valid_zlut_drop(event.mimeData()):
+            self._set_drop_highlight(True)
             event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        if self._has_valid_zlut_drop(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._set_drop_highlight(False)
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:
         path = self._first_zlut_path(event.mimeData())
+        self._set_drop_highlight(False)
         if not path:
             return
         self._apply_zlut_path(path, os.path.dirname(path))
@@ -2300,5 +2312,15 @@ class ZLUTPanel(ControlPanelBase):
 
         self.filepath_textedit.setText(path)
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_drop_highlight(False)
         self.clear_metadata()
         self.zlut_file_selected.emit(path)
+
+    def _set_drop_highlight(self, enabled: bool) -> None:
+        if enabled:
+            highlight = self.palette().color(QPalette.ColorRole.Highlight)
+            self.filepath_textedit.setStyleSheet(
+                f"border: 2px dashed {highlight.name()};"
+            )
+            return
+        self.filepath_textedit.setStyleSheet("")
