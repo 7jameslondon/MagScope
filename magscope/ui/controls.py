@@ -2161,6 +2161,8 @@ class ZLUTPanel(ControlPanelBase):
 
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Z-LUT', collapsed_by_default=True)
+        self.setAcceptDrops(True)
+        self.groupbox.setAcceptDrops(True)
 
         # Controls row
         controls_row = QHBoxLayout()
@@ -2179,6 +2181,7 @@ class ZLUTPanel(ControlPanelBase):
         self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.filepath_textedit.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.filepath_textedit.setAcceptDrops(False)
         self.filepath_textedit.setFixedHeight(40)
         self.filepath_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.filepath_textedit.setVerticalScrollBarPolicy(
@@ -2218,13 +2221,7 @@ class ZLUTPanel(ControlPanelBase):
         if not path:
             return
 
-        directory = os.path.dirname(path) or last_value
-        settings.setValue('last zlut directory', QVariant(directory))
-
-        self.filepath_textedit.setText(path)
-        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.clear_metadata()
-        self.zlut_file_selected.emit(path)
+        self._apply_zlut_path(path, last_value)
 
     def _clear_zlut(self):
         self.set_filepath(None)
@@ -2242,6 +2239,17 @@ class ZLUTPanel(ControlPanelBase):
 
         settings = QSettings('MagScope', 'MagScope')
         settings.setValue('last zlut directory', QVariant(os.path.dirname(path)))
+
+    def dragEnterEvent(self, event) -> None:
+        if self._has_valid_zlut_drop(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        path = self._first_zlut_path(event.mimeData())
+        if not path:
+            return
+        self._apply_zlut_path(path, os.path.dirname(path))
+        event.acceptProposedAction()
 
     def update_metadata(self,
                         z_min: float | None = None,
@@ -2263,3 +2271,34 @@ class ZLUTPanel(ControlPanelBase):
         if isinstance(value, float):
             return f'{int(value):d}{suffix}'
         return f'{value}{suffix}'
+
+    @staticmethod
+    def _has_valid_zlut_drop(mime_data) -> bool:
+        if not mime_data.hasUrls():
+            return False
+        return any(ZLUTPanel._is_zlut_path(url.toLocalFile())
+                   for url in mime_data.urls())
+
+    @staticmethod
+    def _first_zlut_path(mime_data) -> str | None:
+        if not mime_data.hasUrls():
+            return None
+        for url in mime_data.urls():
+            path = url.toLocalFile()
+            if ZLUTPanel._is_zlut_path(path):
+                return path
+        return None
+
+    @staticmethod
+    def _is_zlut_path(path: str) -> bool:
+        return bool(path) and os.path.isfile(path) and path.lower().endswith('.txt')
+
+    def _apply_zlut_path(self, path: str, fallback_directory: str) -> None:
+        directory = os.path.dirname(path) or fallback_directory
+        settings = QSettings('MagScope', 'MagScope')
+        settings.setValue('last zlut directory', QVariant(directory))
+
+        self.filepath_textedit.setText(path)
+        self.filepath_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.clear_metadata()
+        self.zlut_file_selected.emit(path)
