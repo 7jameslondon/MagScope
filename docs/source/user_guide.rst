@@ -229,10 +229,6 @@ It also provides basic information about the current Z-LUT.
    :alt: The Z-LUT selection panel
    :align: center
 
-Z-LUT Generator
----------------
-?
-
 XY-Lock
 -------
 **Once:** Keeping your beads in the center of the ROI improves tracking accuracy.
