@@ -50,6 +50,6 @@ To check it worked you can run the following in Python:
 .. code-block:: python
 
    import magscope
-   magscope.check_cupy()
+   print(magscope.check_cupy())
 
 This will return True if CuPy can reach and use the installed toolkit. Otherwise it is False.
