@@ -98,6 +98,7 @@ class UIManager(ManagerProcessBase):
         self.windows: list[QMainWindow] = []
         self._suppress_bead_roi_updates: bool = False
         self._last_applied_roi: int | None = None
+        self._settings_persistence_warning_shown = False
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -156,6 +157,8 @@ class UIManager(ManagerProcessBase):
             window.setCentralWidget(self.central_widgets[i])
             self.windows.append(window)
 
+        self._show_settings_persistence_warning_if_needed()
+
         # Connect the video viewer
         self.video_viewer.coordinatesChanged.connect(self.update_view_coords)
         self.video_viewer.clicked.connect(self.callback_view_clicked)
@@ -183,8 +186,8 @@ class UIManager(ManagerProcessBase):
         """Apply new settings and clear beads if the ROI size changed."""
 
         previous_roi = self._last_applied_roi
-
         super().set_settings(settings)
+        self._show_settings_persistence_warning_if_needed()
 
         new_roi = self.settings["ROI"]
         if previous_roi is not None and new_roi != previous_roi:
@@ -192,6 +195,30 @@ class UIManager(ManagerProcessBase):
 
         self._last_applied_roi = new_roi
         self._update_roi_labels(new_roi)
+
+    def _show_settings_persistence_warning_if_needed(self) -> None:
+        if self._settings_persistence_warning_shown:
+            return
+        if self.settings is None or self.settings.persistence_available:
+            return
+        if not self.windows:
+            return
+
+        self._settings_persistence_warning_shown = True
+        self._show_settings_persistence_warning()
+
+    def _show_settings_persistence_warning(self) -> None:
+        msg = QMessageBox(self.windows[0])
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Settings Persistence Unavailable")
+        msg.setText(
+            "Some settings may not automatically load or save for this session."
+        )
+        msg.setInformativeText(
+            "MagScope will continue running with in-memory settings."
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.show()
 
     def update_plot_figure_size(self, w, h):
         self.plot_worker.figure_size_signal.emit(w, h)
