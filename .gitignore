@@ -1,5 +1,4 @@
 *.log
-*settings.yaml
 .idea/
 *build/
 dev*
