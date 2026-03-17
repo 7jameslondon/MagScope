@@ -1,0 +1,30 @@
+enabled: true
+require_arm: true
+discovery_mode: settings_then_fallback_scan
+objective:
+  model: E-709
+  serial_number: null
+  controller_units: um
+  min_nm: 0
+  max_nm: 100000
+linear:
+  model: X-LSQ075A-E01
+  port: COM8
+  min_mm: 0.0
+  max_mm: 34.5
+  default_speed_mm_s: 0.2
+rotary:
+  model: X-NMS17-E01
+  port: COM9
+  min_turns: -2.0
+  max_turns: 2.0
+  default_speed_turns_s: 0.1
+test_mode: true
+test_caps:
+  linear_max_speed_mm_s: 0.5
+  rotary_max_speed_turns_s: 0.5
+session_window:
+  enabled: true
+  objective_nm: 100010
+  linear_mm: 34.6
+  rotary_turns: 100000
