@@ -161,13 +161,13 @@ The video feed will be processed at the full framerate.
 The number of video processor should always be at least 3 and there is little benefit to increasing them.
 If all processor are constantly in use (for example "3/3") then you may have selected too many beads and the processors can not keep up.
 
-The video buffer size can be adjusted in the settings.yaml file (created after you first launch the program).
+The video buffer size can be adjusted from the MagScope Settings panel, and settings persist automatically between launches.
 
 The video buffer should ideally never fill all the way up. If it does fill up it will be purged.
 Purges result in those frames being deleted with out being processed.
 If the buffer is filling all the way up and purging then you may have selected too many beads.
 Optimizing the video buffer size settings may allow you to process more beads.
-Re-launch the program after updating the settings.yaml file.
+Settings can also be imported from or exported to YAML files when needed.
 
 Camera Settings
 ---------------

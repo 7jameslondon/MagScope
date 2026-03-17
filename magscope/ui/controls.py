@@ -369,7 +369,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
         if not path:
             return
         try:
-            settings = MagScopeSettings.from_yaml(path)
+            settings = MagScopeSettings.import_yaml(path)
         except (OSError, ValueError) as exc:
             self._show_error(str(exc))
             return
@@ -388,7 +388,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
         if not path:
             return
         try:
-            self._current_settings.save(path)
+            self._current_settings.export_yaml(path)
         except OSError as exc:
             self._show_error(str(exc))
             return

@@ -89,15 +89,15 @@ def test_settings_clone_and_reset():
     assert settings["magnification"] == defaults["magnification"]
 
 
-def test_settings_round_trip():
+def test_settings_yaml_import_export_round_trip():
     settings = MagScopeSettings()
     settings["video processors n"] = 4
     settings["video buffer n stacks"] = 6
 
     path = Path("settings-round-trip-test.yaml")
     try:
-        settings.save(path)
-        loaded = MagScopeSettings.from_yaml(path)
+        settings.export_yaml(path)
+        loaded = MagScopeSettings.import_yaml(path)
         assert loaded["video processors n"] == 4
         assert loaded["video buffer n stacks"] == 6
     finally:

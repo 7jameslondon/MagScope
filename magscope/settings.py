@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
@@ -289,12 +290,12 @@ class MagScopeSettings(MutableMapping[str, Any]):
     def __len__(self):
         return len(self._values)
 
-    def save(self, path: str) -> None:
+    def export_yaml(self, path: str | os.PathLike[str]) -> None:
         with open(path, "w", encoding="utf-8") as file:
             yaml.safe_dump(self._values, file)
 
     @classmethod
-    def from_yaml(cls, path: str) -> "MagScopeSettings":
+    def import_yaml(cls, path: str | os.PathLike[str]) -> "MagScopeSettings":
         with open(path, "r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
         if data is None:

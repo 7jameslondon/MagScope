@@ -4,8 +4,8 @@
 connects them with shared resources, and relays inter-process messages until
 shutdown. Its responsibilities span the full application lifetime:
 
-* Loading YAML configuration, merging user overrides, and distributing the
-  result to each process.
+* Loading persisted settings from ``QSettings``, with optional YAML
+  import/export available through the user interface.
 * Constructing manager processes (camera, bead lock, GUI, scripting, video
   processing, and optional hardware integrations) and wiring them to shared
   locks, buffers, and IPC pipes.
