@@ -25,6 +25,6 @@ test_caps:
   rotary_max_speed_turns_s: 0.5
 session_window:
   enabled: true
-  objective_nm: 10000
-  linear_mm: 1.0
-  rotary_turns: 1.0
+  objective_nm: 100010
+  linear_mm: 34.6
+  rotary_turns: 100000
