@@ -32,13 +32,13 @@ There are lots of built-in script commands. A complete list is provided :doc:`sc
 
 Running scripts
 ---------------
-To run a script navigate to the "Scripting Panel". F
+To run a script navigate to the "Scripting Panel".
 
 MagScope comes with a lightweight scripting runtime that allows you to queue up GUI interactions and hardware commands for repeatable experiments.
 A script is an instance of ``magscope.Script`` where each call records a step to be executed.
 
 First, create a script following the details below.
-An `example script is available <https://github.com/7jameslondon/MagScope/blob/master/example_script.py>`_.
+An `example script is available <https://github.com/7jameslondon/MagScope/blob/master/examples/scripts/example_script.py>`_.
 Second, load the script by clicking "Load" and selecting the Python script.
 Once loaded the Scripting panel should say "Loaded".
 Third, click "Start".
