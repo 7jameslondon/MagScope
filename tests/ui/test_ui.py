@@ -10,10 +10,11 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QWidget
+from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget
 
 from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.processes import SingletonMeta
+from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode
 
 
@@ -245,3 +246,43 @@ def test_acquisition_setters_update_controls_and_state(ui_manager):
     assert ui_manager._acquisition_mode == AcquisitionMode.FULL_VIDEO
     assert panel.acquisition_mode_combobox.block_calls == [True, False]
     assert panel.acquisition_mode_combobox.current_text == AcquisitionMode.FULL_VIDEO
+
+
+def test_settings_persistence_warning_is_shown_once(qtbot, ui_manager, monkeypatch):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    ui_manager.windows = [window]
+    ui_manager.settings = MagScopeSettings(persistence_available=False)
+
+    warning_calls: list[str] = []
+    monkeypatch.setattr(
+        ui_manager,
+        "_show_settings_persistence_warning",
+        lambda: warning_calls.append("shown"),
+    )
+
+    ui_manager._show_settings_persistence_warning_if_needed()
+    ui_manager._show_settings_persistence_warning_if_needed()
+
+    assert warning_calls == ["shown"]
+
+
+def test_set_settings_warns_when_persistence_becomes_unavailable(qtbot, ui_manager, monkeypatch):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    ui_manager.windows = [window]
+    ui_manager.settings = MagScopeSettings()
+    ui_manager._last_applied_roi = ui_manager.settings["ROI"]
+    monkeypatch.setattr(ui_manager, "_update_roi_labels", lambda roi: None)
+
+    warning_calls: list[str] = []
+    monkeypatch.setattr(
+        ui_manager,
+        "_show_settings_persistence_warning",
+        lambda: warning_calls.append("shown"),
+    )
+
+    ui_manager.set_settings(MagScopeSettings({"ROI": 50}, persistence_available=False))
+    ui_manager.set_settings(MagScopeSettings({"ROI": 50}, persistence_available=False))
+
+    assert warning_calls == ["shown"]

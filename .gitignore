@@ -1,5 +1,4 @@
 *.log
-*settings.yaml
 .idea/
 *build/
 dev*
@@ -10,3 +9,4 @@ dist/
 __pycache__
 .vscode/
 *.ipynb*
+.codex-tmp/

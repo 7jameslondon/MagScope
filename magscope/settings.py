@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, MutableMapping
+from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
 from PyQt6.QtCore import QSettings
 import yaml
@@ -159,15 +160,20 @@ class MagScopeSettings(MutableMapping[str, Any]):
         ),
     }
 
-    def __init__(self, values: Mapping[str, Any] | None = None):
-        self._persist_changes = False
+    def __init__(
+        self,
+        values: Mapping[str, Any] | None = None,
+        *,
+        persistence_available: bool = True,
+        persistence_enabled: bool = False,
+    ):
+        self._persistence_enabled = persistence_enabled
+        self._persistence_listeners: list[Callable[["MagScopeSettings"], None]] = []
+        self.persistence_available = persistence_available
         self._values: dict[str, Any] = {}
         self.update(self._load_defaults())
-        self.update(self._load_qsettings_values())
         if values:
             self.update(values)
-        self._persist_changes = True
-        self._write_to_qsettings()
 
     @classmethod
     def _load_defaults(cls) -> dict[str, Any]:
@@ -190,30 +196,66 @@ class MagScopeSettings(MutableMapping[str, Any]):
             except ValueError:
                 continue
         settings.endGroup()
+        self._update_persistence_availability(
+            settings.isWritable() and settings.status() == QSettings.Status.NoError
+        )
         return loaded
 
-    def _write_to_qsettings(self) -> None:
-        if not self._persist_changes:
+    def _update_persistence_availability(self, available: bool) -> None:
+        was_available = self.persistence_available
+        self.persistence_available = available
+        if was_available and not available:
+            for listener in list(self._persistence_listeners):
+                listener(self)
+
+    def add_persistence_listener(
+        self, callback: Callable[["MagScopeSettings"], None]
+    ) -> None:
+        self._persistence_listeners.append(callback)
+
+    @classmethod
+    def from_qsettings(
+        cls, values: Mapping[str, Any] | None = None
+    ) -> "MagScopeSettings":
+        settings = cls(persistence_enabled=True)
+        settings.update(settings._load_qsettings_values())
+        if values:
+            settings.update(values)
+        return settings
+
+    def save_to_qsettings(self) -> None:
+        if not self._persistence_enabled:
             return
         settings = self._qsettings()
         settings.beginGroup(self._QSETTINGS_GROUP)
+        settings.remove("")
         for key, value in self._values.items():
             settings.setValue(key, value)
         settings.endGroup()
         settings.sync()
+        self._update_persistence_availability(
+            settings.isWritable() and settings.status() == QSettings.Status.NoError
+        )
 
     def reset_to_defaults(self) -> None:
-        self._persist_changes = False
         self._values = {}
         self.update(self._load_defaults())
-        self._persist_changes = True
-        self._write_to_qsettings()
 
     def to_dict(self) -> dict[str, Any]:
         return copy.deepcopy(self._values)
 
     def clone(self) -> "MagScopeSettings":
-        return MagScopeSettings(self._values)
+        return MagScopeSettings(
+            self._values,
+            persistence_available=self.persistence_available,
+        )
+
+    def persistent_copy(self) -> "MagScopeSettings":
+        return MagScopeSettings(
+            self._values,
+            persistence_available=self.persistence_available,
+            persistence_enabled=True,
+        )
 
     def _coerce_setting(self, key: str, value: Any) -> Any:
         if key not in self._SETTING_SPECS:
@@ -238,7 +280,6 @@ class MagScopeSettings(MutableMapping[str, Any]):
     def __setitem__(self, key: str, value: Any) -> None:
         coerced = self._coerce_setting(key, value)
         self._values[key] = coerced
-        self._write_to_qsettings()
 
     def __delitem__(self, key: str) -> None:
         raise TypeError("MagScopeSettings does not support deleting settings")
@@ -249,12 +290,12 @@ class MagScopeSettings(MutableMapping[str, Any]):
     def __len__(self):
         return len(self._values)
 
-    def save(self, path: str) -> None:
+    def export_yaml(self, path: str | os.PathLike[str]) -> None:
         with open(path, "w", encoding="utf-8") as file:
             yaml.safe_dump(self._values, file)
 
     @classmethod
-    def from_yaml(cls, path: str) -> "MagScopeSettings":
+    def import_yaml(cls, path: str | os.PathLike[str]) -> "MagScopeSettings":
         with open(path, "r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
         if data is None:

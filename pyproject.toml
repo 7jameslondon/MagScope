@@ -62,6 +62,5 @@ exclude = ["tests*", "docs*", "examples*", "assets*"]
 
 [tool.setuptools.package-data]
 "magscope" = [
-    "default_settings.yaml", 
     "simulation_zlut.txt"
 ]

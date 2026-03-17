@@ -41,6 +41,7 @@
    - Keep formatting consistent and easy to read. Prefer to follow the existing style; do not introduce a different formatter style unless explicitly requested.
 
 # Tests and validation:
+   - Check if there is a .venv if so use that as the enviorment unless told otherwise.
    - If the environment allows, run pytest after making changes and report the results. Do not treat the tests as exhaustive; also reason about correctness and performance.
 
 # Tecnical infomration

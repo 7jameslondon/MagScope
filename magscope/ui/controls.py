@@ -261,7 +261,7 @@ class ResetPanel(QFrame):
 
 
 class MagScopeSettingsPanel(ControlPanelBase):
-    """Allow loading, saving, and editing MagScope configuration values."""
+    """Allow importing, exporting, and editing MagScope configuration values."""
 
     def __init__(self, manager: "UIManager"):
         super().__init__(manager=manager, title="MagScope Settings", collapsed_by_default=True)
@@ -276,11 +276,11 @@ class MagScopeSettingsPanel(ControlPanelBase):
         top_row = QHBoxLayout()
         button_layout.addLayout(top_row)
 
-        self.load_button = QPushButton("Load")
+        self.load_button = QPushButton("Import")
         self.load_button.clicked.connect(self._on_load_clicked)  # type: ignore
         top_row.addWidget(self.load_button)
 
-        self.save_button = QPushButton("Save")
+        self.save_button = QPushButton("Export")
         self.save_button.clicked.connect(self._on_save_clicked)  # type: ignore
         top_row.addWidget(self.save_button)
 
@@ -362,37 +362,37 @@ class MagScopeSettingsPanel(ControlPanelBase):
     def _on_load_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Load settings",
+            "Import settings",
             "",
             "YAML Files (*.yaml);;All Files (*)",
         )
         if not path:
             return
         try:
-            settings = MagScopeSettings.from_yaml(path)
+            settings = MagScopeSettings.import_yaml(path)
         except (OSError, ValueError) as exc:
             self._show_error(str(exc))
             return
         self._push_settings(settings)
         self._notify(
-            f"Loaded settings from {os.path.basename(path)}; {self._format_last_updated_text()}"
+            f"Imported settings from {os.path.basename(path)}; {self._format_last_updated_text()}"
         )
 
     def _on_save_clicked(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save settings",
-            "settings.yaml",
+            "Export settings",
+            "magscope-settings.yaml",
             "YAML Files (*.yaml);;All Files (*)",
         )
         if not path:
             return
         try:
-            self._current_settings.save(path)
+            self._current_settings.export_yaml(path)
         except OSError as exc:
             self._show_error(str(exc))
             return
-        self._notify(f"Saved settings to {os.path.basename(path)}")
+        self._notify(f"Exported settings to {os.path.basename(path)}")
 
 
 class AcquisitionPanel(ControlPanelBase):

@@ -4,8 +4,8 @@
 connects them with shared resources, and relays inter-process messages until
 shutdown. Its responsibilities span the full application lifetime:
 
-* Loading YAML configuration, merging user overrides, and distributing the
-  result to each process.
+* Loading persisted settings from ``QSettings``, with optional YAML
+  import/export available through the user interface.
 * Constructing manager processes (camera, bead lock, GUI, scripting, video
   processing, and optional hardware integrations) and wiring them to shared
   locks, buffers, and IPC pipes.
@@ -120,7 +120,7 @@ class MagScope(metaclass=SingletonMeta):
         self.shared_values: InterprocessValues = InterprocessValues()
         self._quitting: Event = Event()
 
-        self._settings = MagScopeSettings()
+        self._settings = MagScopeSettings.from_qsettings()
 
         self._running: bool = False
         self._log_level = logging.INFO if verbose else logging.WARNING
@@ -251,7 +251,8 @@ class MagScope(metaclass=SingletonMeta):
 
     @settings.setter
     def settings(self, value):
-        self._settings = self._coerce_settings(value)
+        self._settings = self._coerce_settings(value).persistent_copy()
+        self._settings.save_to_qsettings()
         if self._running:
             command = SetSettingsCommand(settings=self._settings.clone())
             self._handle_broadcast_command(command)
@@ -470,7 +471,7 @@ class MagScope(metaclass=SingletonMeta):
             spec = self.command_registry.route_for(command)
 
         if isinstance(command, SetSettingsCommand):
-            self._settings = self._coerce_settings(command.settings)
+            self._settings = self._coerce_settings(command.settings).persistent_copy()
 
         if isinstance(command, QuitCommand):
             logger.info('MagScope quitting ...')
