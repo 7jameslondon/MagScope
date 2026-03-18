@@ -507,9 +507,43 @@ class UIManager(ManagerProcessBase):
         self._write_bead_rois_to_buffer(bead_rois)
         self._broadcast_bead_roi_update()
 
+    def _add_bead_roi(self, bead_id: int, roi: tuple[int, int, int, int]) -> None:
+        if self.bead_roi_buffer is None:
+            self.update_bead_rois()
+            return
+        self.bead_roi_buffer.add_beads({bead_id: roi})
+        self._broadcast_bead_roi_update()
+
+    def _update_bead_roi(self, bead_id: int, roi: tuple[int, int, int, int]) -> None:
+        if self.bead_roi_buffer is None:
+            self.update_bead_rois()
+            return
+        self.bead_roi_buffer.update_beads({bead_id: roi})
+        self._broadcast_bead_roi_update()
+
+    def _update_multiple_bead_rois(
+        self,
+        bead_rois: dict[int, tuple[int, int, int, int]],
+    ) -> None:
+        if not bead_rois:
+            return
+        if self.bead_roi_buffer is None:
+            self.update_bead_rois()
+            return
+        self.bead_roi_buffer.update_beads(bead_rois)
+        self._broadcast_bead_roi_update()
+
+    def _remove_bead_roi(self, bead_id: int) -> None:
+        if self.bead_roi_buffer is None:
+            self.update_bead_rois()
+            return
+        self.bead_roi_buffer.remove_beads([bead_id])
+        self._broadcast_bead_roi_update()
+
     @register_ipc_command(MoveBeadsCommand)
     def move_beads(self, moves: list[tuple[int, int, int]]):
         moved_ids: list[int] = []
+        moved_rois: dict[int, tuple[int, int, int, int]] = {}
 
         self._suppress_bead_roi_updates = True
         try:
@@ -519,13 +553,14 @@ class UIManager(ManagerProcessBase):
 
                 self._bead_graphics[id].move(dx, dy)
                 moved_ids.append(id)
+                moved_rois[id] = self._bead_graphics[id].get_roi_bounds()
         finally:
             self._suppress_bead_roi_updates = False
 
         if not moved_ids:
             return
 
-        self.update_bead_rois()
+        self._update_multiple_bead_rois(moved_rois)
 
         command = RemoveBeadsFromPendingMovesCommand(ids=moved_ids)
         self.send_ipc(command)
@@ -552,8 +587,8 @@ class UIManager(ManagerProcessBase):
         # Update highlight colors to reflect selection/reference
         self._update_bead_highlights()
 
-        # Update the bead ROIs
-        self.update_bead_rois()
+        # Update the bead ROI
+        self._add_bead_roi(id, graphic.get_roi_bounds())
 
     def remove_bead(self, id: int):
         # Update graphics
@@ -563,8 +598,8 @@ class UIManager(ManagerProcessBase):
         # Update highlight colors to reflect selection/reference
         self._update_bead_highlights()
 
-        # Update bead ROIs
-        self.update_bead_rois()
+        # Update bead ROI
+        self._remove_bead_roi(id)
 
     def clear_beads(self):
         # Update graphics

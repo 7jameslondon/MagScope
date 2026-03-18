@@ -423,6 +423,7 @@ class BeadGraphic(QGraphicsRectItem):
     def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
         self._parent: UIManager = parent
         self.id: int = id
+        self._initializing: bool = True
         self._is_moving: bool = False
         self._locked: bool
         self._color_state: str = 'default'
@@ -464,6 +465,7 @@ class BeadGraphic(QGraphicsRectItem):
         # Configure scene
         self.scene_rect = self.scene().sceneRect()
         self._update_cached_roi()
+        self._initializing = False
 
     def remove(self):
         self.view_scene.removeItem(self)
@@ -551,7 +553,11 @@ class BeadGraphic(QGraphicsRectItem):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             value = self.validate_move(value)
             self.move_label()
-            if not self._is_moving and not self._parent.bead_roi_updates_suppressed:
+            if (
+                not self._initializing
+                and not self._is_moving
+                and not self._parent.bead_roi_updates_suppressed
+            ):
                 self.on_move_completed()
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_cached_roi()
@@ -576,7 +582,7 @@ class BeadGraphic(QGraphicsRectItem):
         super().mouseReleaseEvent(event)
 
     def on_move_completed(self):
-        self._parent.update_bead_rois()
+        self._parent._update_bead_roi(self.id, self.get_roi_bounds())
 
     def get_roi_bounds(self) -> tuple[int, int, int, int]:
         if self._cached_roi is None:

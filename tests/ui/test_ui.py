@@ -12,6 +12,10 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget
 
+from magscope.ipc_commands import (
+    RemoveBeadsFromPendingMovesCommand,
+    UpdateBeadRoisCommand,
+)
 from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode
@@ -138,6 +142,36 @@ class FakeTracksBuffer:
 
     def peak_unsorted(self):
         return self._data
+
+
+class FakeBeadRoiBuffer:
+    def __init__(self):
+        self.add_calls = []
+        self.update_calls = []
+        self.remove_calls = []
+
+    def add_beads(self, value):
+        self.add_calls.append(value)
+
+    def update_beads(self, value):
+        self.update_calls.append(value)
+
+    def remove_beads(self, value):
+        self.remove_calls.append(value)
+
+
+class FakeGraphic:
+    def __init__(self, roi: tuple[int, int, int, int]):
+        self.roi = roi
+        self.moves = []
+
+    def move(self, dx: int, dy: int) -> None:
+        self.moves.append((dx, dy))
+        x0, x1, y0, y1 = self.roi
+        self.roi = (x0 + dx, x1 + dx, y0 + dy, y1 + dy)
+
+    def get_roi_bounds(self) -> tuple[int, int, int, int]:
+        return self.roi
 
 
 @pytest.fixture
@@ -313,3 +347,43 @@ def test_set_settings_warns_when_persistence_becomes_unavailable(qtbot, ui_manag
     ui_manager.set_settings(MagScopeSettings({"ROI": 50}, persistence_available=False))
 
     assert warning_calls == ["shown"]
+
+
+def test_incremental_bead_roi_helpers_update_buffer_and_broadcast(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+
+    ui_manager._add_bead_roi(2, (1, 2, 3, 4))
+    ui_manager._update_bead_roi(2, (5, 6, 7, 8))
+    ui_manager._remove_bead_roi(2)
+
+    assert buffer.add_calls == [{2: (1, 2, 3, 4)}]
+    assert buffer.update_calls == [{2: (5, 6, 7, 8)}]
+    assert buffer.remove_calls == [[2]]
+    assert [type(command) for command in commands] == [
+        UpdateBeadRoisCommand,
+        UpdateBeadRoisCommand,
+        UpdateBeadRoisCommand,
+    ]
+
+
+def test_move_beads_updates_only_moved_rois_and_clears_pending(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+    ui_manager.send_ipc = commands.append
+    ui_manager._bead_graphics = {
+        1: FakeGraphic((10, 20, 30, 40)),
+        2: FakeGraphic((50, 60, 70, 80)),
+    }
+
+    ui_manager.move_beads([(1, 2, 3), (99, 4, 5)])
+
+    assert buffer.update_calls == [{1: (12, 22, 33, 43)}]
+    assert len(commands) == 2
+    assert isinstance(commands[0], UpdateBeadRoisCommand)
+    assert isinstance(commands[1], RemoveBeadsFromPendingMovesCommand)
+    assert commands[1].ids == [1]
