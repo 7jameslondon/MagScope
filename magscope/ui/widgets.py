@@ -437,6 +437,8 @@ class BeadGraphic(QGraphicsRectItem):
         self.fill_color_reference = (0, 255, 0, 25)
         self.pen_width = 0
         self.width = width
+        self._pens: dict[str, QPen] = {}
+        self._brushes: dict[str, QBrush] = {}
 
         # Calculate shape of rect (accounting for pen/border width)
         offset_pos = self.pen_width / 2
@@ -445,6 +447,16 @@ class BeadGraphic(QGraphicsRectItem):
 
         # Set up the graphic (must happen in this order)
         super().__init__(rect)
+        self._pens = {
+            'default': self._create_pen(self.border_color_default),
+            'selected': self._create_pen(self.border_color_selected),
+            'reference': self._create_pen(self.border_color_reference),
+        }
+        self._brushes = {
+            'default': self._create_brush(self.fill_color_default),
+            'selected': self._create_brush(self.fill_color_selected),
+            'reference': self._create_brush(self.fill_color_reference),
+        }
 
         # Label
         self.label = QGraphicsTextItem('', self)
@@ -490,26 +502,22 @@ class BeadGraphic(QGraphicsRectItem):
 
     def set_selection_state(self, state: str):
         """Update the bead overlay color to match selection/reference state."""
+        if state == self._color_state:
+            return
         self._color_state = state
         self._apply_color()
 
-    def _apply_color(self):
-        if self._color_state == 'selected':
-            border_color = self.border_color_selected
-            fill_color = self.fill_color_selected
-        elif self._color_state == 'reference':
-            border_color = self.border_color_reference
-            fill_color = self.fill_color_reference
-        else:
-            border_color = self.border_color_default
-            fill_color = self.fill_color_default
-
-        pen = QPen(QColor(*border_color))
+    def _create_pen(self, color: tuple[int, int, int, int]) -> QPen:
+        pen = QPen(QColor(*color))
         pen.setWidth(self.pen_width)
-        self.setPen(pen)
+        return pen
 
-        brush = QBrush(QColor(*fill_color))
-        self.setBrush(brush)
+    def _create_brush(self, color: tuple[int, int, int, int]) -> QBrush:
+        return QBrush(QColor(*color))
+
+    def _apply_color(self):
+        self.setPen(self._pens[self._color_state])
+        self.setBrush(self._brushes[self._color_state])
 
     def move(self, dx, dy):
         value = self.pos()

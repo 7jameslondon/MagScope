@@ -268,11 +268,16 @@ class UIManager(ManagerProcessBase):
         self._run_safe(self._update_view_and_hist)
 
     def set_selected_bead(self, bead: int):
+        old_selected = self._normalize_bead_id(self.selected_bead)
+        old_reference = self._normalize_bead_id(self.reference_bead)
         self.selected_bead = bead
         if self.shared_values is not None:
             self.shared_values.live_profile_bead.value = bead
         self._clear_live_profile_buffer()
-        self._update_bead_highlights()
+        self._update_bead_highlights(
+            old_selected=old_selected,
+            old_reference=old_reference,
+        )
 
     def set_live_profile_monitor_enabled(self, enabled: bool) -> None:
         if self.shared_values is not None:
@@ -281,20 +286,52 @@ class UIManager(ManagerProcessBase):
             self._clear_live_profile_buffer()
 
     def set_reference_bead(self, bead: int | None):
+        old_selected = self._normalize_bead_id(self.selected_bead)
+        old_reference = self._normalize_bead_id(self.reference_bead)
         self.reference_bead = bead
-        self._update_bead_highlights()
+        self._update_bead_highlights(
+            old_selected=old_selected,
+            old_reference=old_reference,
+        )
 
-    def _update_bead_highlights(self):
-        selected_id = self.selected_bead if self.selected_bead is not None and self.selected_bead >= 0 else None
-        reference_id = self.reference_bead if self.reference_bead is not None and self.reference_bead >= 0 else None
+    def _normalize_bead_id(self, bead: int | None) -> int | None:
+        if bead is None or bead < 0:
+            return None
+        return bead
 
-        for bead_id, graphic in self._bead_graphics.items():
-            if bead_id == selected_id:
-                graphic.set_selection_state('selected')
-            elif bead_id == reference_id:
-                graphic.set_selection_state('reference')
-            else:
-                graphic.set_selection_state('default')
+    def _get_bead_highlight_state(self, bead_id: int) -> str:
+        selected_id = self._normalize_bead_id(self.selected_bead)
+        reference_id = self._normalize_bead_id(self.reference_bead)
+
+        if bead_id == selected_id:
+            return 'selected'
+        if bead_id == reference_id:
+            return 'reference'
+        return 'default'
+
+    def _update_bead_highlight(self, bead_id: int) -> None:
+        graphic = self._bead_graphics.get(bead_id)
+        if graphic is None:
+            return
+        graphic.set_selection_state(self._get_bead_highlight_state(bead_id))
+
+    def _update_bead_highlights(
+        self,
+        *,
+        old_selected: int | None = None,
+        old_reference: int | None = None,
+    ):
+        selected_id = self._normalize_bead_id(self.selected_bead)
+        reference_id = self._normalize_bead_id(self.reference_bead)
+
+        affected_ids = {
+            bead_id
+            for bead_id in (old_selected, old_reference, selected_id, reference_id)
+            if bead_id is not None
+        }
+
+        for bead_id in affected_ids:
+            self._update_bead_highlight(bead_id)
 
     def _clear_live_profile_buffer(self) -> None:
         if self.live_profile_buffer is not None:
@@ -584,19 +621,25 @@ class UIManager(ManagerProcessBase):
         self._bead_next_id += 1
         self._update_next_bead_id_label()
 
-        # Update highlight colors to reflect selection/reference
-        self._update_bead_highlights()
+        # Update highlight color to reflect selection/reference
+        self._update_bead_highlight(id)
 
         # Update the bead ROI
         self._add_bead_roi(id, graphic.get_roi_bounds())
 
     def remove_bead(self, id: int):
+        old_selected = self._normalize_bead_id(self.selected_bead)
+        old_reference = self._normalize_bead_id(self.reference_bead)
+
         # Update graphics
         graphic = self._bead_graphics.pop(id)
         graphic.remove()
 
         # Update highlight colors to reflect selection/reference
-        self._update_bead_highlights()
+        self._update_bead_highlights(
+            old_selected=old_selected,
+            old_reference=old_reference,
+        )
 
         # Update bead ROI
         self._remove_bead_roi(id)
