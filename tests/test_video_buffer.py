@@ -13,6 +13,7 @@ SPEC.loader.exec_module(datatypes)  # type: ignore[union-attr]
 
 BufferOverflow = datatypes.BufferOverflow
 BufferUnderflow = datatypes.BufferUnderflow
+BeadRoiBuffer = datatypes.BeadRoiBuffer
 MatrixBuffer = datatypes.MatrixBuffer
 VideoBuffer = datatypes.VideoBuffer
 int_to_uint_dtype = datatypes.int_to_uint_dtype
@@ -20,6 +21,8 @@ int_to_uint_dtype = datatypes.int_to_uint_dtype
 
 VIDEO_BUFFER_NAME = "VideoBuffer"
 VIDEO_SUFFIXES = [" Info", "", " Timestamps", " Index"]
+BEAD_ROI_BUFFER_NAME = "BeadRoiBuffer"
+BEAD_ROI_SUFFIXES = [" Info", " Data", " Occupancy"]
 
 
 def _cleanup_video_shared_memory():
@@ -27,6 +30,17 @@ def _cleanup_video_shared_memory():
     for suffix in VIDEO_SUFFIXES:
         try:
             shm = SharedMemory(name=VIDEO_BUFFER_NAME + suffix)
+        except FileNotFoundError:
+            continue
+        else:
+            shm.unlink()
+            shm.close()
+
+
+def _cleanup_bead_roi_shared_memory():
+    for suffix in BEAD_ROI_SUFFIXES:
+        try:
+            shm = SharedMemory(name=BEAD_ROI_BUFFER_NAME + suffix)
         except FileNotFoundError:
             continue
         else:
@@ -204,6 +218,95 @@ class TestMatrixBuffer(MatrixBufferTestCase):
             self.buffer.write(np.zeros((self.buffer.shape[0] + 1, self.buffer.shape[1]), dtype=self.buffer.dtype))
         with self.assertRaises(AssertionError):
             self.buffer.write(np.zeros((self.buffer.shape[0], self.buffer.shape[1] + 1), dtype=self.buffer.dtype))
+
+
+class BeadRoiBufferTestCase(unittest.TestCase):
+    def setUp(self):
+        _cleanup_bead_roi_shared_memory()
+        self.locks = {BEAD_ROI_BUFFER_NAME: Lock()}
+        self.buffer = BeadRoiBuffer(
+            create=True,
+            locks=self.locks,
+            capacity=8,
+        )
+
+    def tearDown(self):
+        buffer = getattr(self, "buffer", None)
+        if buffer is not None:
+            for attr in ("_shm_data", "_shm_occupancy", "_shm_info"):
+                shm = getattr(buffer, attr, None)
+                if shm is not None:
+                    shm.close()
+                    try:
+                        shm.unlink()
+                    except FileNotFoundError:
+                        pass
+        _cleanup_bead_roi_shared_memory()
+
+
+class TestBeadRoiBuffer(BeadRoiBufferTestCase):
+    def test_metadata_shared_across_instances(self):
+        consumer = BeadRoiBuffer(create=False, locks=self.locks)
+        try:
+            self.assertEqual(consumer.capacity, self.buffer.capacity)
+            self.assertEqual(consumer.max_id_plus_one, self.buffer.max_id_plus_one)
+            self.assertEqual(consumer.active_count, self.buffer.active_count)
+        finally:
+            for attr in ("_shm_data", "_shm_occupancy", "_shm_info"):
+                getattr(consumer, attr).close()
+
+    def test_replace_and_get_beads_round_trip(self):
+        self.buffer.replace_beads({1: (10, 20, 30, 40), 4: (50, 60, 70, 80)})
+
+        bead_ids, bead_rois = self.buffer.get_beads()
+
+        np.testing.assert_array_equal(bead_ids, np.array([1, 4], dtype=np.uint32))
+        np.testing.assert_array_equal(
+            bead_rois,
+            np.array([[10, 20, 30, 40], [50, 60, 70, 80]], dtype=np.uint32),
+        )
+        self.assertEqual(self.buffer.active_count, 2)
+        self.assertEqual(self.buffer.max_id_plus_one, 5)
+
+    def test_add_update_remove_and_clear(self):
+        self.buffer.add_beads({2: (1, 2, 3, 4)})
+        self.assertEqual(self.buffer.get_next_available_bead_id(), 3)
+
+        self.buffer.update_beads({2: (11, 12, 13, 14)})
+        bead_ids, bead_rois = self.buffer.get_beads()
+        np.testing.assert_array_equal(bead_ids, np.array([2], dtype=np.uint32))
+        np.testing.assert_array_equal(bead_rois, np.array([[11, 12, 13, 14]], dtype=np.uint32))
+
+        self.buffer.remove_beads([2])
+        bead_ids, bead_rois = self.buffer.get_beads()
+        self.assertEqual(bead_ids.size, 0)
+        self.assertEqual(bead_rois.shape, (0, 4))
+        self.assertEqual(self.buffer.get_next_available_bead_id(), 3)
+
+        self.buffer.clear_beads()
+        self.assertEqual(self.buffer.get_next_available_bead_id(), 0)
+        self.assertEqual(self.buffer.active_count, 0)
+
+    def test_reorder_beads_compacts_ids(self):
+        self.buffer.replace_beads({1: (10, 20, 30, 40), 3: (50, 60, 70, 80)})
+
+        mapping = self.buffer.reorder_beads()
+        bead_ids, bead_rois = self.buffer.get_beads()
+
+        self.assertEqual(mapping, {1: 0, 3: 1})
+        np.testing.assert_array_equal(bead_ids, np.array([0, 1], dtype=np.uint32))
+        np.testing.assert_array_equal(
+            bead_rois,
+            np.array([[10, 20, 30, 40], [50, 60, 70, 80]], dtype=np.uint32),
+        )
+
+    def test_validation_rejects_invalid_ids(self):
+        with self.assertRaises(ValueError):
+            self.buffer.add_beads({8: (1, 2, 3, 4)})
+        with self.assertRaises(ValueError):
+            self.buffer.update_beads({1: (1, 2, 3, 4)})
+        with self.assertRaises(ValueError):
+            self.buffer.replace_beads({1: (-1, 2, 3, 4)})
 
 
 class TestIntToUintDtype(unittest.TestCase):

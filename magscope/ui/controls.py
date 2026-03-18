@@ -697,10 +697,10 @@ class HistogramPanel(ControlPanelBase):
         image = np.frombuffer(data, image_dtype).reshape(image_shape)
 
         if self.only_beads_checkbox.checkbox.isChecked():
-            bead_rois = self.manager.bead_rois
+            _, bead_rois = self.manager.get_cached_bead_rois()
             if len(bead_rois) > 0:
                 image = crop_stack_to_rois(
-                    np.swapaxes(image, 0, 1)[:, :, None], list(bead_rois.values()))
+                    np.swapaxes(image, 0, 1)[:, :, None], bead_rois)
             else:
                 self.clear()
                 return

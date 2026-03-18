@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -165,7 +166,16 @@ def clear_singletons():
 
 @pytest.fixture(autouse=True)
 def fake_buffers(monkeypatch):
-    created = {"MatrixBuffer": [], "VideoBuffer": []}
+    created = {"BeadRoiBuffer": [], "MatrixBuffer": [], "VideoBuffer": []}
+
+    class FakeBeadRoiBuffer:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            created["BeadRoiBuffer"].append({"args": args, "kwargs": kwargs})
+
+        def get_beads(self):
+            return np.zeros((0,), dtype=np.uint32), np.zeros((0, 4), dtype=np.uint32)
 
     class FakeMatrixBuffer:
         def __init__(self, *args, **kwargs):
@@ -189,6 +199,7 @@ def fake_buffers(monkeypatch):
             FakeMatrixBuffer(create=kwargs.get("create", False), locks=locks, name=name, shape=None)
 
     monkeypatch.setattr(processes, "LiveProfileBuffer", FakeLiveProfileBuffer)
+    monkeypatch.setattr(processes, "BeadRoiBuffer", FakeBeadRoiBuffer)
     monkeypatch.setattr(processes, "MatrixBuffer", FakeMatrixBuffer)
     monkeypatch.setattr(processes, "VideoBuffer", FakeVideoBuffer)
     return created
@@ -215,7 +226,7 @@ def test_run_validates_dependencies(fake_buffers):
 
     proc._magscope_quitting = FakeEvent()
     proc._pipe = FakePipe()
-    proc.locks = {"LiveProfileBuffer": object()}
+    proc.locks = {"BeadRoiBuffer": object(), "LiveProfileBuffer": object()}
     with pytest.raises(RuntimeError, match="DummyProcess has no command registry"):
         proc.run()
 
@@ -227,7 +238,7 @@ def test_run_validates_dependencies(fake_buffers):
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
-        locks={"LiveProfileBuffer": object()},
+        locks={"BeadRoiBuffer": object(), "LiveProfileBuffer": object()},
         pipe_end=FakePipe(),
         command_registry=registry,
     )
@@ -236,6 +247,7 @@ def test_run_validates_dependencies(fake_buffers):
     assert proc.setup_called
     assert proc.main_loop_runs == 1
     assert proc._pipe.poll_calls == 1
+    assert len(fake_buffers["BeadRoiBuffer"]) == 1
     assert len(fake_buffers["MatrixBuffer"]) == 2
     assert len(fake_buffers["VideoBuffer"]) == 1
 
@@ -255,7 +267,7 @@ def test_receive_ipc_dispatch_and_quit_flag():
         quitting_event=quit_event,
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
-        locks={"LiveProfileBuffer": object()},
+        locks={"BeadRoiBuffer": object(), "LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )
@@ -290,7 +302,7 @@ def test_receive_ipc_errors_on_unknown_command():
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
-        locks={"LiveProfileBuffer": object()},
+        locks={"BeadRoiBuffer": object(), "LiveProfileBuffer": object()},
         pipe_end=FakePipe([Unknown()]),
         command_registry=registry,
     )
@@ -312,7 +324,7 @@ def test_quit_broadcasts_and_drains_pipe():
         quitting_event=quitting_event,
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
-        locks={"LiveProfileBuffer": object()},
+        locks={"BeadRoiBuffer": object(), "LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )
@@ -353,7 +365,7 @@ def test_run_reports_exception(monkeypatch):
         quitting_event=FakeEvent(),
         settings=FakeSettings(),
         shared_values=processes.InterprocessValues(),
-        locks={"LiveProfileBuffer": object()},
+        locks={"BeadRoiBuffer": object(), "LiveProfileBuffer": object()},
         pipe_end=pipe,
         command_registry=registry,
     )

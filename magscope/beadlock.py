@@ -89,13 +89,14 @@ class BeadLockManager(ManagerProcessBase):
         if now is None:
             now = time()
         self._xy_lock_last_time = now
+        bead_ids, bead_rois = self.get_cached_bead_rois()
 
         # For each bead calculate if/how much to move
         moves_to_send: list[tuple[int, int, int]] = []
-        for id, roi in self.bead_rois.items():
+        for bead_id, roi in zip(bead_ids.tolist(), bead_rois, strict=False):
 
             # Get the track for this bead
-            track = tracks[tracks[:, 4] == id, :]
+            track = tracks[tracks[:, 4] == bead_id, :]
 
             # Check there is track data
             if track.shape[0] == 0:
@@ -107,7 +108,7 @@ class BeadLockManager(ManagerProcessBase):
 
             cutoff = max(
                 self._xy_lock_global_cutoff,
-                self._xy_lock_bead_cutoff.get(id, 0.),
+                self._xy_lock_bead_cutoff.get(bead_id, 0.),
             )
             time_mask = valid_track[:, 0] >= cutoff
             valid_track = valid_track[time_mask]
@@ -123,7 +124,7 @@ class BeadLockManager(ManagerProcessBase):
             y = float(np.mean(ys))
 
             # Check the bead started the last move
-            if id in self._xy_lock_pending_moves:
+            if bead_id in self._xy_lock_pending_moves:
                 continue
 
             # Calculate the move
@@ -143,7 +144,7 @@ class BeadLockManager(ManagerProcessBase):
 
             # Move the bead as needed
             if abs(dx) > 0 or abs(dy) > 0:
-                moves_to_send.append((id, int(dx), int(dy)))
+                moves_to_send.append((bead_id, int(dx), int(dy)))
 
         if moves_to_send:
             self._xy_lock_pending_moves.extend([id for id, _, _ in moves_to_send])
@@ -160,24 +161,25 @@ class BeadLockManager(ManagerProcessBase):
             warn('Z-lock is not yet implemented; skipping Z-lock iteration', stacklevel=1)
             self._z_lock_warning_emitted = True
 
-    def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
-        previous_bead_rois = getattr(self, 'bead_rois', {}).copy()
-        super().set_bead_rois(value)
+    def refresh_bead_rois(self):
+        previous_bead_rois = self.bead_rois
+        super().refresh_bead_rois()
+        current_bead_rois = self.bead_rois
+        active_ids = set(current_bead_rois)
 
         # Check if any of the beads have been deleted
-        keys = list(self._xy_lock_pending_moves)  # copy
-        for id in keys:
-            if id not in self.bead_rois:
-                self._xy_lock_pending_moves.pop(id)
+        self._xy_lock_pending_moves = [
+            bead_id for bead_id in self._xy_lock_pending_moves if bead_id in active_ids
+        ]
 
         # Remove any bead-specific cutoffs for deleted beads
         bead_cutoff_ids = list(self._xy_lock_bead_cutoff)
         for bead_id in bead_cutoff_ids:
-            if bead_id not in self.bead_rois:
+            if bead_id not in current_bead_rois:
                 self._xy_lock_bead_cutoff.pop(bead_id, None)
 
         now = time()
-        for bead_id, roi in self.bead_rois.items():
+        for bead_id, roi in current_bead_rois.items():
             previous_roi = previous_bead_rois.get(bead_id)
             if previous_roi == roi:
                 continue

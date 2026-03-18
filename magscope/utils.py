@@ -20,11 +20,13 @@ class AcquisitionMode(StrEnum):
     FULL_VIDEO = 'video (full)'
     ZLUT = 'zlut'
 
-def crop_stack_to_rois(stack, rois: list[tuple[int, int, int, int]]):
+def crop_stack_to_rois(stack, rois):
+    rois = np.asarray(rois, dtype=np.int64)
+
     # Pre-allocate space for cropped_stack
     n_images = stack.shape[2]
     n_rois = len(rois)
-    width = rois[0][1] - rois[0][0]
+    width = rois[0, 1] - rois[0, 0]
     shape = (width, width, n_images, n_rois)
     cropped_stack = np.ndarray(
         shape, dtype=stack.dtype

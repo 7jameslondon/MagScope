@@ -242,11 +242,13 @@ class VideoProcessorManager(ManagerProcessBase):
             break
 
     def _add_task(self):
+        bead_ids, bead_rois = self.get_cached_bead_rois()
         kwargs = {
             'acquisition_dir': self._acquisition_dir,
             'acquisition_dir_on': self._acquisition_dir_on,
             'acquisition_mode': self._acquisition_mode,
-            'bead_rois': self.bead_rois,
+            'bead_ids': bead_ids,
+            'bead_rois': bead_rois,
             'magnification': self.settings['magnification'],
             'nm_per_px': self.camera_type.nm_per_px,
             'report_profile_length': self._pending_profile_length_request,
@@ -347,7 +349,8 @@ class VideoWorker(Process):
         acquisition_dir: str = kwargs['acquisition_dir']
         acquisition_dir_on: bool = kwargs['acquisition_dir_on']
         acquisition_mode: AcquisitionMode = kwargs['acquisition_mode']
-        bead_rois: dict[int, tuple[int, int, int, int]] = kwargs['bead_rois']
+        bead_ids: np.ndarray = kwargs['bead_ids']
+        bead_rois: np.ndarray = kwargs['bead_rois']
         save_profiles = kwargs['save_profiles']
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
@@ -355,7 +358,9 @@ class VideoWorker(Process):
         report_profile_length: bool = kwargs.get('report_profile_length', False)
         tracking_options: dict = kwargs.get('tracking_options', {}) or {}
 
-        bead_rois = bead_rois if len(bead_rois) > 0 else None
+        if bead_ids.size == 0 or bead_rois.shape[0] == 0:
+            bead_ids = None
+            bead_rois = None
 
         def _update_live_profile(timestamps: np.ndarray, bead_ids: np.ndarray, profiles: np.ndarray) -> None:
             if self._live_profile_buffer is None or not self._live_profile_enabled.value:
@@ -434,9 +439,9 @@ class VideoWorker(Process):
 
         def calculate_tracks(n_images, stack_rois, timestamps):
             # Calculate
-            bead_roi_values = np.array(list(bead_rois.values()))
-            roi_width = bead_roi_values[0, 1] - bead_roi_values[0, 0]
-            n_rois = len(bead_rois)
+            bead_roi_values = bead_rois.astype(np.float64, copy=False)
+            roi_width = int(bead_roi_values[0, 1] - bead_roi_values[0, 0])
+            n_rois = bead_rois.shape[0]
             stack_rois_reshaped = stack_rois.reshape(roi_width, roi_width, n_rois * n_images)
 
             # "zlut" can be None; magtrack returns NaN z values in that case.
@@ -453,17 +458,15 @@ class VideoWorker(Process):
             self._notify_lookup_profile_warning(warning_records)
 
             # Calculate bead indexes (b)
-            b = np.tile(np.array(list(bead_rois.keys())).astype(np.float64), n_images)
+            b = np.tile(bead_ids.astype(np.float64, copy=False), n_images)
 
             # Tile the roi positions
-            roi_x = np.tile(bead_roi_values[:, 0].astype(np.float64), n_images)
-            roi_y = np.tile(bead_roi_values[:, 2].astype(np.float64), n_images)
+            roi_x = np.tile(bead_roi_values[:, 0], n_images)
+            roi_y = np.tile(bead_roi_values[:, 2], n_images)
 
             # Convert to the camera's top-left corner reference frame
-            for bead_key, bead_value in bead_rois.items():
-                sel = b == bead_key
-                x[sel] = x[sel] + bead_value[0]
-                y[sel] = y[sel] + bead_value[2]
+            x = x + roi_x
+            y = y + roi_y
 
             # Convert x & y to nanometers
             x *= nm_per_px / magnification
@@ -478,13 +481,13 @@ class VideoWorker(Process):
             return tracks, profiles
 
         def process_mode_tracks():
-            if bead_rois:
+            if bead_rois is not None:
                 # Get stack and timestamps
                 stack, timestamps = self._video_buffer.peak_stack()
                 n_images = self._video_buffer.stack_shape[2]
 
                 # Crop/copy stack to ROI
-                stack_rois = crop_stack_to_rois(stack, list(bead_rois.values()))
+                stack_rois = crop_stack_to_rois(stack, bead_rois)
 
                 # Copy timestamps
                 timestamps = timestamps.copy()
@@ -507,7 +510,7 @@ class VideoWorker(Process):
                 self._release_stack()
 
         def process_mode_track_and_crop_video():
-            if bead_rois:  # Check if there are any ROIs
+            if bead_rois is not None:  # Check if there are any ROIs
                 # Get stack and timestamps
                 stack, timestamps = self._video_buffer.peak_stack()
                 n_images = self._video_buffer.stack_shape[2]
@@ -520,7 +523,7 @@ class VideoWorker(Process):
                     timestamps[0])
 
                 # Crop/copy stack to ROI
-                stack_rois = crop_stack_to_rois(stack, list(bead_rois.values()))  # axes=(X,Y,T,ROI)
+                stack_rois = crop_stack_to_rois(stack, bead_rois)  # axes=(X,Y,T,ROI)
 
                 # Delete the stack from memory ASAP to make memory available
                 del stack
@@ -559,9 +562,9 @@ class VideoWorker(Process):
                                 stack,
                                 timestamps_str)
 
-            if bead_rois:  # Check if there are any ROIs
+            if bead_rois is not None:  # Check if there are any ROIs
                 # Crop/copy stack to ROI
-                stack_rois = crop_stack_to_rois(stack, list(bead_rois.values()))
+                stack_rois = crop_stack_to_rois(stack, bead_rois)
 
                 # Delete the stack from memory ASAP to make memory available
                 del stack
@@ -581,7 +584,7 @@ class VideoWorker(Process):
                 self._release_stack()
 
         def process_mode_crop_video():
-            if bead_rois and acquisition_dir_on and acquisition_dir:
+            if bead_rois is not None and acquisition_dir_on and acquisition_dir:
                 # Get stack and timestamps
                 stack, timestamps = self._video_buffer.peak_stack()
 
@@ -591,7 +594,7 @@ class VideoWorker(Process):
                 first_timestamp = date_timestamp_str(timestamps[0])
 
                 # Crop/copy stack to ROI
-                stack_rois = crop_stack_to_rois(stack, list(bead_rois.values()))  # axes=(X,Y,T,ROI)
+                stack_rois = crop_stack_to_rois(stack, bead_rois)  # axes=(X,Y,T,ROI)
 
                 # Delete the stack from memory ASAP to make memory available
                 del stack
