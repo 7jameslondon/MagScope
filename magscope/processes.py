@@ -8,14 +8,16 @@ import traceback
 from typing import TYPE_CHECKING
 from warnings import warn
 
+import numpy as np
+
 from magscope._logging import get_logger
-from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
+from magscope.datatypes import BeadRoiBuffer, LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import (CommandRegistry, Delivery, UnknownCommandError, command_kwargs,
                           drain_pipe_until_quit, register_ipc_command)
 from magscope.ipc_commands import (Command, LogExceptionCommand, QuitCommand,
                                    SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
                                    SetAcquisitionModeCommand, SetAcquisitionOnCommand,
-                                   SetBeadRoisCommand, SetSettingsCommand)
+                                   SetSettingsCommand, UpdateBeadRoisCommand)
 from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, register_script_command
 
@@ -69,7 +71,9 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         self._acquisition_dir: str | None = None
         self._acquisition_dir_on: bool = False
         self._acquisition_mode: AcquisitionMode = AcquisitionMode.TRACK
-        self.bead_rois: dict[int, tuple[int, int, int, int]] = {} # x0 x1 y0 y1
+        self.bead_roi_buffer: BeadRoiBuffer | None = None
+        self._bead_roi_ids: np.ndarray = np.zeros((0,), dtype=np.uint32)
+        self._bead_roi_values: np.ndarray = np.zeros((0, 4), dtype=np.uint32)
         self.camera_type: type[CameraBase] | None = None
         self.hardware_types: dict[str, type[HardwareManagerBase]] = {}
         self.locks: dict[str, LockType] | None = None
@@ -91,6 +95,25 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def quitting_event(self) -> EventType:
         """Event set when this process has begun quitting."""
         return self._quitting
+
+    @property
+    def bead_rois(self) -> dict[int, tuple[int, int, int, int]]:
+        return {
+            int(bead_id): (int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3]))
+            for bead_id, roi in zip(self._bead_roi_ids, self._bead_roi_values, strict=False)
+        }
+
+    def get_cached_bead_rois(self) -> tuple[np.ndarray, np.ndarray]:
+        return self._bead_roi_ids, self._bead_roi_values
+
+    def _refresh_bead_roi_cache(self) -> None:
+        if self.bead_roi_buffer is None:
+            self._bead_roi_ids = np.zeros((0,), dtype=np.uint32)
+            self._bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
+            return
+        bead_ids, bead_rois = self.bead_roi_buffer.get_beads()
+        self._bead_roi_ids = bead_ids
+        self._bead_roi_values = bead_rois
 
     def configure_shared_resources(
         self,
@@ -152,6 +175,10 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                 create=False,
                 locks=self.locks,
             )
+            self.bead_roi_buffer = BeadRoiBuffer(
+                create=False,
+                locks=self.locks,
+            )
             self.tracks_buffer = MatrixBuffer(
                 create=False,
                 locks=self.locks,
@@ -161,6 +188,7 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
                 create=False,
                 locks=self.locks,
             )
+            self._refresh_bead_roi_cache()
 
             self.setup()
 
@@ -260,9 +288,9 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
     def set_acquisition_on(self, value: bool):
         self._acquisition_on = value
 
-    @register_ipc_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    def set_bead_rois(self, value: dict[int, tuple[int, int, int, int]]):
-        self.bead_rois = value
+    @register_ipc_command(UpdateBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    def refresh_bead_rois(self):
+        self._refresh_bead_roi_cache()
 
     @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_settings(self, settings: MagScopeSettings):

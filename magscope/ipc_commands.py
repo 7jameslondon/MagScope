@@ -60,8 +60,8 @@ class SetAcquisitionDirCommand(Command):
 
 
 @dataclass(frozen=True)
-class SetBeadRoisCommand(Command):
-    value: dict[int, tuple[int, int, int, int]]
+class UpdateBeadRoisCommand(Command):
+    pass
 
 
 @dataclass(frozen=True)

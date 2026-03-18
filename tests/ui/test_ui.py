@@ -13,9 +13,12 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget
 
 from magscope.ui.ui import LoadingWindow, UIManager
-from magscope.processes import SingletonMeta
 from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode
+
+
+def clear_ui_manager_singleton() -> None:
+    type(UIManager)._instances.pop(UIManager, None)
 
 
 class FakeStatusPanel:
@@ -94,10 +97,34 @@ class FakeAcquisitionPanel:
         self.save_highlight_calls.append(should_save)
 
 
+class FakeLabel:
+    def __init__(self):
+        self.text = None
+
+    def setText(self, text: str) -> None:
+        self.text = text
+
+
+class FakeBeadSelectionPanel:
+    def __init__(self):
+        self.roi_size_label = FakeLabel()
+        self.next_bead_id_label = None
+
+    def update_next_bead_id_label(self, next_bead_id: int) -> None:
+        self.next_bead_id_label = next_bead_id
+
+
+class FakeZLutGenerationPanel:
+    def __init__(self):
+        self.roi_size_label = FakeLabel()
+
+
 class FakeControls:
     def __init__(self):
         self.status_panel = FakeStatusPanel()
         self.acquisition_panel = FakeAcquisitionPanel()
+        self.bead_selection_panel = FakeBeadSelectionPanel()
+        self.z_lut_generation_panel = FakeZLutGenerationPanel()
 
 
 class FakeSharedValues:
@@ -115,7 +142,7 @@ class FakeTracksBuffer:
 
 @pytest.fixture
 def ui_manager():
-    SingletonMeta._instances.pop(UIManager, None)
+    clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = FakeControls()
     manager.settings = {
@@ -124,7 +151,7 @@ def ui_manager():
     }
     manager.camera_type = SimpleNamespace(bits=12, nm_per_px=100)
     yield manager
-    SingletonMeta._instances.pop(UIManager, None)
+    clear_ui_manager_singleton()
 
 
 def contains_widget(root: QWidget, target: QWidget) -> bool:
@@ -142,7 +169,7 @@ def test_loading_window_defaults(qtbot):
 
 @pytest.mark.parametrize('n_windows', [1, 2, 3])
 def test_create_central_widgets_attaches_expected_children(qtbot, n_windows):
-    SingletonMeta._instances.pop(UIManager, None)
+    clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = QLabel('controls')
     manager.plots_widget = QLabel('plots')
@@ -168,7 +195,7 @@ def test_create_central_widgets_attaches_expected_children(qtbot, n_windows):
         assert contains_widget(manager.central_widgets[1], manager.video_viewer)
         assert contains_widget(manager.central_widgets[2], manager.plots_widget)
 
-    SingletonMeta._instances.pop(UIManager, None)
+    clear_ui_manager_singleton()
 
 
 def test_status_updates_format_strings(ui_manager):

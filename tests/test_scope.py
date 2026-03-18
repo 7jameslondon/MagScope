@@ -137,6 +137,10 @@ def load_scope_with_stubs(monkeypatch):
         def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
 
+    class BeadRoiBuffer:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
     class VideoBuffer:
         def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
@@ -179,6 +183,7 @@ def load_scope_with_stubs(monkeypatch):
         "magscope.beadlock": {"BeadLockManager": BeadLockManager},
         "magscope.camera": {"CameraManager": CameraManager},
         "magscope.datatypes": {
+            "BeadRoiBuffer": BeadRoiBuffer,
             "LiveProfileBuffer": LiveProfileBuffer,
             "MatrixBuffer": MatrixBuffer,
             "VideoBuffer": VideoBuffer,

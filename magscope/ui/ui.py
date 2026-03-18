@@ -99,6 +99,7 @@ class UIManager(ManagerProcessBase):
         self._suppress_bead_roi_updates: bool = False
         self._last_applied_roi: int | None = None
         self._settings_persistence_warning_shown = False
+        self._bead_roi_capacity = 10000
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -323,6 +324,24 @@ class UIManager(ManagerProcessBase):
     def bead_next_id(self) -> int:
         return self._bead_next_id
 
+    def _broadcast_bead_roi_update(self) -> None:
+        if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
+            return
+        self.send_ipc(UpdateBeadRoisCommand())
+
+    def _write_bead_rois_to_buffer(self, bead_rois: dict[int, tuple[int, int, int, int]]) -> None:
+        if self.bead_roi_buffer is None:
+            bead_ids = np.asarray(sorted(bead_rois), dtype=np.uint32)
+            bead_roi_values = np.asarray([bead_rois[int(bead_id)] for bead_id in bead_ids], dtype=np.uint32)
+            self._bead_roi_ids = bead_ids
+            if bead_roi_values.size == 0:
+                self._bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
+            else:
+                self._bead_roi_values = bead_roi_values.reshape((-1, 4))
+            return
+        self.bead_roi_buffer.replace_beads(bead_rois)
+        self._refresh_bead_roi_cache()
+
     def create_central_widgets(self):
         match self.n_windows:
             case 1:
@@ -481,17 +500,12 @@ class UIManager(ManagerProcessBase):
         if not self.controls.bead_selection_panel.lock_button.isChecked():
             self.add_bead(pos)
 
-    @register_ipc_command(SetBeadRoisCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
-    def set_bead_rois(self, value):
-        pass
-
     def update_bead_rois(self):
         bead_rois = {}
         for id, graphic in self._bead_graphics.items():
             bead_rois[id] = graphic.get_roi_bounds()
-        self.bead_rois = bead_rois
-        command = SetBeadRoisCommand(value=bead_rois)
-        self.send_ipc(command)
+        self._write_bead_rois_to_buffer(bead_rois)
+        self._broadcast_bead_roi_update()
 
     @register_ipc_command(MoveBeadsCommand)
     def move_beads(self, moves: list[tuple[int, int, int]]):
@@ -517,6 +531,13 @@ class UIManager(ManagerProcessBase):
         self.send_ipc(command)
 
     def add_bead(self, pos: QPoint):
+        if self._bead_next_id >= self._bead_roi_capacity:
+            self.show_error(
+                'Maximum bead count reached',
+                'Remove beads or use Reassign IDs before adding more than 10000 beads.',
+            )
+            return
+
         # Add a bead graphic
         id = self._bead_next_id
         x = pos.x()
@@ -543,21 +564,24 @@ class UIManager(ManagerProcessBase):
         self._update_bead_highlights()
 
         # Update bead ROIs
-        rois = self.bead_rois
-        rois.pop(id)
-        command = SetBeadRoisCommand(value=rois)
-        self.send_ipc(command)
+        self.update_bead_rois()
 
     def clear_beads(self):
         # Update graphics
         for graphics in self._bead_graphics.values():
             graphics.remove()
         self._bead_graphics.clear()
+        self._bead_next_id = 0
         self._update_next_bead_id_label()
 
         # Update bead ROIs
-        command = SetBeadRoisCommand(value={})
-        self.send_ipc(command)
+        if self.bead_roi_buffer is not None:
+            self.bead_roi_buffer.clear_beads()
+            self._refresh_bead_roi_cache()
+        else:
+            self._bead_roi_ids = np.zeros((0,), dtype=np.uint32)
+            self._bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
+        self._broadcast_bead_roi_update()
 
     def reset_bead_ids(self):
         if not self._bead_graphics:

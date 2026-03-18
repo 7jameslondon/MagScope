@@ -540,6 +540,232 @@ class MatrixBuffer:
             return np.vstack((np_array_right, np_array_left))
 
 
+class BeadRoiBuffer:
+    """Shared-memory store for bead ROI metadata.
+
+    The buffer uses a fixed row per bead id so readers can attach once and take
+    compact snapshots of active ROIs without exchanging Python dictionaries over
+    IPC.
+    """
+
+    def __init__(
+        self,
+        *,
+        create: bool,
+        locks: dict[str, Lock],
+        capacity: int | None = None,
+        name: str = 'BeadRoiBuffer',
+    ):
+        self.name = name
+        self.lock: Lock = locks[self.name]
+        self._info_fields = 4
+        self._info_size = 8 * self._info_fields
+        self._roi_dtype = np.dtype(np.uint32)
+        self._occupancy_dtype = np.dtype(np.uint8)
+
+        self._shm_info = SharedMemory(
+            create=create,
+            name=self.name + ' Info',
+            size=self._info_size,
+        )
+
+        if create:
+            if capacity is None:
+                raise ValueError('capacity must be provided when creating BeadRoiBuffer')
+            self._write_info(0, int(capacity))
+            self._write_info(1, 0)
+            self._write_info(2, 0)
+            self._write_info(3, 0)
+        elif capacity is not None and capacity != self._read_info(0):
+            raise ValueError('capacity does not match existing BeadRoiBuffer')
+
+        self.capacity = self._read_info(0)
+        self._roi_shape = (self.capacity, 4)
+        self._roi_nbytes = int(np.prod(self._roi_shape)) * self._roi_dtype.itemsize
+        self._occupancy_nbytes = self.capacity * self._occupancy_dtype.itemsize
+
+        self._shm_data = SharedMemory(
+            create=create,
+            name=self.name + ' Data',
+            size=self._roi_nbytes,
+        )
+        self._shm_occupancy = SharedMemory(
+            create=create,
+            name=self.name + ' Occupancy',
+            size=self._occupancy_nbytes,
+        )
+        self._roi_matrix = np.ndarray(self._roi_shape, dtype=self._roi_dtype, buffer=self._shm_data.buf)
+        self._occupancy = np.ndarray((self.capacity,), dtype=self._occupancy_dtype, buffer=self._shm_occupancy.buf)
+
+        if create:
+            self._roi_matrix.fill(0)
+            self._occupancy.fill(0)
+
+    def __del__(self):
+        if hasattr(self, '_shm_data'):
+            self._shm_data.close()
+        if hasattr(self, '_shm_occupancy'):
+            self._shm_occupancy.close()
+        if hasattr(self, '_shm_info'):
+            self._shm_info.close()
+
+    @property
+    def max_id_plus_one(self) -> int:
+        with self.lock:
+            return self._read_info(1)
+
+    @property
+    def active_count(self) -> int:
+        with self.lock:
+            return self._read_info(2)
+
+    @property
+    def version(self) -> int:
+        with self.lock:
+            return self._read_info(3)
+
+    def replace_beads(self, value: dict[int, tuple[int, int, int, int]]) -> None:
+        validated = self._normalize_bead_mapping(value)
+        with self.lock:
+            self._roi_matrix.fill(0)
+            self._occupancy.fill(0)
+            if validated:
+                bead_ids = np.fromiter(validated.keys(), dtype=np.uint32, count=len(validated))
+                rois = np.asarray(list(validated.values()), dtype=self._roi_dtype)
+                self._roi_matrix[bead_ids] = rois
+                self._occupancy[bead_ids] = 1
+                max_id_plus_one = int(bead_ids.max()) + 1
+            else:
+                max_id_plus_one = 0
+            self._write_info(1, max_id_plus_one)
+            self._write_info(2, len(validated))
+            self._increment_version()
+
+    def add_beads(self, value: dict[int, tuple[int, int, int, int]]) -> None:
+        validated = self._normalize_bead_mapping(value)
+        if not validated:
+            return
+        with self.lock:
+            bead_ids = np.fromiter(validated.keys(), dtype=np.uint32, count=len(validated))
+            occupied = self._occupancy[bead_ids] != 0
+            if np.any(occupied):
+                existing_ids = bead_ids[occupied].tolist()
+                raise ValueError(f'bead ids already exist: {existing_ids}')
+            rois = np.asarray(list(validated.values()), dtype=self._roi_dtype)
+            self._roi_matrix[bead_ids] = rois
+            self._occupancy[bead_ids] = 1
+            self._write_info(1, max(self._read_info(1), int(bead_ids.max()) + 1))
+            self._write_info(2, self._read_info(2) + len(validated))
+            self._increment_version()
+
+    def update_beads(self, value: dict[int, tuple[int, int, int, int]]) -> None:
+        validated = self._normalize_bead_mapping(value)
+        if not validated:
+            return
+        with self.lock:
+            bead_ids = np.fromiter(validated.keys(), dtype=np.uint32, count=len(validated))
+            occupied = self._occupancy[bead_ids] != 0
+            if not np.all(occupied):
+                missing_ids = bead_ids[~occupied].tolist()
+                raise ValueError(f'bead ids do not exist: {missing_ids}')
+            self._roi_matrix[bead_ids] = np.asarray(list(validated.values()), dtype=self._roi_dtype)
+            self._increment_version()
+
+    def remove_beads(self, ids) -> None:
+        normalized_ids = self._normalize_ids(ids)
+        if normalized_ids.size == 0:
+            return
+        with self.lock:
+            occupied_mask = self._occupancy[normalized_ids] != 0
+            if not np.any(occupied_mask):
+                return
+            bead_ids = normalized_ids[occupied_mask]
+            self._occupancy[bead_ids] = 0
+            self._roi_matrix[bead_ids] = 0
+            self._write_info(2, max(0, self._read_info(2) - bead_ids.size))
+            self._increment_version()
+
+    def clear_beads(self) -> None:
+        with self.lock:
+            self._roi_matrix.fill(0)
+            self._occupancy.fill(0)
+            self._write_info(1, 0)
+            self._write_info(2, 0)
+            self._increment_version()
+
+    def reorder_beads(self) -> dict[int, int]:
+        with self.lock:
+            bead_ids = np.flatnonzero(self._occupancy[:self._read_info(1)])
+            if bead_ids.size == 0:
+                self._write_info(1, 0)
+                self._write_info(2, 0)
+                self._increment_version()
+                return {}
+
+            original_rois = self._roi_matrix[bead_ids].copy()
+            mapping = {int(old_id): int(new_id) for new_id, old_id in enumerate(bead_ids.tolist())}
+            self._roi_matrix.fill(0)
+            self._occupancy.fill(0)
+            new_ids = np.arange(bead_ids.size, dtype=np.uint32)
+            self._roi_matrix[new_ids] = original_rois
+            self._occupancy[new_ids] = 1
+            self._write_info(1, bead_ids.size)
+            self._write_info(2, bead_ids.size)
+            self._increment_version()
+            return mapping
+
+    def get_next_available_bead_id(self) -> int:
+        with self.lock:
+            return self._read_info(1)
+
+    def get_beads(self) -> tuple[np.ndarray, np.ndarray]:
+        with self.lock:
+            occupied = self._occupancy[:self._read_info(1)] != 0
+            bead_ids = np.flatnonzero(occupied).astype(np.uint32, copy=False)
+            rois = self._roi_matrix[bead_ids].copy()
+            return bead_ids, rois
+
+    def _normalize_bead_mapping(
+        self,
+        value: dict[int, tuple[int, int, int, int]],
+    ) -> dict[int, tuple[int, int, int, int]]:
+        normalized: dict[int, tuple[int, int, int, int]] = {}
+        for bead_id, roi in value.items():
+            bead_id_int = self._validate_bead_id(bead_id)
+            if len(roi) != 4:
+                raise ValueError(f'ROI for bead {bead_id_int} must contain four values')
+            roi_values = tuple(int(coord) for coord in roi)
+            if min(roi_values) < 0:
+                raise ValueError(f'ROI for bead {bead_id_int} cannot contain negative values')
+            normalized[bead_id_int] = roi_values
+        return normalized
+
+    def _normalize_ids(self, ids) -> np.ndarray:
+        normalized = [self._validate_bead_id(bead_id) for bead_id in ids]
+        if not normalized:
+            return np.zeros((0,), dtype=np.uint32)
+        return np.asarray(normalized, dtype=np.uint32)
+
+    def _validate_bead_id(self, bead_id: int) -> int:
+        bead_id_int = int(bead_id)
+        if bead_id_int < 0 or bead_id_int >= self.capacity:
+            raise ValueError(f'bead id {bead_id_int} is out of range 0..{self.capacity - 1}')
+        return bead_id_int
+
+    def _read_info(self, index: int) -> int:
+        start = index * 8
+        end = start + 8
+        return int.from_bytes(self._shm_info.buf[start:end], byteorder='big')
+
+    def _write_info(self, index: int, value: int) -> None:
+        start = index * 8
+        end = start + 8
+        self._shm_info.buf[start:end] = int(value).to_bytes(8, byteorder='big')
+
+    def _increment_version(self) -> None:
+        self._write_info(3, self._read_info(3) + 1)
+
+
 class LiveProfileBuffer:
     """Shared buffer that stores the latest radial profile for live display.
 
