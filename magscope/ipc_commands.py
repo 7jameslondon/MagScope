@@ -182,6 +182,16 @@ class UnloadZLUTCommand(Command):
 
 
 @dataclass(frozen=True)
+class RequestProfileLengthCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ReportProfileLengthCommand(Command):
+    profile_length: int | None = None
+
+
+@dataclass(frozen=True)
 class RemoveBeadFromPendingMovesCommand(Command):
     id: int
 

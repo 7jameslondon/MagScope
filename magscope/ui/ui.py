@@ -798,6 +798,9 @@ class UIManager(ManagerProcessBase):
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
+    def request_profile_length(self) -> None:
+        self.send_ipc(RequestProfileLengthCommand())
+
     @register_ipc_command(UpdateZLUTMetadataCommand)
     def update_zlut_metadata(self,
                              filepath: str | None = None,
@@ -811,6 +814,10 @@ class UIManager(ManagerProcessBase):
         panel = self.controls.zlut_panel
         panel.set_filepath(filepath)
         panel.update_metadata(z_min, z_max, step_size, profile_length)
+
+    @register_ipc_command(ReportProfileLengthCommand)
+    def report_profile_length(self, profile_length: int | None = None) -> None:
+        print(f'Temporary development behavior: profile length = {profile_length}')
 
 class LoadingWindow(QMainWindow):
 
