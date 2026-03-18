@@ -2123,6 +2123,10 @@ class ZLUTGenerationPanel(ControlPanelBase):
         button.clicked.connect(self.generate_callback)
         self.layout().addWidget(button)
 
+        note = QLabel('Temporary development behavior: Generate prints the measured profile length.')
+        note.setWordWrap(True)
+        self.layout().addWidget(note)
+
     def generate_callback(self):
         # Start
         start_text = self.start_input.lineedit.text()
@@ -2145,12 +2149,7 @@ class ZLUTGenerationPanel(ControlPanelBase):
         except ValueError:
             return
 
-        # Output file name
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-        roi = self.manager.settings['ROI']
-        filename = f'Z-LUT {timestamp} {roi} {start_nm:.0f} {step_nm:.0f} {stop_nm:.0f}.txt'
-
-        raise NotImplementedError
+        self.manager.request_profile_length()
 
 
 class ZLUTPanel(ControlPanelBase):

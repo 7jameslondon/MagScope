@@ -16,10 +16,11 @@ import tifffile
 from magscope._logging import get_logger
 from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, SetSettingsCommand, ShowMessageCommand,
-                                   UnloadZLUTCommand, UpdateTrackingOptionsCommand,
-                                   UpdateWaitingCommand, UpdateZLUTMetadataCommand,
-                                   WaitUntilAcquisitionOnCommand)
+from magscope.ipc_commands import (LoadZLUTCommand, ReportProfileLengthCommand,
+                                   RequestProfileLengthCommand, SetSettingsCommand,
+                                   ShowMessageCommand, UnloadZLUTCommand,
+                                   UpdateTrackingOptionsCommand, UpdateWaitingCommand,
+                                   UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.settings import MagScopeSettings
 from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
@@ -45,6 +46,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._n_workers: int | None = None
         self._workers: list[VideoWorker] = []
         self._gpu_lock: LockType = Lock()
+        self._profile_length_queue: QueueType | None = None
+        self._pending_profile_length_request = False
         self._warning_queue: QueueType | None = None
         self._lookup_z_warning_reported = False
         self._waiting_for_acquisition: bool | None = None
@@ -70,6 +73,7 @@ class VideoProcessorManager(ManagerProcessBase):
     def setup(self):
         self._n_workers = self.settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
+        self._profile_length_queue = Queue()
         self._warning_queue = Queue()
 
         # Create the workers
@@ -77,11 +81,12 @@ class VideoProcessorManager(ManagerProcessBase):
             worker = VideoWorker(tasks=self._tasks,
                                  locks=self.locks,
                                  video_flag=self.shared_values.video_process_flag,
-                                 busy_count=self.shared_values.video_process_busy_count,
-                                 gpu_lock=self._gpu_lock,
-                                 warning_queue=self._warning_queue,
-                                 live_profile_enabled=self.shared_values.live_profile_enabled,
-                                 live_profile_bead=self.shared_values.live_profile_bead)
+                                  busy_count=self.shared_values.video_process_busy_count,
+                                  gpu_lock=self._gpu_lock,
+                                 profile_length_queue=self._profile_length_queue,
+                                  warning_queue=self._warning_queue,
+                                  live_profile_enabled=self.shared_values.live_profile_enabled,
+                                  live_profile_bead=self.shared_values.live_profile_bead)
             self._workers.append(worker)
 
         # Start the workers
@@ -91,6 +96,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._broadcast_zlut_metadata()
 
     def do_main_loop(self):
+        self._process_profile_length_reports()
         self._process_worker_warnings()
         if self._waiting_for_acquisition is not None:
             self._finish_waiting_when_ready()
@@ -197,6 +203,44 @@ class VideoProcessorManager(ManagerProcessBase):
         )
         self.send_ipc(command)
 
+    @register_ipc_command(RequestProfileLengthCommand)
+    def report_profile_length(self) -> None:
+        """Arm a one-shot profile-length report for a future processed frame.
+
+        The request intentionally rides along with the normal worker task queue
+        instead of probing the current ``VideoBuffer`` contents immediately.
+        This keeps the result tied to video processed after the request arrives
+        and ensures only one worker handles the request at a time via a normal
+        task-local flag.
+        """
+        if self._profile_length_queue is not None:
+            while True:
+                try:
+                    self._profile_length_queue.get_nowait()
+                except Empty:
+                    break
+        self._pending_profile_length_request = True
+
+    def _process_profile_length_reports(self) -> None:
+        """Forward the first successful worker measurement back to the UI.
+
+        Workers only enqueue successful measurements, so leaving the pending
+        flag armed causes later normal processing tasks to keep carrying the
+        request until one succeeds.
+        """
+        if self._profile_length_queue is None or not self._pending_profile_length_request:
+            return
+
+        while True:
+            try:
+                profile_length = self._profile_length_queue.get_nowait()
+            except Empty:
+                break
+
+            self._pending_profile_length_request = False
+            self.send_ipc(ReportProfileLengthCommand(profile_length=int(profile_length)))
+            break
+
     def _add_task(self):
         kwargs = {
             'acquisition_dir': self._acquisition_dir,
@@ -205,6 +249,7 @@ class VideoProcessorManager(ManagerProcessBase):
             'bead_rois': self.bead_rois,
             'magnification': self.settings['magnification'],
             'nm_per_px': self.camera_type.nm_per_px,
+            'report_profile_length': self._pending_profile_length_request,
             'save_profiles': self._save_profiles,
             'tracking_options': copy.deepcopy(self._tracking_options),
             'zlut': self._zlut
@@ -253,6 +298,7 @@ class VideoWorker(Process):
                  video_flag: ValueTypeUI8,
                  busy_count: ValueTypeUI8,
                  gpu_lock: Lock,
+                 profile_length_queue: QueueType | None,
                  warning_queue: QueueType | None,
                  live_profile_enabled: ValueTypeUI8,
                  live_profile_bead: ValueTypeInt):
@@ -262,6 +308,7 @@ class VideoWorker(Process):
         self._locks: dict[str, LockType] = locks
         self._video_flag: ValueTypeUI8 = video_flag
         self._busy_count: ValueTypeUI8 = busy_count
+        self._profile_length_queue: QueueType | None = profile_length_queue
         self._warning_queue: QueueType | None = warning_queue
         self._live_profile_enabled = live_profile_enabled
         self._live_profile_bead = live_profile_bead
@@ -305,6 +352,7 @@ class VideoWorker(Process):
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
+        report_profile_length: bool = kwargs.get('report_profile_length', False)
         tracking_options: dict = kwargs.get('tracking_options', {}) or {}
 
         bead_rois = bead_rois if len(bead_rois) > 0 else None
@@ -327,6 +375,22 @@ class VideoWorker(Process):
             self._live_profile_buffer.write_profile(
                 float(timestamps[latest_index]), target_bead, profile
             )
+
+        def _report_profile_length_if_requested(profiles: np.ndarray) -> None:
+            """Publish ``profiles.shape[0]`` for an armed one-shot request.
+
+            The manager keeps the request pending until a worker successfully
+            emits a value, so this helper only reports usable tracker output and
+            stays silent for failed or incomplete processing attempts.
+            """
+            if not report_profile_length or self._profile_length_queue is None:
+                return
+            if not hasattr(profiles, 'shape') or len(profiles.shape) == 0:
+                return
+            try:
+                self._profile_length_queue.put_nowait(int(profiles.shape[0]))
+            except Full:
+                logger.debug('Dropping profile length report because queue is full')
 
         def save_video_full(first_timestamp, stack, timestamps_str,):
             filepath = os.path.join(acquisition_dir, f'Video {first_timestamp}.tiff')
@@ -410,6 +474,7 @@ class VideoWorker(Process):
 
             tracks = np.column_stack((t, x, y, z, b, roi_x, roi_y))
             _update_live_profile(t, b, profiles)
+            _report_profile_length_if_requested(profiles)
             return tracks, profiles
 
         def process_mode_tracks():
