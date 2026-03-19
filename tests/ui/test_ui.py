@@ -10,14 +10,15 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget
+from PyQt6.QtWidgets import QLabel, QGraphicsItem, QGraphicsScene, QGraphicsSimpleTextItem, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
     RemoveBeadsFromPendingMovesCommand,
     UpdateBeadRoisCommand,
 )
-from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.settings import MagScopeSettings
+from magscope.ui.ui import LoadingWindow, UIManager
+from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
 
 
@@ -283,6 +284,47 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     np.testing.assert_allclose(plotted_x, expected_x)
     np.testing.assert_allclose(plotted_y, expected_y)
     assert marker_size == ui_manager.beads_in_view_marker_size
+
+
+def test_bead_graphic_uses_simple_static_id_label(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, 100, 120, 40, scene)
+
+    assert isinstance(graphic.label, QGraphicsSimpleTextItem)
+    assert graphic.label.text() == '12'
+    assert graphic.label.font().family() == 'Arial'
+    assert graphic.label.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    assert graphic.label.acceptedMouseButtons() == Qt.MouseButton.NoButton
+    graphic.remove()
+
+
+def test_reset_bead_ids_updates_simple_text_labels(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager.video_viewer = SimpleNamespace(scene=scene)
+    ui_manager.settings['ROI'] = 40
+    ui_manager._bead_roi_capacity = 10000
+    ui_manager._add_bead_roi = lambda bead_id, roi: None
+    ui_manager._update_bead_highlight = lambda bead_id: None
+    ui_manager._update_bead_highlights = lambda **kwargs: None
+    ui_manager.selected_bead = None
+    ui_manager.reference_bead = None
+
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 100, y=lambda: 100))
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 200, y=lambda: 200))
+    second_graphic = ui_manager._bead_graphics.pop(1)
+    ui_manager._bead_graphics[5] = second_graphic
+
+    ui_manager.reset_bead_ids()
+
+    assert list(sorted(ui_manager._bead_graphics)) == [0, 1]
+    assert ui_manager._bead_graphics[0].label.text() == '0'
+    assert ui_manager._bead_graphics[1].label.text() == '1'
 
 
 def test_acquisition_setters_update_controls_and_state(ui_manager):

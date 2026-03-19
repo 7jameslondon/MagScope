@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
                           QRectF, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
-                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem,
+                             QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QScrollArea, QSizePolicy, QSplitter, QSplitterHandle,
+                             QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
@@ -419,6 +420,7 @@ class GripSplitter(QSplitter):
 
 
 class BeadGraphic(QGraphicsRectItem):
+    _label_font = QFont('Arial', 10)
 
     def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
         self._parent: UIManager = parent
@@ -459,10 +461,16 @@ class BeadGraphic(QGraphicsRectItem):
         }
 
         # Label
-        self.label = QGraphicsTextItem('', self)
-        self.label.setFont(QFont('Arial', int(view_scene.width() / 100)))
+        self.label = QGraphicsSimpleTextItem('', self)
+        self.label.setFont(self._label_font)
+        self.label.setBrush(QColor(255, 255, 255, 255))
+        self.label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.label.setAcceptHoverEvents(False)
+        self._update_label_text()
+        self.move_label()
 
-        self.locked = False # initializes colors/text
+        self.locked = False # initializes colors
 
         # Add to the scene
         self.view_scene = view_scene
@@ -489,9 +497,6 @@ class BeadGraphic(QGraphicsRectItem):
     @locked.setter
     def locked(self, locked: bool):
         self._locked = locked
-
-        # Text
-        self.label.setPlainText(f'{self.id}')
 
         # Draggable
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, not locked)
@@ -556,6 +561,9 @@ class BeadGraphic(QGraphicsRectItem):
         y = rect.y() + 1
         self.label.setPos(x, y)
 
+    def _update_label_text(self):
+        self.label.setText(str(self.id))
+
     def itemChange(self, change, value):
         # Constrain the item's movement within the scene
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
@@ -595,6 +603,7 @@ class BeadGraphic(QGraphicsRectItem):
     def get_roi_bounds(self) -> tuple[int, int, int, int]:
         if self._cached_roi is None:
             self._update_cached_roi()
+        assert self._cached_roi is not None
         return self._cached_roi
 
     def _update_cached_roi(self):

@@ -672,7 +672,7 @@ class UIManager(ManagerProcessBase):
         for new_id, (old_id, graphic) in enumerate(sorted(self._bead_graphics.items())):
             id_mapping[old_id] = new_id
             graphic.id = new_id
-            graphic.label.setPlainText(f"{new_id}")
+            graphic._update_label_text()
             new_graphics[new_id] = graphic
 
         self._bead_graphics = new_graphics
