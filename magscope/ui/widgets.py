@@ -8,10 +8,9 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
                           QRectF, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem,
-                             QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QScrollArea, QSizePolicy, QSplitter, QSplitterHandle,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGroupBox,
+                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
@@ -420,7 +419,18 @@ class GripSplitter(QSplitter):
 
 
 class BeadGraphic(QGraphicsRectItem):
-    _label_font = QFont('Arial', 10)
+    LABEL_FONT = QFont('Arial', 10)
+    LABEL_COLOR = QColor(255, 255, 255, 255)
+    LABEL_OFFSET_X = 10
+    LABEL_OFFSET_Y = 1
+    BORDER_COLOR_DEFAULT = (0, 255, 255, 255)
+    FILL_COLOR_DEFAULT = (0, 183, 235, 25)
+    BORDER_COLOR_SELECTED = (255, 0, 0, 255)
+    FILL_COLOR_SELECTED = (255, 0, 0, 25)
+    BORDER_COLOR_REFERENCE = (0, 255, 0, 255)
+    FILL_COLOR_REFERENCE = (0, 255, 0, 25)
+    _shared_pens: dict[str, QPen] | None = None
+    _shared_brushes: dict[str, QBrush] | None = None
 
     def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
         self._parent: UIManager = parent
@@ -431,16 +441,9 @@ class BeadGraphic(QGraphicsRectItem):
         self._color_state: str = 'default'
         self.scene_rect = None
         self._cached_roi: tuple[int, int, int, int] | None = None
-        self.border_color_default = (0, 255, 255, 255)
-        self.fill_color_default = (0, 183, 235, 25)
-        self.border_color_selected = (255, 0, 0, 255)
-        self.fill_color_selected = (255, 0, 0, 25)
-        self.border_color_reference = (0, 255, 0, 255)
-        self.fill_color_reference = (0, 255, 0, 25)
         self.pen_width = 0
         self.width = width
-        self._pens: dict[str, QPen] = {}
-        self._brushes: dict[str, QBrush] = {}
+        self._ensure_shared_pens_and_brushes()
 
         # Calculate shape of rect (accounting for pen/border width)
         offset_pos = self.pen_width / 2
@@ -449,26 +452,6 @@ class BeadGraphic(QGraphicsRectItem):
 
         # Set up the graphic (must happen in this order)
         super().__init__(rect)
-        self._pens = {
-            'default': self._create_pen(self.border_color_default),
-            'selected': self._create_pen(self.border_color_selected),
-            'reference': self._create_pen(self.border_color_reference),
-        }
-        self._brushes = {
-            'default': self._create_brush(self.fill_color_default),
-            'selected': self._create_brush(self.fill_color_selected),
-            'reference': self._create_brush(self.fill_color_reference),
-        }
-
-        # Label
-        self.label = QGraphicsSimpleTextItem('', self)
-        self.label.setFont(self._label_font)
-        self.label.setBrush(QColor(255, 255, 255, 255))
-        self.label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-        self.label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self.label.setAcceptHoverEvents(False)
-        self._update_label_text()
-        self.move_label()
 
         self.locked = False # initializes colors
 
@@ -512,17 +495,36 @@ class BeadGraphic(QGraphicsRectItem):
         self._color_state = state
         self._apply_color()
 
-    def _create_pen(self, color: tuple[int, int, int, int]) -> QPen:
+    @classmethod
+    def _ensure_shared_pens_and_brushes(cls) -> None:
+        if cls._shared_pens is None:
+            cls._shared_pens = {
+                'default': cls._create_pen(cls.BORDER_COLOR_DEFAULT),
+                'selected': cls._create_pen(cls.BORDER_COLOR_SELECTED),
+                'reference': cls._create_pen(cls.BORDER_COLOR_REFERENCE),
+            }
+        if cls._shared_brushes is None:
+            cls._shared_brushes = {
+                'default': cls._create_brush(cls.FILL_COLOR_DEFAULT),
+                'selected': cls._create_brush(cls.FILL_COLOR_SELECTED),
+                'reference': cls._create_brush(cls.FILL_COLOR_REFERENCE),
+            }
+
+    @staticmethod
+    def _create_pen(color: tuple[int, int, int, int]) -> QPen:
         pen = QPen(QColor(*color))
-        pen.setWidth(self.pen_width)
+        pen.setWidth(0)
         return pen
 
-    def _create_brush(self, color: tuple[int, int, int, int]) -> QBrush:
+    @staticmethod
+    def _create_brush(color: tuple[int, int, int, int]) -> QBrush:
         return QBrush(QColor(*color))
 
     def _apply_color(self):
-        self.setPen(self._pens[self._color_state])
-        self.setBrush(self._brushes[self._color_state])
+        assert self._shared_pens is not None
+        assert self._shared_brushes is not None
+        self.setPen(self._shared_pens[self._color_state])
+        self.setBrush(self._shared_brushes[self._color_state])
 
     def move(self, dx, dy):
         value = self.pos()
@@ -554,21 +556,17 @@ class BeadGraphic(QGraphicsRectItem):
 
         return value
 
-    def move_label(self):
-        # Update the labels position
+    def get_label_scene_position(self) -> QPointF:
         rect = self.rect()
-        x = rect.x() + 10
-        y = rect.y() + 1
-        self.label.setPos(x, y)
-
-    def _update_label_text(self):
-        self.label.setText(str(self.id))
+        return QPointF(
+            self.x() + rect.x() + self.LABEL_OFFSET_X,
+            self.y() + rect.y() + self.LABEL_OFFSET_Y,
+        )
 
     def itemChange(self, change, value):
         # Constrain the item's movement within the scene
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             value = self.validate_move(value)
-            self.move_label()
             if (
                 not self._initializing
                 and not self._is_moving
@@ -607,8 +605,11 @@ class BeadGraphic(QGraphicsRectItem):
         return self._cached_roi
 
     def _update_cached_roi(self):
-        tl = self.mapToScene(self.rect().topLeft())
-        br = self.mapToScene(self.rect().bottomRight())
+        rect = self.rect()
+        x = self.x()
+        y = self.y()
+        tl = QPointF(x + rect.left(), y + rect.top())
+        br = QPointF(x + rect.right(), y + rect.bottom())
         x0 = int(round(tl.x() - self.pen_width / 2))
         x1 = int(round(br.x() + self.pen_width / 2))
         y0 = int(round(tl.y() - self.pen_width / 2))

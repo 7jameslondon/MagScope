@@ -131,6 +131,7 @@ class UIManager(ManagerProcessBase):
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
+        self.video_viewer.set_bead_graphics(self._bead_graphics)
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
@@ -657,6 +658,8 @@ class UIManager(ManagerProcessBase):
         except Exception:
             self._clear_pending_bead_add()
             raise
+        if self.video_viewer is not None:
+            self.video_viewer.viewport().update()
 
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
@@ -665,6 +668,8 @@ class UIManager(ManagerProcessBase):
         # Update graphics
         graphic = self._bead_graphics.pop(id)
         graphic.remove()
+        if self.video_viewer is not None:
+            self.video_viewer.viewport().update()
 
         # Update highlight colors to reflect selection/reference
         self._update_bead_highlights(
@@ -682,6 +687,8 @@ class UIManager(ManagerProcessBase):
         for graphics in self._bead_graphics.values():
             graphics.remove()
         self._bead_graphics.clear()
+        if self.video_viewer is not None:
+            self.video_viewer.viewport().update()
         self._bead_next_id = 0
         self._update_next_bead_id_label()
 
@@ -706,7 +713,6 @@ class UIManager(ManagerProcessBase):
         for new_id, (old_id, graphic) in enumerate(sorted(self._bead_graphics.items())):
             id_mapping[old_id] = new_id
             graphic.id = new_id
-            graphic._update_label_text()
             new_graphics[new_id] = graphic
 
         self._bead_graphics = new_graphics
@@ -723,6 +729,8 @@ class UIManager(ManagerProcessBase):
         self._update_bead_highlights()
         self.update_bead_rois()
         self._update_next_bead_id_label()
+        if self.video_viewer is not None:
+            self.video_viewer.viewport().update()
 
     def _update_roi_labels(self, roi: int) -> None:
         if self.controls is None:

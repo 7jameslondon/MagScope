@@ -1,10 +1,14 @@
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
+
+if TYPE_CHECKING:
+    from magscope.ui.widgets import BeadGraphic
 
 
 class VideoViewer(QGraphicsView):
@@ -87,8 +91,12 @@ class VideoViewer(QGraphicsView):
 
         self._minimap_base = QPixmap()
         self._fit_scale = 1.0
+        self._bead_graphics: dict[int, BeadGraphic] | None = None
 
         self.set_image_to_default()
+
+    def set_bead_graphics(self, bead_graphics: dict[int, 'BeadGraphic']) -> None:
+        self._bead_graphics = bead_graphics
 
     def plot(self, x, y, size):
         """
@@ -422,6 +430,29 @@ class VideoViewer(QGraphicsView):
         if current_scale <= 0:
             return None
         return (current_scale / self._fit_scale) * 100
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+
+        if not self._bead_graphics:
+            return
+
+        first_graphic = next(iter(self._bead_graphics.values()))
+
+        painter.save()
+        painter.resetTransform()
+        painter.setFont(first_graphic.LABEL_FONT)
+        painter.setPen(first_graphic.LABEL_COLOR)
+        metrics = QFontMetricsF(painter.font())
+        ascent = metrics.ascent()
+
+        for graphic in self._bead_graphics.values():
+            if not graphic.isVisible() or not graphic.sceneBoundingRect().intersects(rect):
+                continue
+            point = self.mapFromScene(graphic.get_label_scene_position())
+            painter.drawText(QPointF(point.x(), point.y() + ascent), str(graphic.id))
+
+        painter.restore()
 
 class CrossCircleItem(QGraphicsItem):
     """A lightweight, centered ⊕-style marker drawn with simple geometry."""

@@ -10,7 +10,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QGraphicsItem, QGraphicsScene, QGraphicsSimpleTextItem, QMainWindow, QWidget
+from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
     RemoveBeadsFromPendingMovesCommand,
@@ -46,6 +46,14 @@ class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
         self.plot_args = None
+        self.scene = None
+        self.viewport_updates = 0
+
+    def viewport(self):
+        return SimpleNamespace(update=self._update_viewport)
+
+    def _update_viewport(self) -> None:
+        self.viewport_updates += 1
 
     def clear_crosshairs(self) -> None:
         self.cleared = True
@@ -290,7 +298,7 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     assert marker_size == ui_manager.beads_in_view_marker_size
 
 
-def test_bead_graphic_uses_simple_static_id_label(qtbot, ui_manager):
+def test_bead_graphic_reports_label_scene_position(qtbot, ui_manager):
     scene = QGraphicsScene(0, 0, 512, 512)
     qtbot.wait(1)
     ui_manager._suppress_bead_roi_updates = False
@@ -299,18 +307,18 @@ def test_bead_graphic_uses_simple_static_id_label(qtbot, ui_manager):
 
     graphic = BeadGraphic(ui_manager, 12, 100, 120, 40, scene)
 
-    assert isinstance(graphic.label, QGraphicsSimpleTextItem)
-    assert graphic.label.text() == '12'
-    assert graphic.label.font().family() == 'Arial'
-    assert graphic.label.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
-    assert graphic.label.acceptedMouseButtons() == Qt.MouseButton.NoButton
+    label_pos = graphic.get_label_scene_position()
+    assert graphic.LABEL_FONT.family() == 'Arial'
+    assert label_pos.x() == 90
+    assert label_pos.y() == 101
     graphic.remove()
 
 
-def test_reset_bead_ids_updates_simple_text_labels(qtbot, ui_manager):
+def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
     scene = QGraphicsScene(0, 0, 512, 512)
     qtbot.wait(1)
-    ui_manager.video_viewer = SimpleNamespace(scene=scene)
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = scene
     ui_manager.settings['ROI'] = 40
     ui_manager._bead_roi_capacity = 10000
     ui_manager._add_bead_roi = lambda bead_id, roi: None
@@ -327,8 +335,9 @@ def test_reset_bead_ids_updates_simple_text_labels(qtbot, ui_manager):
     ui_manager.reset_bead_ids()
 
     assert list(sorted(ui_manager._bead_graphics)) == [0, 1]
-    assert ui_manager._bead_graphics[0].label.text() == '0'
-    assert ui_manager._bead_graphics[1].label.text() == '1'
+    assert ui_manager._bead_graphics[0].id == 0
+    assert ui_manager._bead_graphics[1].id == 1
+    assert ui_manager.video_viewer.viewport_updates == 3
 
 
 def test_acquisition_setters_update_controls_and_state(ui_manager):
@@ -475,7 +484,10 @@ def test_refresh_bead_rois_keeps_pending_for_unrelated_update(ui_manager):
 
 def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeypatch):
     ui_manager.settings["ROI"] = 20
-    ui_manager.video_viewer = SimpleNamespace(scene=SimpleNamespace(width=lambda: 100, addItem=lambda item: None))
+    ui_manager.video_viewer = SimpleNamespace(
+        scene=SimpleNamespace(width=lambda: 100, addItem=lambda item: None),
+        viewport=lambda: SimpleNamespace(update=lambda: None),
+    )
     ui_manager._update_bead_highlight = lambda bead_id: None
     ui_manager._update_next_bead_id_label = lambda: None
 
