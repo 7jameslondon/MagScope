@@ -1,7 +1,7 @@
 import time
 
 import numpy as np
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap, QStaticText
 from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
@@ -46,6 +46,10 @@ class VideoViewer(QGraphicsView):
         self._overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
         self._visible_overlay_entries: list[tuple[QRectF, str, bool]] | None = None
         self._visible_label_entries: list[tuple[QPointF, QStaticText]] | None = None
+        self._overlay_cache_pixmap = QPixmap()
+        self._overlay_cache_dirty = True
+        self._overlay_cache_size = QSize()
+        self._overlay_cache_device_pixel_ratio = 0.0
         self._static_label_cache: dict[str, QStaticText] = {}
         self._label_metrics = QFontMetricsF(BeadGraphic.LABEL_FONT)
         self._label_ascent = self._label_metrics.ascent()
@@ -131,6 +135,10 @@ class VideoViewer(QGraphicsView):
     def _invalidate_overlay_view_cache(self) -> None:
         self._visible_overlay_entries = None
         self._visible_label_entries = None
+        self._overlay_cache_dirty = True
+        self._overlay_cache_pixmap = QPixmap()
+        self._overlay_cache_size = QSize()
+        self._overlay_cache_device_pixel_ratio = 0.0
 
     def _get_static_label(self, label_text: str) -> QStaticText:
         static_label = self._static_label_cache.get(label_text)
@@ -153,7 +161,8 @@ class VideoViewer(QGraphicsView):
         for roi_rect, label_point, state, is_active, label_text in self._overlay_entries:
             if not is_active and not roi_rect.intersects(visible_scene_rect):
                 continue
-            visible_overlay_entries.append((roi_rect, state, is_active))
+            view_rect = QRectF(self.mapFromScene(roi_rect).boundingRect())
+            visible_overlay_entries.append((view_rect, state, is_active))
             view_point = self.mapFromScene(label_point)
             visible_label_entries.append((
                 QPointF(view_point.x(), view_point.y() + self._label_ascent),
@@ -162,6 +171,85 @@ class VideoViewer(QGraphicsView):
 
         self._visible_overlay_entries = visible_overlay_entries
         self._visible_label_entries = visible_label_entries
+
+    def _rebuild_overlay_cache_pixmap(self) -> None:
+        viewport_size = self.viewport().size()
+        if viewport_size.isEmpty() or not self._overlay_entries:
+            self._overlay_cache_pixmap = QPixmap()
+            self._overlay_cache_dirty = False
+            self._overlay_cache_size = QSize()
+            self._overlay_cache_device_pixel_ratio = 0.0
+            return
+
+        if self._visible_overlay_entries is None or self._visible_label_entries is None:
+            self._rebuild_overlay_view_cache()
+
+        visible_overlay_entries = self._visible_overlay_entries
+        visible_label_entries = self._visible_label_entries
+        assert visible_overlay_entries is not None
+        assert visible_label_entries is not None
+
+        device_pixel_ratio = self.devicePixelRatioF()
+        overlay_pixmap = QPixmap(
+            max(1, int(round(viewport_size.width() * device_pixel_ratio))),
+            max(1, int(round(viewport_size.height() * device_pixel_ratio))),
+        )
+        overlay_pixmap.setDevicePixelRatio(device_pixel_ratio)
+        overlay_pixmap.fill(Qt.GlobalColor.transparent)
+
+        BeadGraphic._ensure_shared_pens_and_brushes()
+        assert BeadGraphic._shared_pens is not None
+        assert BeadGraphic._shared_brushes is not None
+
+        painter = QPainter(overlay_pixmap)
+        try:
+            state_rects: dict[str, list[QRectF]] = {
+                'default': [],
+                'selected': [],
+                'reference': [],
+            }
+            for roi_rect, state, is_active in visible_overlay_entries:
+                if is_active:
+                    continue
+                state_rects[state].append(roi_rect)
+
+            for state in ('default', 'selected', 'reference'):
+                if not state_rects[state]:
+                    continue
+                painter.setPen(BeadGraphic._shared_pens[state])
+                painter.setBrush(BeadGraphic._shared_brushes[state])
+                for roi_rect in state_rects[state]:
+                    painter.drawRect(roi_rect)
+
+            painter.setFont(BeadGraphic.LABEL_FONT)
+            painter.setPen(BeadGraphic.LABEL_COLOR)
+            for label_point, label_text in visible_label_entries:
+                painter.drawStaticText(label_point, label_text)
+        finally:
+            painter.end()
+
+        self._overlay_cache_pixmap = overlay_pixmap
+        self._overlay_cache_dirty = False
+        self._overlay_cache_size = viewport_size
+        self._overlay_cache_device_pixel_ratio = device_pixel_ratio
+
+    def _ensure_overlay_cache_pixmap(self) -> None:
+        viewport_size = self.viewport().size()
+        if viewport_size.isEmpty() or not self._overlay_entries:
+            self._overlay_cache_pixmap = QPixmap()
+            self._overlay_cache_dirty = False
+            self._overlay_cache_size = QSize()
+            self._overlay_cache_device_pixel_ratio = 0.0
+            return
+
+        device_pixel_ratio = self.devicePixelRatioF()
+        if (
+            self._overlay_cache_dirty
+            or self._overlay_cache_pixmap.isNull()
+            or self._overlay_cache_size != viewport_size
+            or self._overlay_cache_device_pixel_ratio != device_pixel_ratio
+        ):
+            self._rebuild_overlay_cache_pixmap()
 
     def plot(self, x, y, size):
         self._marker_x = np.asarray(x, dtype=float)
@@ -497,36 +585,12 @@ class VideoViewer(QGraphicsView):
         super().drawForeground(painter, rect)
 
         if self._overlay_entries:
-            if self._visible_overlay_entries is None or self._visible_label_entries is None:
-                self._rebuild_overlay_view_cache()
-
-            BeadGraphic._ensure_shared_pens_and_brushes()
-            assert BeadGraphic._shared_pens is not None
-            assert BeadGraphic._shared_brushes is not None
-
-            visible_overlay_entries = self._visible_overlay_entries
-            visible_label_entries = self._visible_label_entries
-            assert visible_overlay_entries is not None
-            assert visible_label_entries is not None
-
-            painter.save()
-            for state in ('default', 'selected', 'reference'):
-                painter.setPen(BeadGraphic._shared_pens[state])
-                painter.setBrush(BeadGraphic._shared_brushes[state])
-                for roi_rect, entry_state, is_active in visible_overlay_entries:
-                    if is_active or entry_state != state:
-                        continue
-                    painter.drawRect(roi_rect)
-            painter.restore()
-
-            painter.save()
-            painter.resetTransform()
-            painter.setFont(BeadGraphic.LABEL_FONT)
-            painter.setPen(BeadGraphic.LABEL_COLOR)
-
-            for label_point, label_text in visible_label_entries:
-                painter.drawStaticText(label_point, label_text)
-            painter.restore()
+            self._ensure_overlay_cache_pixmap()
+            if not self._overlay_cache_pixmap.isNull():
+                painter.save()
+                painter.resetTransform()
+                painter.drawPixmap(0, 0, self._overlay_cache_pixmap)
+                painter.restore()
 
         if self._marker_size <= 0 or self._marker_x.size == 0 or self._marker_y.size == 0:
             return
