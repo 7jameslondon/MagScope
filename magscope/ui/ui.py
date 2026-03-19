@@ -276,6 +276,9 @@ class UIManager(ManagerProcessBase):
         old_selected = self._normalize_bead_id(self.selected_bead)
         old_reference = self._normalize_bead_id(self.reference_bead)
         self.selected_bead = bead
+        if hasattr(self, 'plot_worker') and self.plot_worker is not None:
+            self.plot_worker.selected_bead_signal.emit(bead)
+        self._sync_plot_settings_selected_bead(bead)
         if self.shared_values is not None:
             self.shared_values.live_profile_bead.value = bead
         self._clear_live_profile_buffer()
@@ -294,10 +297,30 @@ class UIManager(ManagerProcessBase):
         old_selected = self._normalize_bead_id(self.selected_bead)
         old_reference = self._normalize_bead_id(self.reference_bead)
         self.reference_bead = bead
+        emitted_bead = -1 if bead is None else bead
+        if hasattr(self, 'plot_worker') and self.plot_worker is not None:
+            self.plot_worker.reference_bead_signal.emit(emitted_bead)
+        self._sync_plot_settings_reference_bead(bead)
         self._update_bead_highlights(
             old_selected=old_selected,
             old_reference=old_reference,
         )
+
+    def _sync_plot_settings_selected_bead(self, bead: int) -> None:
+        if self.controls is None or not hasattr(self.controls, 'plot_settings_panel'):
+            return
+        lineedit = self.controls.plot_settings_panel.selected_bead.lineedit
+        lineedit.blockSignals(True)
+        lineedit.setText(str(bead))
+        lineedit.blockSignals(False)
+
+    def _sync_plot_settings_reference_bead(self, bead: int | None) -> None:
+        if self.controls is None or not hasattr(self.controls, 'plot_settings_panel'):
+            return
+        lineedit = self.controls.plot_settings_panel.reference_bead.lineedit
+        lineedit.blockSignals(True)
+        lineedit.setText('' if bead is None or bead < 0 else str(bead))
+        lineedit.blockSignals(False)
 
     def _normalize_bead_id(self, bead: int | None) -> int | None:
         if bead is None or bead < 0:

@@ -924,7 +924,6 @@ class PlotSettingsPanel(ControlPanelBase):
             bead = int(value)
         except (TypeError, ValueError):
             bead = -1
-        self.manager.plot_worker.selected_bead_signal.emit(bead)
         self.manager.set_selected_bead(bead)
 
     def reference_bead_callback(self, value):
@@ -933,8 +932,7 @@ class PlotSettingsPanel(ControlPanelBase):
             bead = int(value)
         except (TypeError, ValueError):
             bead = -1
-        self.manager.plot_worker.reference_bead_signal.emit(bead)
-        self.manager.set_reference_bead(bead)
+        self.manager.set_reference_bead(None if bead < 0 else bead)
 
     def time_mode_callback(self, value: str):
         mode = value.lower()

@@ -88,6 +88,24 @@ class FakeTextEdit:
     def setText(self, text: str) -> None:
         self.text = text
 
+    def toPlainText(self) -> str:
+        return self.text or ''
+
+
+class FakeLineEdit:
+    def __init__(self, text: str = ''):
+        self.block_calls = []
+        self._text = text
+
+    def blockSignals(self, state: bool) -> None:
+        self.block_calls.append(state)
+
+    def setText(self, text: str) -> None:
+        self._text = text
+
+    def text(self) -> str:
+        return self._text
+
 
 class FakeComboBox:
     def __init__(self):
@@ -141,7 +159,19 @@ class FakeControls:
         self.status_panel = FakeStatusPanel()
         self.acquisition_panel = FakeAcquisitionPanel()
         self.bead_selection_panel = FakeBeadSelectionPanel()
+        self.plot_settings_panel = SimpleNamespace(
+            selected_bead=SimpleNamespace(lineedit=FakeLineEdit('0')),
+            reference_bead=SimpleNamespace(lineedit=FakeLineEdit('')),
+        )
         self.z_lut_generation_panel = FakeZLutGenerationPanel()
+
+
+class FakeSignal:
+    def __init__(self):
+        self.calls = []
+
+    def emit(self, value) -> None:
+        self.calls.append(value)
 
 
 class FakeSharedValues:
@@ -197,6 +227,10 @@ def ui_manager():
         'magnification': 2,
     }
     manager.camera_type = SimpleNamespace(bits=12, nm_per_px=100)
+    manager.plot_worker = SimpleNamespace(
+        selected_bead_signal=FakeSignal(),
+        reference_bead_signal=FakeSignal(),
+    )
     yield manager
     clear_ui_manager_singleton()
 
@@ -459,15 +493,34 @@ def test_callback_view_clicked_ignores_new_add_while_bead_sync_pending(ui_manage
 def test_callback_view_clicked_selects_and_activates_existing_bead(ui_manager, monkeypatch):
     pos = SimpleNamespace(x=lambda: 15, y=lambda: 35)
     ui_manager._bead_rois = {4: (10, 20, 30, 40)}
-    ui_manager.video_viewer = FakeVideoViewer()
-    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
     selected = []
+    activated = []
     monkeypatch.setattr(ui_manager, 'set_selected_bead', lambda bead_id: selected.append(bead_id))
+    monkeypatch.setattr(ui_manager, '_set_active_bead', lambda bead_id: activated.append(bead_id))
 
     ui_manager.callback_view_clicked(pos)
 
-    assert ui_manager._active_bead_id == 4
+    assert activated == [4]
     assert selected == [4]
+
+
+def test_set_selected_bead_syncs_plot_worker_and_controls(ui_manager):
+    ui_manager.set_selected_bead(7)
+
+    assert ui_manager.selected_bead == 7
+    assert ui_manager.plot_worker.selected_bead_signal.calls == [7]
+    assert ui_manager.controls.plot_settings_panel.selected_bead.lineedit.block_calls == [True, False]
+    assert ui_manager.controls.plot_settings_panel.selected_bead.lineedit.text() == '7'
+
+
+def test_set_reference_bead_syncs_plot_worker_and_controls(ui_manager):
+    ui_manager.set_reference_bead(9)
+    ui_manager.set_reference_bead(None)
+
+    assert ui_manager.reference_bead is None
+    assert ui_manager.plot_worker.reference_bead_signal.calls == [9, -1]
+    assert ui_manager.controls.plot_settings_panel.reference_bead.lineedit.block_calls == [True, False, True, False]
+    assert ui_manager.controls.plot_settings_panel.reference_bead.lineedit.text() == ''
 
 
 def test_callback_view_clicked_right_click_removes_existing_bead(ui_manager, monkeypatch):
