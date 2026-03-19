@@ -277,12 +277,14 @@ class UIManager(ManagerProcessBase):
         old_selected = self._normalize_bead_id(self.selected_bead)
         old_reference = self._normalize_bead_id(self.reference_bead)
         self.selected_bead = bead
+        normalized_bead = self._normalize_bead_id(bead)
         if hasattr(self, 'plot_worker') and self.plot_worker is not None:
             self.plot_worker.selected_bead_signal.emit(bead)
         self._sync_plot_settings_selected_bead(bead)
         if self.shared_values is not None:
             self.shared_values.live_profile_bead.value = bead
         self._clear_live_profile_buffer()
+        self._set_active_bead(normalized_bead)
         self._update_bead_highlights(
             old_selected=old_selected,
             old_reference=old_reference,
@@ -882,6 +884,8 @@ class UIManager(ManagerProcessBase):
             self._bead_rois.pop(id, None)
             self._clear_pending_bead_add()
             raise
+        if id == self._normalize_bead_id(self.selected_bead):
+            self._set_active_bead(id)
         self._refresh_bead_overlay()
 
     def remove_bead(self, id: int):
