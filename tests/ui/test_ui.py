@@ -9,10 +9,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, QRectF, Qt
 from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
+    AddRandomBeadsCommand,
     RemoveBeadsFromPendingMovesCommand,
     UpdateBeadRoisCommand,
 )
@@ -46,11 +47,18 @@ class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
         self.plot_args = None
-        self.scene = None
+        self.scene = SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 512, 512))
         self.viewport_updates = 0
+        self._viewport_rect = QRect(0, 0, 512, 512)
 
     def viewport(self):
-        return SimpleNamespace(update=self._update_viewport)
+        return SimpleNamespace(update=self._update_viewport, rect=self._viewport_rect_fn)
+
+    def _viewport_rect_fn(self):
+        return self._viewport_rect
+
+    def mapToScene(self, rect):
+        return SimpleNamespace(boundingRect=lambda: QRectF(rect))
 
     def _update_viewport(self) -> None:
         self.viewport_updates += 1
@@ -532,6 +540,52 @@ def test_callback_view_clicked_right_click_removes_existing_bead(ui_manager, mon
     ui_manager.callback_view_clicked(pos, Qt.MouseButton.RightButton)
 
     assert removed == [4]
+
+
+def test_add_random_beads_adds_requested_count_inside_visible_view(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+
+    ui_manager.add_random_beads(5, seed=7)
+
+    assert len(ui_manager._bead_rois) == 5
+    assert list(sorted(ui_manager._bead_rois)) == [0, 1, 2, 3, 4]
+    assert len(buffer.add_calls) == 1
+    assert set(buffer.add_calls[0]) == {0, 1, 2, 3, 4}
+    assert len(commands) == 1
+    for roi in ui_manager._bead_rois.values():
+        x0, x1, y0, y1 = roi
+        assert 0 <= x0 < x1 <= 512
+        assert 0 <= y0 < y1 <= 512
+
+
+def test_add_random_beads_respects_capacity_and_lock(ui_manager, monkeypatch):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager._bead_next_id = ui_manager._bead_roi_capacity
+    errors = []
+    monkeypatch.setattr(ui_manager, 'show_error', lambda text, details: errors.append((text, details)))
+
+    ui_manager.add_random_beads(3, seed=1)
+
+    assert errors[0][0] == 'Maximum bead count reached'
+
+    ui_manager._bead_next_id = 0
+    ui_manager.controls.bead_selection_panel.lock_button.checked = True
+    ui_manager.add_random_beads(3, seed=1)
+
+    assert errors[1][0] == 'Beads are locked'
+    assert ui_manager._bead_rois == {}
+
+
+def test_add_random_beads_command_dataclass_defaults():
+    command = AddRandomBeadsCommand(count=100)
+
+    assert command.count == 100
+    assert command.seed is None
 
 
 def test_refresh_bead_rois_clears_pending_only_after_matching_roi(ui_manager):

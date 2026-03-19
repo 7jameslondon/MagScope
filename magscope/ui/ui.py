@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from math import floor, ceil
 import sys
 from time import time
 import traceback
@@ -364,6 +365,52 @@ class UIManager(ManagerProcessBase):
             return QRectF()
         return scene.sceneRect()
 
+    def _current_visible_scene_rect(self) -> QRectF:
+        scene_rect = self._current_scene_rect()
+        if self.video_viewer is None or scene_rect.isNull():
+            return scene_rect
+
+        viewport = self.video_viewer.viewport()
+        if viewport is None or not hasattr(viewport, 'rect'):
+            return scene_rect
+
+        viewport_rect = viewport.rect()
+        if viewport_rect.isNull():
+            return scene_rect
+
+        visible_rect = self.video_viewer.mapToScene(viewport_rect).boundingRect()
+        visible_rect = visible_rect.intersected(scene_rect)
+        return scene_rect if visible_rect.isEmpty() else visible_rect
+
+    def _beads_locked(self) -> bool:
+        if self.controls is None:
+            return False
+        return self.controls.bead_selection_panel.lock_button.isChecked()
+
+    def _next_random_bead_roi(
+        self,
+        rng: np.random.Generator,
+        visible_rect: QRectF,
+    ) -> tuple[int, int, int, int] | None:
+        if self.settings is None:
+            return None
+
+        roi_width = int(self.settings['ROI'])
+        half_width = roi_width / 2
+        min_x = ceil(visible_rect.left() + half_width)
+        max_x = floor(visible_rect.right() - half_width)
+        min_y = ceil(visible_rect.top() + half_width)
+        max_y = floor(visible_rect.bottom() - half_width)
+        if min_x > max_x or min_y > max_y:
+            return None
+
+        center_x = int(rng.integers(min_x, max_x + 1))
+        center_y = int(rng.integers(min_y, max_y + 1))
+        return BeadGraphic.clamp_roi_to_scene(
+            BeadGraphic.roi_from_center(center_x, center_y, roi_width),
+            self._current_scene_rect(),
+        )
+
     def _set_active_bead(self, bead_id: int | None) -> None:
         normalized_id = self._normalize_bead_id(bead_id)
         if normalized_id is not None and normalized_id not in self._bead_rois:
@@ -397,6 +444,51 @@ class UIManager(ManagerProcessBase):
             return
         self._bead_rois[bead_id] = roi
         self._update_bead_roi(bead_id, roi)
+
+    @register_ipc_command(AddRandomBeadsCommand)
+    @register_script_command(AddRandomBeadsCommand)
+    def add_random_beads(self, count: int, seed: int | None = None) -> None:
+        if count <= 0:
+            return
+        if self._beads_locked():
+            self.show_error('Beads are locked', 'Unlock beads before adding scripted bead ROIs.')
+            return
+
+        visible_rect = self._current_visible_scene_rect()
+        if visible_rect.isNull() or visible_rect.isEmpty():
+            self.show_error('No visible field of view', 'Cannot add random beads without a visible image area.')
+            return
+
+        remaining_capacity = self._bead_roi_capacity - self._bead_next_id
+        if remaining_capacity <= 0:
+            self.show_error(
+                'Maximum bead count reached',
+                'Remove beads or use Reassign IDs before adding more than 10000 beads.',
+            )
+            return
+
+        rng = np.random.default_rng(seed)
+        bead_rois: dict[int, tuple[int, int, int, int]] = {}
+        count_to_add = min(count, remaining_capacity)
+        for _ in range(count_to_add):
+            bead_id = self._bead_next_id
+            roi = self._next_random_bead_roi(rng, visible_rect)
+            if roi is None:
+                break
+            bead_rois[bead_id] = roi
+            self._bead_rois[bead_id] = roi
+            self._bead_next_id += 1
+
+        if not bead_rois:
+            return
+
+        self._update_next_bead_id_label()
+        if self.bead_roi_buffer is None:
+            self.update_bead_rois()
+        else:
+            self.bead_roi_buffer.add_beads(bead_rois)
+            self._broadcast_bead_roi_update()
+        self._refresh_bead_overlay()
 
     def _hit_test_bead(self, pos: QPoint) -> int | None:
         if not self._bead_rois:
