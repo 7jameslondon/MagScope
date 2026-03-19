@@ -43,7 +43,11 @@ class VideoViewer(QGraphicsView):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
-        self._overlay_entries: list[tuple[int, QRectF, QPointF, str, bool]] = []
+        self._overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
+        self._visible_overlay_entries: list[tuple[QRectF, str, bool]] | None = None
+        self._visible_label_entries: list[tuple[QPointF, str]] | None = None
+        self._label_metrics = QFontMetricsF(BeadGraphic.LABEL_FONT)
+        self._label_ascent = self._label_metrics.ascent()
         self._marker_x = np.empty((0,), dtype=float)
         self._marker_y = np.empty((0,), dtype=float)
         self._marker_size = 0
@@ -104,7 +108,7 @@ class VideoViewer(QGraphicsView):
         selected_bead_id: int | None,
         reference_bead_id: int | None,
     ) -> None:
-        overlay_entries: list[tuple[int, QRectF, QPointF, str, bool]] = []
+        overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
         for bead_id, roi in bead_rois.items():
             if bead_id == selected_bead_id:
                 state = 'selected'
@@ -114,13 +118,41 @@ class VideoViewer(QGraphicsView):
                 state = 'default'
             x0, x1, y0, y1 = roi
             overlay_entries.append((
-                bead_id,
                 QRectF(x0, y0, x1 - x0, y1 - y0),
                 BeadGraphic.label_scene_position_for_roi(roi),
                 state,
                 bead_id == active_bead_id,
+                str(bead_id),
             ))
         self._overlay_entries = overlay_entries
+        self._invalidate_overlay_view_cache()
+
+    def _invalidate_overlay_view_cache(self) -> None:
+        self._visible_overlay_entries = None
+        self._visible_label_entries = None
+
+    def _rebuild_overlay_view_cache(self) -> None:
+        if not self._overlay_entries:
+            self._visible_overlay_entries = []
+            self._visible_label_entries = []
+            return
+
+        visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        visible_overlay_entries: list[tuple[QRectF, str, bool]] = []
+        visible_label_entries: list[tuple[QPointF, str]] = []
+
+        for roi_rect, label_point, state, is_active, label_text in self._overlay_entries:
+            if not is_active and not roi_rect.intersects(visible_scene_rect):
+                continue
+            visible_overlay_entries.append((roi_rect, state, is_active))
+            view_point = self.mapFromScene(label_point)
+            visible_label_entries.append((
+                QPointF(view_point.x(), view_point.y() + self._label_ascent),
+                label_text,
+            ))
+
+        self._visible_overlay_entries = visible_overlay_entries
+        self._visible_label_entries = visible_label_entries
 
     def plot(self, x, y, size):
         self._marker_x = np.asarray(x, dtype=float)
@@ -168,6 +200,7 @@ class VideoViewer(QGraphicsView):
                 self.scale(factor, factor)
                 self.centerOn(self._image)
                 self.update_coordinates()
+        self._invalidate_overlay_view_cache()
         self._refresh_minimap()
 
     def clear_image(self):
@@ -207,6 +240,7 @@ class VideoViewer(QGraphicsView):
                 else:
                     factor = 1 / self.scale_factor**abs(step)
                 self.scale(factor, factor)
+                self._invalidate_overlay_view_cache()
             else:
                 self.reset_view()
         self._refresh_minimap()
@@ -270,6 +304,7 @@ class VideoViewer(QGraphicsView):
 
     def scrollContentsBy(self, dx, dy):
         super().scrollContentsBy(dx, dy)
+        self._invalidate_overlay_view_cache()
         self._refresh_minimap()
 
     def _layout_lock_overlay(self):
@@ -453,33 +488,35 @@ class VideoViewer(QGraphicsView):
         super().drawForeground(painter, rect)
 
         if self._overlay_entries:
+            if self._visible_overlay_entries is None or self._visible_label_entries is None:
+                self._rebuild_overlay_view_cache()
+
             BeadGraphic._ensure_shared_pens_and_brushes()
             assert BeadGraphic._shared_pens is not None
             assert BeadGraphic._shared_brushes is not None
+
+            visible_overlay_entries = self._visible_overlay_entries
+            visible_label_entries = self._visible_label_entries
+            assert visible_overlay_entries is not None
+            assert visible_label_entries is not None
 
             painter.save()
             for state in ('default', 'selected', 'reference'):
                 painter.setPen(BeadGraphic._shared_pens[state])
                 painter.setBrush(BeadGraphic._shared_brushes[state])
-                for _bead_id, roi_rect, _label_point, entry_state, is_active in self._overlay_entries:
-                    if is_active or entry_state != state or not roi_rect.intersects(rect):
+                for roi_rect, entry_state, is_active in visible_overlay_entries:
+                    if is_active or entry_state != state:
                         continue
                     painter.drawRect(roi_rect)
             painter.restore()
 
-            scene_transform = painter.worldTransform()
             painter.save()
             painter.resetTransform()
             painter.setFont(BeadGraphic.LABEL_FONT)
             painter.setPen(BeadGraphic.LABEL_COLOR)
-            metrics = QFontMetricsF(painter.font())
-            ascent = metrics.ascent()
 
-            for bead_id, roi_rect, label_point, _state, is_active in self._overlay_entries:
-                if not is_active and not roi_rect.intersects(rect):
-                    continue
-                view_point = scene_transform.map(label_point)
-                painter.drawText(QPointF(view_point.x(), view_point.y() + ascent), str(bead_id))
+            for label_point, label_text in visible_label_entries:
+                painter.drawText(label_point, label_text)
             painter.restore()
 
         if self._marker_size <= 0 or self._marker_x.size == 0 or self._marker_y.size == 0:
