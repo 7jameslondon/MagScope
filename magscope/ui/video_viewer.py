@@ -1,5 +1,5 @@
 import time
-from typing import TYPE_CHECKING
+from typing import Callable
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
@@ -7,13 +7,13 @@ from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter
 from PyQt6.QtWidgets import (QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
 
-if TYPE_CHECKING:
-    from magscope.ui.widgets import BeadGraphic
+from magscope.ui.widgets import BeadGraphic
 
 
 class VideoViewer(QGraphicsView):
     coordinatesChanged: 'pyqtSignal' = pyqtSignal(QPoint)
     clicked: 'pyqtSignal' = pyqtSignal(QPoint)
+    sceneClicked: 'pyqtSignal' = pyqtSignal(QPoint, object)
 
     _MINIMAP_MARGIN = 12
     _MINIMAP_MIN_SIZE = 120
@@ -91,12 +91,25 @@ class VideoViewer(QGraphicsView):
 
         self._minimap_base = QPixmap()
         self._fit_scale = 1.0
-        self._bead_graphics: dict[int, BeadGraphic] | None = None
+        self._bead_overlay_provider: Callable[[], tuple[
+            dict[int, tuple[int, int, int, int]],
+            int | None,
+            int | None,
+            int | None,
+        ]] | None = None
 
         self.set_image_to_default()
 
-    def set_bead_graphics(self, bead_graphics: dict[int, 'BeadGraphic']) -> None:
-        self._bead_graphics = bead_graphics
+    def set_bead_overlay_provider(
+        self,
+        bead_overlay_provider: Callable[[], tuple[
+            dict[int, tuple[int, int, int, int]],
+            int | None,
+            int | None,
+            int | None,
+        ]],
+    ) -> None:
+        self._bead_overlay_provider = bead_overlay_provider
 
     def plot(self, x, y, size):
         """
@@ -238,8 +251,10 @@ class VideoViewer(QGraphicsView):
     def mouseReleaseEvent(self, event):
         duration = time.time() - self._mouse_start_time
         if duration < 0.5:
-            if self._image.isUnderMouse() and event.button(
-            ) == Qt.MouseButton.LeftButton:
+            if self._image.isUnderMouse() and event.button() in (
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.RightButton,
+            ):
                 mouse_move_dist = event.position().toPoint(
                 ) - self._mouse_start_pos
                 mouse_move_dist = mouse_move_dist.x() * mouse_move_dist.x(
@@ -247,7 +262,9 @@ class VideoViewer(QGraphicsView):
                 if mouse_move_dist < 32:
                     point = self.mapToScene(
                         event.position().toPoint()).toPoint()
-                    self.clicked.emit(point)
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self.clicked.emit(point)
+                    self.sceneClicked.emit(point, event.button())
         super().mouseReleaseEvent(event)
 
     def scrollContentsBy(self, dx, dy):
@@ -434,23 +451,54 @@ class VideoViewer(QGraphicsView):
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
 
-        if not self._bead_graphics:
+        if self._bead_overlay_provider is None:
             return
 
-        first_graphic = next(iter(self._bead_graphics.values()))
+        bead_rois, active_bead_id, selected_bead_id, reference_bead_id = (
+            self._bead_overlay_provider()
+        )
+        if not bead_rois:
+            return
+
+        BeadGraphic._ensure_shared_pens_and_brushes()
+        assert BeadGraphic._shared_pens is not None
+        assert BeadGraphic._shared_brushes is not None
+
+        painter.save()
+        for bead_id, roi in bead_rois.items():
+            if bead_id == active_bead_id:
+                continue
+
+            x0, x1, y0, y1 = roi
+            roi_rect = QRectF(x0, y0, x1 - x0, y1 - y0)
+            if not roi_rect.intersects(rect):
+                continue
+
+            if bead_id == selected_bead_id:
+                state = 'selected'
+            elif bead_id == reference_bead_id:
+                state = 'reference'
+            else:
+                state = 'default'
+            painter.setPen(BeadGraphic._shared_pens[state])
+            painter.setBrush(BeadGraphic._shared_brushes[state])
+            painter.drawRect(roi_rect)
+
+        painter.restore()
 
         painter.save()
         painter.resetTransform()
-        painter.setFont(first_graphic.LABEL_FONT)
-        painter.setPen(first_graphic.LABEL_COLOR)
+        painter.setFont(BeadGraphic.LABEL_FONT)
+        painter.setPen(BeadGraphic.LABEL_COLOR)
         metrics = QFontMetricsF(painter.font())
         ascent = metrics.ascent()
 
-        for graphic in self._bead_graphics.values():
-            if not graphic.isVisible() or not graphic.sceneBoundingRect().intersects(rect):
+        for bead_id, roi in bead_rois.items():
+            roi_rect = QRectF(roi[0], roi[2], roi[1] - roi[0], roi[3] - roi[2])
+            if bead_id != active_bead_id and not roi_rect.intersects(rect):
                 continue
-            point = self.mapFromScene(graphic.get_label_scene_position())
-            painter.drawText(QPointF(point.x(), point.y() + ascent), str(graphic.id))
+            point = self.mapFromScene(BeadGraphic.label_scene_position_for_roi(roi))
+            painter.drawText(QPointF(point.x(), point.y() + ascent), str(bead_id))
 
         painter.restore()
 

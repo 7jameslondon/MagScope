@@ -432,7 +432,13 @@ class BeadGraphic(QGraphicsRectItem):
     _shared_pens: dict[str, QPen] | None = None
     _shared_brushes: dict[str, QBrush] | None = None
 
-    def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
+    def __init__(
+        self,
+        parent: UIManager,
+        id: int,
+        roi: tuple[int, int, int, int],
+        view_scene,
+    ):
         self._parent: UIManager = parent
         self.id: int = id
         self._initializing: bool = True
@@ -442,16 +448,10 @@ class BeadGraphic(QGraphicsRectItem):
         self.scene_rect = None
         self._cached_roi: tuple[int, int, int, int] | None = None
         self.pen_width = 0
-        self.width = width
         self._ensure_shared_pens_and_brushes()
 
-        # Calculate shape of rect (accounting for pen/border width)
-        offset_pos = self.pen_width / 2
-        offset_width = self.width - self.pen_width
-        rect = QRectF(offset_pos, offset_pos, offset_width, offset_width)
-
         # Set up the graphic (must happen in this order)
-        super().__init__(rect)
+        super().__init__()
 
         self.locked = False # initializes colors
 
@@ -460,10 +460,7 @@ class BeadGraphic(QGraphicsRectItem):
         self.view_scene.addItem(self)
 
         # Set position
-        pos = QPointF()
-        pos.setX(x - self.width / 2)  # convert from center to top-left
-        pos.setY(y - self.width / 2)  # convert from center to top-left
-        self.setPos(pos)
+        self.set_roi_bounds(roi)
 
         # Configure scene
         self.scene_rect = self.scene().sceneRect()
@@ -472,6 +469,58 @@ class BeadGraphic(QGraphicsRectItem):
 
     def remove(self):
         self.view_scene.removeItem(self)
+
+    @classmethod
+    def roi_from_center(
+        cls,
+        x: float,
+        y: float,
+        width: float,
+    ) -> tuple[int, int, int, int]:
+        half_width = width / 2
+        x0 = int(round(x - half_width))
+        y0 = int(round(y - half_width))
+        x1 = int(round(x0 + width))
+        y1 = int(round(y0 + width))
+        return (x0, x1, y0, y1)
+
+    @classmethod
+    def label_scene_position_for_roi(cls, roi: tuple[int, int, int, int]) -> QPointF:
+        x0, _x1, y0, _y1 = roi
+        return QPointF(x0 + cls.LABEL_OFFSET_X, y0 + cls.LABEL_OFFSET_Y)
+
+    @classmethod
+    def clamp_roi_to_scene(
+        cls,
+        roi: tuple[int, int, int, int],
+        scene_rect: QRectF,
+    ) -> tuple[int, int, int, int]:
+        if scene_rect.isNull():
+            return roi
+        x0, x1, y0, y1 = roi
+        width = x1 - x0
+        height = y1 - y0
+        min_x = int(round(scene_rect.left()))
+        max_x = int(round(scene_rect.right() - width))
+        min_y = int(round(scene_rect.top()))
+        max_y = int(round(scene_rect.bottom() - height))
+        if max_x < min_x or max_y < min_y:
+            return roi
+        x0 = min(max(x0, min_x), max_x)
+        y0 = min(max(y0, min_y), max_y)
+        return (x0, x0 + width, y0, y0 + height)
+
+    @classmethod
+    def move_roi(
+        cls,
+        roi: tuple[int, int, int, int],
+        dx: int,
+        dy: int,
+        scene_rect: QRectF,
+    ) -> tuple[int, int, int, int]:
+        x0, x1, y0, y1 = roi
+        moved_roi = (x0 + dx, x1 + dx, y0 + dy, y1 + dy)
+        return cls.clamp_roi_to_scene(moved_roi, scene_rect)
 
     @property
     def locked(self):
@@ -557,11 +606,16 @@ class BeadGraphic(QGraphicsRectItem):
         return value
 
     def get_label_scene_position(self) -> QPointF:
-        rect = self.rect()
-        return QPointF(
-            self.x() + rect.x() + self.LABEL_OFFSET_X,
-            self.y() + rect.y() + self.LABEL_OFFSET_Y,
-        )
+        return self.label_scene_position_for_roi(self.get_roi_bounds())
+
+    def set_roi_bounds(self, roi: tuple[int, int, int, int]) -> None:
+        x0, x1, y0, y1 = roi
+        width = x1 - x0
+        height = y1 - y0
+        offset = self.pen_width / 2
+        self.setRect(QRectF(offset, offset, width - self.pen_width, height - self.pen_width))
+        self.setPos(QPointF(x0, y0))
+        self._update_cached_roi()
 
     def itemChange(self, change, value):
         # Constrain the item's movement within the scene
@@ -596,7 +650,7 @@ class BeadGraphic(QGraphicsRectItem):
         super().mouseReleaseEvent(event)
 
     def on_move_completed(self):
-        self._parent._update_bead_roi(self.id, self.get_roi_bounds())
+        self._parent.on_active_bead_move_completed(self.id, self.get_roi_bounds())
 
     def get_roi_bounds(self) -> tuple[int, int, int, int]:
         if self._cached_roi is None:

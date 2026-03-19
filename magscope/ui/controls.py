@@ -503,6 +503,8 @@ class BeadSelectionPanel(ControlPanelBase):
         note_text = textwrap.dedent(
             """
             <b>Add a bead:</b> Left-click on the video<br>
+            <b>Activate a bead:</b> Left-click on the bead ROI<br>
+            <b>Move a bead:</b> Drag the active bead ROI<br>
             <b>Remove a bead:</b> Right-click on the bead<br>
             <b>Lock beads:</b> Click the lock button to prevent accidentally moving/adding/removing beads.
             """

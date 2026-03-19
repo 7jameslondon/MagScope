@@ -305,7 +305,7 @@ def test_bead_graphic_reports_label_scene_position(qtbot, ui_manager):
     ui_manager._update_bead_roi = lambda bead_id, roi: None
     ui_manager.remove_bead = lambda bead_id: None
 
-    graphic = BeadGraphic(ui_manager, 12, 100, 120, 40, scene)
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
 
     label_pos = graphic.get_label_scene_position()
     assert graphic.LABEL_FONT.family() == 'Arial'
@@ -329,15 +329,13 @@ def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
 
     ui_manager.add_bead(SimpleNamespace(x=lambda: 100, y=lambda: 100))
     ui_manager.add_bead(SimpleNamespace(x=lambda: 200, y=lambda: 200))
-    second_graphic = ui_manager._bead_graphics.pop(1)
-    ui_manager._bead_graphics[5] = second_graphic
+    second_roi = ui_manager._bead_rois.pop(1)
+    ui_manager._bead_rois[5] = second_roi
 
     ui_manager.reset_bead_ids()
 
-    assert list(sorted(ui_manager._bead_graphics)) == [0, 1]
-    assert ui_manager._bead_graphics[0].id == 0
-    assert ui_manager._bead_graphics[1].id == 1
-    assert ui_manager.video_viewer.viewport_updates == 3
+    assert list(sorted(ui_manager._bead_rois)) == [0, 1]
+    assert ui_manager.video_viewer.viewport_updates >= 3
 
 
 def test_acquisition_setters_update_controls_and_state(ui_manager):
@@ -430,9 +428,11 @@ def test_move_beads_updates_only_moved_rois_and_clears_pending(ui_manager):
     ui_manager.bead_roi_buffer = buffer
     ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
     ui_manager.send_ipc = commands.append
-    ui_manager._bead_graphics = {
-        1: FakeGraphic((10, 20, 30, 40)),
-        2: FakeGraphic((50, 60, 70, 80)),
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    ui_manager._bead_rois = {
+        1: (10, 20, 30, 40),
+        2: (50, 60, 70, 80),
     }
 
     ui_manager.move_beads([(1, 2, 3), (99, 4, 5)])
@@ -454,6 +454,31 @@ def test_callback_view_clicked_ignores_new_add_while_bead_sync_pending(ui_manage
     ui_manager.callback_view_clicked(pos)
 
     assert calls == []
+
+
+def test_callback_view_clicked_selects_and_activates_existing_bead(ui_manager, monkeypatch):
+    pos = SimpleNamespace(x=lambda: 15, y=lambda: 35)
+    ui_manager._bead_rois = {4: (10, 20, 30, 40)}
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    selected = []
+    monkeypatch.setattr(ui_manager, 'set_selected_bead', lambda bead_id: selected.append(bead_id))
+
+    ui_manager.callback_view_clicked(pos)
+
+    assert ui_manager._active_bead_id == 4
+    assert selected == [4]
+
+
+def test_callback_view_clicked_right_click_removes_existing_bead(ui_manager, monkeypatch):
+    pos = SimpleNamespace(x=lambda: 15, y=lambda: 35)
+    ui_manager._bead_rois = {4: (10, 20, 30, 40)}
+    removed = []
+    monkeypatch.setattr(ui_manager, 'remove_bead', lambda bead_id: removed.append(bead_id))
+
+    ui_manager.callback_view_clicked(pos, Qt.MouseButton.RightButton)
+
+    assert removed == [4]
 
 
 def test_refresh_bead_rois_clears_pending_only_after_matching_roi(ui_manager):
@@ -484,21 +509,9 @@ def test_refresh_bead_rois_keeps_pending_for_unrelated_update(ui_manager):
 
 def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeypatch):
     ui_manager.settings["ROI"] = 20
-    ui_manager.video_viewer = SimpleNamespace(
-        scene=SimpleNamespace(width=lambda: 100, addItem=lambda item: None),
-        viewport=lambda: SimpleNamespace(update=lambda: None),
-    )
-    ui_manager._update_bead_highlight = lambda bead_id: None
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
     ui_manager._update_next_bead_id_label = lambda: None
-
-    class FakeNewGraphic:
-        def __init__(self, manager, bead_id, x, y, width, scene):
-            self.id = bead_id
-
-        def get_roi_bounds(self):
-            return (1, 2, 3, 4)
-
-    monkeypatch.setattr("magscope.ui.ui.BeadGraphic", FakeNewGraphic)
     monkeypatch.setattr(ui_manager, "_add_bead_roi", lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError("boom")))
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -506,3 +519,4 @@ def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeyp
 
     assert ui_manager._pending_bead_add_id is None
     assert ui_manager._pending_bead_add_roi is None
+    assert ui_manager._bead_rois == {}

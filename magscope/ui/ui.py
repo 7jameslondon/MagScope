@@ -6,7 +6,7 @@ from typing import Callable, Iterable
 from warnings import warn
 
 import numpy as np
-from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer
+from PyQt6.QtCore import QPoint, QRectF, QSettings, Qt, QThread, QTimer
 from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -70,7 +70,9 @@ logger = get_logger("ui.ui")
 class UIManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
-        self._bead_graphics: dict[int, BeadGraphic] = {}
+        self._active_bead_graphic: BeadGraphic | None = None
+        self._active_bead_id: int | None = None
+        self._bead_rois: dict[int, tuple[int, int, int, int]] = {}
         self._pending_bead_add_id: int | None = None
         self._pending_bead_add_roi: tuple[int, int, int, int] | None = None
         self._bead_next_id: int = 0
@@ -131,7 +133,7 @@ class UIManager(ManagerProcessBase):
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
-        self.video_viewer.set_bead_graphics(self._bead_graphics)
+        self.video_viewer.set_bead_overlay_provider(self._get_bead_overlay_state)
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
@@ -165,7 +167,7 @@ class UIManager(ManagerProcessBase):
 
         # Connect the video viewer
         self.video_viewer.coordinatesChanged.connect(self.update_view_coords)
-        self.video_viewer.clicked.connect(self.callback_view_clicked)
+        self.video_viewer.sceneClicked.connect(self.callback_view_clicked)
 
         # Timer
         self._timer = QTimer()
@@ -312,11 +314,104 @@ class UIManager(ManagerProcessBase):
             return 'reference'
         return 'default'
 
-    def _update_bead_highlight(self, bead_id: int) -> None:
-        graphic = self._bead_graphics.get(bead_id)
-        if graphic is None:
+    def _get_bead_overlay_state(
+        self,
+    ) -> tuple[
+        dict[int, tuple[int, int, int, int]],
+        int | None,
+        int | None,
+        int | None,
+    ]:
+        return (
+            self._bead_rois,
+            self._active_bead_id,
+            self._normalize_bead_id(self.selected_bead),
+            self._normalize_bead_id(self.reference_bead),
+        )
+
+    def _refresh_bead_overlay(self) -> None:
+        if self.video_viewer is not None:
+            self.video_viewer.viewport().update()
+
+    def _current_scene_rect(self) -> QRectF:
+        if self.video_viewer is None:
+            return QRectF()
+        scene = getattr(self.video_viewer, 'scene', None)
+        if scene is None or not hasattr(scene, 'sceneRect'):
+            return QRectF()
+        return scene.sceneRect()
+
+    def _set_active_bead(self, bead_id: int | None) -> None:
+        normalized_id = self._normalize_bead_id(bead_id)
+        if normalized_id is not None and normalized_id not in self._bead_rois:
+            normalized_id = None
+
+        if self._active_bead_graphic is not None:
+            self._active_bead_graphic.remove()
+            self._active_bead_graphic = None
+
+        self._active_bead_id = normalized_id
+        if normalized_id is None or self.video_viewer is None:
+            self._refresh_bead_overlay()
             return
-        graphic.set_selection_state(self._get_bead_highlight_state(bead_id))
+
+        roi = self._bead_rois[normalized_id]
+        self._active_bead_graphic = BeadGraphic(self, normalized_id, roi, self.video_viewer.scene)
+        self._active_bead_graphic.locked = (
+            self.controls is not None and self.controls.bead_selection_panel.lock_button.isChecked()
+        )
+        self._active_bead_graphic.set_selection_state(
+            self._get_bead_highlight_state(normalized_id)
+        )
+        self._refresh_bead_overlay()
+
+    def on_active_bead_move_completed(
+        self,
+        bead_id: int,
+        roi: tuple[int, int, int, int],
+    ) -> None:
+        if bead_id not in self._bead_rois:
+            return
+        self._bead_rois[bead_id] = roi
+        self._update_bead_roi(bead_id, roi)
+
+    def _hit_test_bead(self, pos: QPoint) -> int | None:
+        if not self._bead_rois:
+            return None
+
+        selected_id = self._normalize_bead_id(self.selected_bead)
+        reference_id = self._normalize_bead_id(self.reference_bead)
+        best_match: tuple[int, float, int] | None = None
+        best_bead_id: int | None = None
+
+        for bead_id, (x0, x1, y0, y1) in self._bead_rois.items():
+            if not (x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1):
+                continue
+
+            if bead_id == self._active_bead_id:
+                priority = 0
+            elif bead_id == selected_id:
+                priority = 1
+            elif bead_id == reference_id:
+                priority = 2
+            else:
+                priority = 3
+
+            center_x = (x0 + x1) / 2
+            center_y = (y0 + y1) / 2
+            distance_sq = (center_x - pos.x()) ** 2 + (center_y - pos.y()) ** 2
+            candidate = (priority, distance_sq, -bead_id)
+            if best_match is None or candidate < best_match:
+                best_match = candidate
+                best_bead_id = bead_id
+
+        return best_bead_id
+
+    def _update_bead_highlight(self, bead_id: int) -> None:
+        if bead_id == self._active_bead_id and self._active_bead_graphic is not None:
+            self._active_bead_graphic.set_selection_state(
+                self._get_bead_highlight_state(bead_id)
+            )
 
     def _update_bead_highlights(
         self,
@@ -335,6 +430,7 @@ class UIManager(ManagerProcessBase):
 
         for bead_id in affected_ids:
             self._update_bead_highlight(bead_id)
+        self._refresh_bead_overlay()
 
     def _clear_live_profile_buffer(self) -> None:
         if self.live_profile_buffer is not None:
@@ -536,11 +632,23 @@ class UIManager(ManagerProcessBase):
             # Increment the display rate counter
             self._display_rate_counter += 1
 
-    def callback_view_clicked(self, pos: QPoint):
-        if self.controls.bead_selection_panel.lock_button.isChecked():
+    def callback_view_clicked(self, pos: QPoint, button=Qt.MouseButton.LeftButton):
+        if self.controls is None or self.controls.bead_selection_panel.lock_button.isChecked():
             return
         if self._pending_bead_add_id is not None:
             return
+
+        bead_id = self._hit_test_bead(pos)
+        if button == Qt.MouseButton.RightButton:
+            if bead_id is not None:
+                self.remove_bead(bead_id)
+            return
+
+        if bead_id is not None:
+            self._set_active_bead(bead_id)
+            self.set_selected_bead(bead_id)
+            return
+
         self.add_bead(pos)
 
     def refresh_bead_rois(self):
@@ -563,10 +671,7 @@ class UIManager(ManagerProcessBase):
         self._clear_pending_bead_add()
 
     def update_bead_rois(self):
-        bead_rois = {}
-        for id, graphic in self._bead_graphics.items():
-            bead_rois[id] = graphic.get_roi_bounds()
-        self._write_bead_rois_to_buffer(bead_rois)
+        self._write_bead_rois_to_buffer(self._bead_rois)
         self._broadcast_bead_roi_update()
 
     def _add_bead_roi(self, bead_id: int, roi: tuple[int, int, int, int]) -> None:
@@ -606,16 +711,20 @@ class UIManager(ManagerProcessBase):
     def move_beads(self, moves: list[tuple[int, int, int]]):
         moved_ids: list[int] = []
         moved_rois: dict[int, tuple[int, int, int, int]] = {}
+        scene_rect = self._current_scene_rect()
 
         self._suppress_bead_roi_updates = True
         try:
             for id, dx, dy in moves:
-                if id not in self._bead_graphics:
+                if id not in self._bead_rois:
                     continue
 
-                self._bead_graphics[id].move(dx, dy)
+                roi = BeadGraphic.move_roi(self._bead_rois[id], dx, dy, scene_rect)
+                self._bead_rois[id] = roi
+                if id == self._active_bead_id and self._active_bead_graphic is not None:
+                    self._active_bead_graphic.set_roi_bounds(roi)
                 moved_ids.append(id)
-                moved_rois[id] = self._bead_graphics[id].get_roi_bounds()
+                moved_rois[id] = roi
         finally:
             self._suppress_bead_roi_updates = False
 
@@ -623,6 +732,7 @@ class UIManager(ManagerProcessBase):
             return
 
         self._update_multiple_bead_rois(moved_rois)
+        self._refresh_bead_overlay()
 
         command = RemoveBeadsFromPendingMovesCommand(ids=moved_ids)
         self.send_ipc(command)
@@ -635,41 +745,40 @@ class UIManager(ManagerProcessBase):
             )
             return
 
-        # Add a bead graphic
         id = self._bead_next_id
         x = pos.x()
         y = pos.y()
         w = self.settings['ROI']
-        view_scene = self.video_viewer.scene
-        graphic = BeadGraphic(self, id, x, y, w, view_scene)
-        self._bead_graphics[id] = graphic
+        scene_rect = self._current_scene_rect()
+        roi = BeadGraphic.clamp_roi_to_scene(
+            BeadGraphic.roi_from_center(x, y, w),
+            scene_rect,
+        )
+        self._bead_rois[id] = roi
         self._bead_next_id += 1
         self._update_next_bead_id_label()
 
-        # Update highlight color to reflect selection/reference
-        self._update_bead_highlight(id)
-
         # Update the bead ROI
-        roi = graphic.get_roi_bounds()
         self._pending_bead_add_id = id
         self._pending_bead_add_roi = roi
         try:
             self._add_bead_roi(id, roi)
         except Exception:
+            self._bead_rois.pop(id, None)
             self._clear_pending_bead_add()
             raise
-        if self.video_viewer is not None:
-            self.video_viewer.viewport().update()
+        self._refresh_bead_overlay()
 
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
         old_reference = self._normalize_bead_id(self.reference_bead)
 
-        # Update graphics
-        graphic = self._bead_graphics.pop(id)
-        graphic.remove()
-        if self.video_viewer is not None:
-            self.video_viewer.viewport().update()
+        if id not in self._bead_rois:
+            return
+
+        self._bead_rois.pop(id)
+        if id == self._active_bead_id:
+            self._set_active_bead(None)
 
         # Update highlight colors to reflect selection/reference
         self._update_bead_highlights(
@@ -682,13 +791,9 @@ class UIManager(ManagerProcessBase):
 
     def clear_beads(self):
         self._clear_pending_bead_add()
+        self._set_active_bead(None)
 
-        # Update graphics
-        for graphics in self._bead_graphics.values():
-            graphics.remove()
-        self._bead_graphics.clear()
-        if self.video_viewer is not None:
-            self.video_viewer.viewport().update()
+        self._bead_rois.clear()
         self._bead_next_id = 0
         self._update_next_bead_id_label()
 
@@ -703,19 +808,18 @@ class UIManager(ManagerProcessBase):
 
     def reset_bead_ids(self):
         self._clear_pending_bead_add()
-        if not self._bead_graphics:
+        if not self._bead_rois:
             self._bead_next_id = 0
             self._update_next_bead_id_label()
             return
 
-        new_graphics: dict[int, BeadGraphic] = {}
+        new_rois: dict[int, tuple[int, int, int, int]] = {}
         id_mapping: dict[int, int] = {}
-        for new_id, (old_id, graphic) in enumerate(sorted(self._bead_graphics.items())):
+        for new_id, (old_id, roi) in enumerate(sorted(self._bead_rois.items())):
             id_mapping[old_id] = new_id
-            graphic.id = new_id
-            new_graphics[new_id] = graphic
+            new_rois[new_id] = roi
 
-        self._bead_graphics = new_graphics
+        self._bead_rois = new_rois
 
         if self.selected_bead is not None:
             new_selected = id_mapping.get(self.selected_bead, -1)
@@ -725,12 +829,12 @@ class UIManager(ManagerProcessBase):
             new_reference = id_mapping.get(self.reference_bead)
             self.set_reference_bead(new_reference)
 
-        self._bead_next_id = len(self._bead_graphics)
         self._update_bead_highlights()
         self.update_bead_rois()
         self._update_next_bead_id_label()
-        if self.video_viewer is not None:
-            self.video_viewer.viewport().update()
+        self._set_active_bead(id_mapping.get(self._active_bead_id))
+        self._bead_next_id = len(self._bead_rois)
+        self._refresh_bead_overlay()
 
     def _update_roi_labels(self, roi: int) -> None:
         if self.controls is None:
@@ -756,16 +860,18 @@ class UIManager(ManagerProcessBase):
         self._pending_bead_add_roi = None
 
     def _calculate_next_bead_id(self) -> int:
-        if not self._bead_graphics:
+        if not self._bead_rois:
             return 0
 
-        return max(self._bead_graphics.keys()) + 1
+        return max(self._bead_rois.keys()) + 1
 
     def lock_beads(self, locked: bool):
         if self.video_viewer is not None:
             self.video_viewer.set_locked_overlay(locked)
-        for graphic in self._bead_graphics.values():
-            graphic.locked = locked
+        if self._active_bead_graphic is not None:
+            self._active_bead_graphic.locked = locked
+        if locked:
+            self._set_active_bead(None)
 
     def update_video_processors_status(self):
         busy = self.shared_values.video_process_busy_count.value
