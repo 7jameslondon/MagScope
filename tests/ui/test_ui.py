@@ -65,6 +65,9 @@ class FakeCheckable:
     def setChecked(self, value: bool) -> None:
         self.checked = value
 
+    def isChecked(self) -> bool:
+        return bool(self.checked)
+
 
 class FakeTextEdit:
     def __init__(self):
@@ -114,6 +117,7 @@ class FakeBeadSelectionPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
         self.next_bead_id_label = None
+        self.lock_button = FakeCheckable()
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label = next_bead_id
@@ -429,3 +433,64 @@ def test_move_beads_updates_only_moved_rois_and_clears_pending(ui_manager):
     assert isinstance(commands[0], UpdateBeadRoisCommand)
     assert isinstance(commands[1], RemoveBeadsFromPendingMovesCommand)
     assert commands[1].ids == [1]
+
+
+def test_callback_view_clicked_ignores_new_add_while_bead_sync_pending(ui_manager, monkeypatch):
+    calls = []
+    pos = SimpleNamespace(x=lambda: 10, y=lambda: 20)
+    monkeypatch.setattr(ui_manager, "add_bead", lambda value: calls.append(value))
+
+    ui_manager._pending_bead_add_id = 3
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager.callback_view_clicked(pos)
+
+    assert calls == []
+
+
+def test_refresh_bead_rois_clears_pending_only_after_matching_roi(ui_manager):
+    ui_manager._refresh_bead_roi_cache = lambda: None
+    ui_manager._pending_bead_add_id = 2
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    ui_manager._bead_roi_values = np.asarray([[9, 9, 9, 9], [1, 2, 3, 4]], dtype=np.uint32)
+
+    ui_manager.refresh_bead_rois()
+
+    assert ui_manager._pending_bead_add_id is None
+    assert ui_manager._pending_bead_add_roi is None
+
+
+def test_refresh_bead_rois_keeps_pending_for_unrelated_update(ui_manager):
+    ui_manager._refresh_bead_roi_cache = lambda: None
+    ui_manager._pending_bead_add_id = 2
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager._bead_roi_ids = np.asarray([1, 3], dtype=np.uint32)
+    ui_manager._bead_roi_values = np.asarray([[9, 9, 9, 9], [5, 6, 7, 8]], dtype=np.uint32)
+
+    ui_manager.refresh_bead_rois()
+
+    assert ui_manager._pending_bead_add_id == 2
+    assert ui_manager._pending_bead_add_roi == (1, 2, 3, 4)
+
+
+def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeypatch):
+    ui_manager.settings["ROI"] = 20
+    ui_manager.video_viewer = SimpleNamespace(scene=SimpleNamespace(width=lambda: 100, addItem=lambda item: None))
+    ui_manager._update_bead_highlight = lambda bead_id: None
+    ui_manager._update_next_bead_id_label = lambda: None
+
+    class FakeNewGraphic:
+        def __init__(self, manager, bead_id, x, y, width, scene):
+            self.id = bead_id
+
+        def get_roi_bounds(self):
+            return (1, 2, 3, 4)
+
+    monkeypatch.setattr("magscope.ui.ui.BeadGraphic", FakeNewGraphic)
+    monkeypatch.setattr(ui_manager, "_add_bead_roi", lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
+
+    assert ui_manager._pending_bead_add_id is None
+    assert ui_manager._pending_bead_add_roi is None

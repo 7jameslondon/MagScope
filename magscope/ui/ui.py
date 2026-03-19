@@ -71,6 +71,8 @@ class UIManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self._bead_graphics: dict[int, BeadGraphic] = {}
+        self._pending_bead_add_id: int | None = None
+        self._pending_bead_add_roi: tuple[int, int, int, int] | None = None
         self._bead_next_id: int = 0
         self.beads_in_view_on = False
         self.beads_in_view_count = 1
@@ -534,8 +536,30 @@ class UIManager(ManagerProcessBase):
             self._display_rate_counter += 1
 
     def callback_view_clicked(self, pos: QPoint):
-        if not self.controls.bead_selection_panel.lock_button.isChecked():
-            self.add_bead(pos)
+        if self.controls.bead_selection_panel.lock_button.isChecked():
+            return
+        if self._pending_bead_add_id is not None:
+            return
+        self.add_bead(pos)
+
+    def refresh_bead_rois(self):
+        super().refresh_bead_rois()
+        if self._pending_bead_add_id is None or self._pending_bead_add_roi is None:
+            return
+
+        bead_ids, bead_rois = self.get_cached_bead_rois()
+        pending_id = self._pending_bead_add_id
+        pending_roi = self._pending_bead_add_roi
+
+        matches = bead_ids == pending_id
+        if not np.any(matches):
+            return
+
+        roi = bead_rois[np.flatnonzero(matches)[0]]
+        if tuple(int(value) for value in roi) != pending_roi:
+            return
+
+        self._clear_pending_bead_add()
 
     def update_bead_rois(self):
         bead_rois = {}
@@ -625,7 +649,14 @@ class UIManager(ManagerProcessBase):
         self._update_bead_highlight(id)
 
         # Update the bead ROI
-        self._add_bead_roi(id, graphic.get_roi_bounds())
+        roi = graphic.get_roi_bounds()
+        self._pending_bead_add_id = id
+        self._pending_bead_add_roi = roi
+        try:
+            self._add_bead_roi(id, roi)
+        except Exception:
+            self._clear_pending_bead_add()
+            raise
 
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
@@ -645,6 +676,8 @@ class UIManager(ManagerProcessBase):
         self._remove_bead_roi(id)
 
     def clear_beads(self):
+        self._clear_pending_bead_add()
+
         # Update graphics
         for graphics in self._bead_graphics.values():
             graphics.remove()
@@ -662,6 +695,7 @@ class UIManager(ManagerProcessBase):
         self._broadcast_bead_roi_update()
 
     def reset_bead_ids(self):
+        self._clear_pending_bead_add()
         if not self._bead_graphics:
             self._bead_next_id = 0
             self._update_next_bead_id_label()
@@ -708,6 +742,10 @@ class UIManager(ManagerProcessBase):
         self.controls.bead_selection_panel.update_next_bead_id_label(
             self._bead_next_id
         )
+
+    def _clear_pending_bead_add(self) -> None:
+        self._pending_bead_add_id = None
+        self._pending_bead_add_roi = None
 
     def _calculate_next_bead_id(self) -> int:
         if not self._bead_graphics:
