@@ -424,11 +424,11 @@ class BeadGraphic(QGraphicsRectItem):
     LABEL_OFFSET_X = 10
     LABEL_OFFSET_Y = 1
     BORDER_COLOR_DEFAULT = (0, 255, 255, 255)
-    FILL_COLOR_DEFAULT = (0, 183, 235, 25)
+    FILL_COLOR_DEFAULT = None
     BORDER_COLOR_SELECTED = (255, 0, 0, 255)
-    FILL_COLOR_SELECTED = (255, 0, 0, 25)
+    FILL_COLOR_SELECTED = None
     BORDER_COLOR_REFERENCE = (0, 255, 0, 255)
-    FILL_COLOR_REFERENCE = (0, 255, 0, 25)
+    FILL_COLOR_REFERENCE = None
     _shared_pens: dict[str, QPen] | None = None
     _shared_brushes: dict[str, QBrush] | None = None
 
@@ -566,7 +566,9 @@ class BeadGraphic(QGraphicsRectItem):
         return pen
 
     @staticmethod
-    def _create_brush(color: tuple[int, int, int, int]) -> QBrush:
+    def _create_brush(color: tuple[int, int, int, int] | None) -> QBrush:
+        if color is None:
+            return QBrush(Qt.BrushStyle.NoBrush)
         return QBrush(QColor(*color))
 
     def _apply_color(self):
