@@ -1,10 +1,9 @@
 import time
-from typing import Callable
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import (QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene,
+from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
 
 from magscope.ui.widgets import BeadGraphic
@@ -42,8 +41,12 @@ class VideoViewer(QGraphicsView):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
-        self.crosshairs = []
+        self._overlay_entries: list[tuple[int, QRectF, QPointF, str, bool]] = []
+        self._marker_x = np.empty((0,), dtype=float)
+        self._marker_y = np.empty((0,), dtype=float)
+        self._marker_size = 0
 
         self._minimap_label = QLabel(self.viewport())
         self._minimap_label.setFrameShape(QFrame.Shape.Panel)
@@ -91,47 +94,45 @@ class VideoViewer(QGraphicsView):
 
         self._minimap_base = QPixmap()
         self._fit_scale = 1.0
-        self._bead_overlay_provider: Callable[[], tuple[
-            dict[int, tuple[int, int, int, int]],
-            int | None,
-            int | None,
-            int | None,
-        ]] | None = None
 
         self.set_image_to_default()
 
-    def set_bead_overlay_provider(
+    def set_bead_overlay(
         self,
-        bead_overlay_provider: Callable[[], tuple[
-            dict[int, tuple[int, int, int, int]],
-            int | None,
-            int | None,
-            int | None,
-        ]],
+        bead_rois: dict[int, tuple[int, int, int, int]],
+        active_bead_id: int | None,
+        selected_bead_id: int | None,
+        reference_bead_id: int | None,
     ) -> None:
-        self._bead_overlay_provider = bead_overlay_provider
+        overlay_entries: list[tuple[int, QRectF, QPointF, str, bool]] = []
+        for bead_id, roi in bead_rois.items():
+            if bead_id == selected_bead_id:
+                state = 'selected'
+            elif bead_id == reference_bead_id:
+                state = 'reference'
+            else:
+                state = 'default'
+            x0, x1, y0, y1 = roi
+            overlay_entries.append((
+                bead_id,
+                QRectF(x0, y0, x1 - x0, y1 - y0),
+                BeadGraphic.label_scene_position_for_roi(roi),
+                state,
+                bead_id == active_bead_id,
+            ))
+        self._overlay_entries = overlay_entries
 
     def plot(self, x, y, size):
-        """
-        Plot precise, lightweight cross+circle markers at each (x, y).
-        """
-        self.clear_crosshairs()
-
-        color = QColor("red")
-        radius = size / 2
-        thickness = max(1.0, size / 10)
-        offset = 0.5
-
-        for xi, yi in zip(x, y):
-            marker = CrossCircleItem(xi+offset, yi+offset, radius=radius, color=color, thickness=thickness)
-            self.scene.addItem(marker)
-            self.crosshairs.append(marker)
+        self._marker_x = np.asarray(x, dtype=float)
+        self._marker_y = np.asarray(y, dtype=float)
+        self._marker_size = max(1, int(round(size)))
+        self.viewport().update()
 
     def clear_crosshairs(self):
-        """Remove all crosshairs"""
-        for ch in self.crosshairs:
-            self.scene.removeItem(ch)
-        self.crosshairs.clear()
+        self._marker_x = np.empty((0,), dtype=float)
+        self._marker_y = np.empty((0,), dtype=float)
+        self._marker_size = 0
+        self.viewport().update()
 
     def set_image_to_default(self):
         width = 128
@@ -451,82 +452,56 @@ class VideoViewer(QGraphicsView):
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
 
-        if self._bead_overlay_provider is None:
+        if self._overlay_entries:
+            BeadGraphic._ensure_shared_pens_and_brushes()
+            assert BeadGraphic._shared_pens is not None
+            assert BeadGraphic._shared_brushes is not None
+
+            painter.save()
+            for state in ('default', 'selected', 'reference'):
+                painter.setPen(BeadGraphic._shared_pens[state])
+                painter.setBrush(BeadGraphic._shared_brushes[state])
+                for _bead_id, roi_rect, _label_point, entry_state, is_active in self._overlay_entries:
+                    if is_active or entry_state != state or not roi_rect.intersects(rect):
+                        continue
+                    painter.drawRect(roi_rect)
+            painter.restore()
+
+            scene_transform = painter.worldTransform()
+            painter.save()
+            painter.resetTransform()
+            painter.setFont(BeadGraphic.LABEL_FONT)
+            painter.setPen(BeadGraphic.LABEL_COLOR)
+            metrics = QFontMetricsF(painter.font())
+            ascent = metrics.ascent()
+
+            for bead_id, roi_rect, label_point, _state, is_active in self._overlay_entries:
+                if not is_active and not roi_rect.intersects(rect):
+                    continue
+                view_point = scene_transform.map(label_point)
+                painter.drawText(QPointF(view_point.x(), view_point.y() + ascent), str(bead_id))
+            painter.restore()
+
+        if self._marker_size <= 0 or self._marker_x.size == 0 or self._marker_y.size == 0:
             return
 
-        bead_rois, active_bead_id, selected_bead_id, reference_bead_id = (
-            self._bead_overlay_provider()
-        )
-        if not bead_rois:
-            return
-
-        BeadGraphic._ensure_shared_pens_and_brushes()
-        assert BeadGraphic._shared_pens is not None
-        assert BeadGraphic._shared_brushes is not None
-
-        painter.save()
-        for bead_id, roi in bead_rois.items():
-            if bead_id == active_bead_id:
-                continue
-
-            x0, x1, y0, y1 = roi
-            roi_rect = QRectF(x0, y0, x1 - x0, y1 - y0)
-            if not roi_rect.intersects(rect):
-                continue
-
-            if bead_id == selected_bead_id:
-                state = 'selected'
-            elif bead_id == reference_bead_id:
-                state = 'reference'
-            else:
-                state = 'default'
-            painter.setPen(BeadGraphic._shared_pens[state])
-            painter.setBrush(BeadGraphic._shared_brushes[state])
-            painter.drawRect(roi_rect)
-
-        painter.restore()
-
+        scene_transform = painter.worldTransform()
         painter.save()
         painter.resetTransform()
-        painter.setFont(BeadGraphic.LABEL_FONT)
-        painter.setPen(BeadGraphic.LABEL_COLOR)
-        metrics = QFontMetricsF(painter.font())
-        ascent = metrics.ascent()
+        marker_pen = QPen(QColor('red'))
+        marker_pen.setWidth(1 if self._marker_size <= 3 else 2)
+        painter.setPen(marker_pen)
 
-        for bead_id, roi in bead_rois.items():
-            roi_rect = QRectF(roi[0], roi[2], roi[1] - roi[0], roi[3] - roi[2])
-            if bead_id != active_bead_id and not roi_rect.intersects(rect):
+        half_size = max(1, self._marker_size // 2)
+        for x, y in zip(self._marker_x, self._marker_y):
+            if not rect.contains(x, y):
                 continue
-            point = self.mapFromScene(BeadGraphic.label_scene_position_for_roi(roi))
-            painter.drawText(QPointF(point.x(), point.y() + ascent), str(bead_id))
-
+            view_point = scene_transform.map(QPointF(float(x), float(y)))
+            px = view_point.x()
+            py = view_point.y()
+            if half_size <= 1:
+                painter.drawPoint(QPointF(px, py))
+                continue
+            painter.drawLine(QPointF(px - half_size, py), QPointF(px + half_size, py))
+            painter.drawLine(QPointF(px, py - half_size), QPointF(px, py + half_size))
         painter.restore()
-
-class CrossCircleItem(QGraphicsItem):
-    """A lightweight, centered ⊕-style marker drawn with simple geometry."""
-    def __init__(self, x, y, radius=6.0, color=QColor("red"), thickness=1.0, fixed_size=True):
-        super().__init__()
-        self.radius = radius
-        self.color = color
-        self.thickness = thickness
-        self.setPos(x, y)
-
-        # Keeps marker size constant when zooming, optional
-        if fixed_size:
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-
-    def boundingRect(self):
-        r = self.radius + self.thickness
-        return QRectF(-r, -r, 2 * r, 2 * r)
-
-    def paint(self, painter, option, widget):
-        pen = QPen(self.color, self.thickness)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        r = int(self.radius)
-        # Circle outline
-        painter.drawEllipse(QPointF(0, 0), r, r)
-        # Crosshair lines
-        painter.drawLine(-r, 0, r, 0)
-        painter.drawLine(0, -r, 0, r)

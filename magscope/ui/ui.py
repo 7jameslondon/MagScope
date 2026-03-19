@@ -134,7 +134,7 @@ class UIManager(ManagerProcessBase):
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
-        self.video_viewer.set_bead_overlay_provider(self._get_bead_overlay_state)
+        self._refresh_bead_overlay()
 
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
@@ -340,23 +340,14 @@ class UIManager(ManagerProcessBase):
             return 'reference'
         return 'default'
 
-    def _get_bead_overlay_state(
-        self,
-    ) -> tuple[
-        dict[int, tuple[int, int, int, int]],
-        int | None,
-        int | None,
-        int | None,
-    ]:
-        return (
-            self._bead_rois,
-            self._active_bead_id,
-            self._normalize_bead_id(self.selected_bead),
-            self._normalize_bead_id(self.reference_bead),
-        )
-
     def _refresh_bead_overlay(self) -> None:
         if self.video_viewer is not None:
+            self.video_viewer.set_bead_overlay(
+                self._bead_rois,
+                self._active_bead_id,
+                self._normalize_bead_id(self.selected_bead),
+                self._normalize_bead_id(self.reference_bead),
+            )
             self.video_viewer.viewport().update()
 
     def _current_scene_rect(self) -> QRectF:
@@ -446,6 +437,7 @@ class UIManager(ManagerProcessBase):
             return
         self._bead_rois[bead_id] = roi
         self._update_bead_roi(bead_id, roi)
+        self._refresh_bead_overlay()
 
     @register_ipc_command(AddRandomBeadsCommand)
     @register_script_command(AddRandomBeadsCommand)
@@ -924,6 +916,7 @@ class UIManager(ManagerProcessBase):
             self._bead_roi_ids = np.zeros((0,), dtype=np.uint32)
             self._bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
         self._broadcast_bead_roi_update()
+        self._refresh_bead_overlay()
 
     def reset_bead_ids(self):
         self._clear_pending_bead_add()

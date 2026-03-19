@@ -47,6 +47,7 @@ class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
         self.plot_args = None
+        self.overlay_args = None
         self.scene = SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 512, 512))
         self.viewport_updates = 0
         self._viewport_rect = QRect(0, 0, 512, 512)
@@ -68,6 +69,20 @@ class FakeVideoViewer:
 
     def plot(self, x, y, marker_size):
         self.plot_args = (np.asarray(x), np.asarray(y), marker_size)
+
+    def set_bead_overlay(
+        self,
+        bead_rois: dict[int, tuple[int, int, int, int]],
+        active_bead_id: int | None,
+        selected_bead_id: int | None,
+        reference_bead_id: int | None,
+    ) -> None:
+        self.overlay_args = (
+            dict(bead_rois),
+            active_bead_id,
+            selected_bead_id,
+            reference_bead_id,
+        )
 
 
 class FakeCheckable:
@@ -338,6 +353,37 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     np.testing.assert_allclose(plotted_x, expected_x)
     np.testing.assert_allclose(plotted_y, expected_y)
     assert marker_size == ui_manager.beads_in_view_marker_size
+
+
+def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):
+    fake_viewer = FakeVideoViewer()
+    ui_manager.video_viewer = fake_viewer
+    ui_manager._bead_rois = {1: (10, 20, 30, 40), 2: (50, 60, 70, 80)}
+    ui_manager._active_bead_id = 2
+    ui_manager.selected_bead = 1
+    ui_manager.reference_bead = 2
+
+    ui_manager._refresh_bead_overlay()
+
+    assert fake_viewer.overlay_args == (
+        {1: (10, 20, 30, 40), 2: (50, 60, 70, 80)},
+        2,
+        1,
+        2,
+    )
+    assert fake_viewer.viewport_updates == 1
+
+
+def test_clear_beads_refreshes_overlay_cache(ui_manager):
+    fake_viewer = FakeVideoViewer()
+    ui_manager.video_viewer = fake_viewer
+    ui_manager._bead_rois = {1: (10, 20, 30, 40)}
+    ui_manager._bead_next_id = 1
+    ui_manager._broadcast_bead_roi_update = lambda: None
+
+    ui_manager.clear_beads()
+
+    assert fake_viewer.overlay_args == ({}, None, 0, None)
 
 
 def test_bead_graphic_reports_label_scene_position(qtbot, ui_manager):
