@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QRect, QRectF, Qt
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
 from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
@@ -60,6 +60,9 @@ class FakeVideoViewer:
 
     def mapToScene(self, rect):
         return SimpleNamespace(boundingRect=lambda: QRectF(rect))
+
+    def image_scene_rect(self):
+        return self.scene.sceneRect()
 
     def _update_viewport(self) -> None:
         self.viewport_updates += 1
@@ -421,6 +424,119 @@ def test_bead_graphic_label_moves_with_active_roi(qtbot, ui_manager):
     moved_roi_label_pos = graphic.get_label_scene_position()
     assert moved_label_pos == moved_roi_label_pos
     assert moved_label_pos != initial_label_pos
+    graphic.remove()
+
+
+def test_bead_graphic_selected_roi_shows_four_corner_grips(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+    graphic.set_selection_state('selected')
+
+    grip_rects = graphic._corner_grip_rects()
+
+    assert len(grip_rects) == 4
+    assert all(grip_rect.width() > 0 for grip_rect in grip_rects)
+    assert all(grip_rect.height() > 0 for grip_rect in grip_rects)
+    graphic.remove()
+
+
+def test_bead_graphic_non_selected_roi_hides_corner_grips(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    assert graphic._corner_grip_rects() == []
+    graphic.set_selection_state('reference')
+    assert graphic._corner_grip_rects() == []
+    graphic.remove()
+
+
+def test_bead_graphic_updates_cursor_for_hover_and_drag(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    assert graphic.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+    graphic._is_hovered = True
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    graphic._is_moving = True
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+    graphic._is_moving = False
+    graphic._is_hovered = False
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.ArrowCursor
+    graphic.remove()
+
+
+def test_bead_graphic_validate_move_clamps_to_scene_bounds(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+    graphic.set_selection_state('selected')
+
+    clamped_bottom_right = graphic.validate_move(graphic.pos() + QPointF(600, 600))
+    assert clamped_bottom_right.x() == 472
+    assert clamped_bottom_right.y() == 472
+
+    clamped_top_left = graphic.validate_move(QPointF(-100, -100))
+    assert clamped_top_left.x() == 0
+    assert clamped_top_left.y() == 0
+    graphic.remove()
+
+
+def test_bead_graphic_move_keeps_roi_inside_scene(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+    graphic.set_selection_state('selected')
+
+    graphic.move(600, 600)
+    assert graphic.get_roi_bounds() == (472, 512, 472, 512)
+
+    graphic.move(-1000, -1000)
+    assert graphic.get_roi_bounds() == (0, 40, 0, 40)
+    graphic.remove()
+
+
+def test_bead_graphic_selected_grips_stay_inside_roi(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (472, 512, 472, 512), scene)
+    graphic.set_selection_state('selected')
+
+    paint_rect = graphic._paint_rect()
+    for grip_rect in graphic._corner_grip_rects():
+        assert paint_rect.contains(grip_rect)
     graphic.remove()
 
 

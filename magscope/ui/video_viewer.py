@@ -283,9 +283,13 @@ class VideoViewer(QGraphicsView):
     def has_image(self):
         return not self._empty
 
+    def image_scene_rect(self) -> QRectF:
+        return QRectF(self._image.pixmap().rect())
+
     def reset_view(self, scale=1):
-        rect = QRectF(self._image.pixmap().rect())
+        rect = self.image_scene_rect()
         if not rect.isNull():
+            self.scene.setSceneRect(rect)
             self.setSceneRect(rect)
             if (scale := max(1, scale)) == 1:
                 self._zoom = 0
@@ -307,6 +311,7 @@ class VideoViewer(QGraphicsView):
         self._empty = True
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._image.setPixmap(QPixmap())
+        self.scene.setSceneRect(QRectF())
         self.reset_view(round(self.scale_factor**self._zoom))
         self._minimap_base = QPixmap()
         self._minimap_label.hide()
@@ -318,6 +323,9 @@ class VideoViewer(QGraphicsView):
         if not pixmap.isNull():
             self._empty = False
             self._minimap_base = pixmap
+            rect = self.image_scene_rect()
+            self.scene.setSceneRect(rect)
+            self.setSceneRect(rect)
         self._refresh_minimap()
 
     def set_locked_overlay(self, locked: bool):

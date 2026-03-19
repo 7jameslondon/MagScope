@@ -430,6 +430,13 @@ class BeadGraphic(QGraphicsRectItem):
     FILL_COLOR_SELECTED = None
     BORDER_COLOR_REFERENCE = (0, 255, 0, 255)
     FILL_COLOR_REFERENCE = None
+    HOVER_BORDER_COLOR = (255, 96, 96, 255)
+    DRAG_BORDER_COLOR = (255, 255, 255, 255)
+    IDLE_PEN_WIDTH = 0
+    HOVER_PEN_WIDTH = 2
+    SELECTED_PEN_WIDTH = 2
+    DRAG_PEN_WIDTH = 3
+    CORNER_GRIP_SIZE = 6.0
     _shared_pens: dict[str, QPen] | None = None
     _shared_brushes: dict[str, QBrush] | None = None
 
@@ -444,9 +451,9 @@ class BeadGraphic(QGraphicsRectItem):
         self.id: int = id
         self._initializing: bool = True
         self._is_moving: bool = False
+        self._is_hovered: bool = False
         self._locked: bool
         self._color_state: str = 'default'
-        self.scene_rect = None
         self._cached_roi: tuple[int, int, int, int] | None = None
         self.pen_width = 0
         self._ensure_shared_pens_and_brushes()
@@ -461,6 +468,7 @@ class BeadGraphic(QGraphicsRectItem):
             True,
         )
         self.label.setPos(self.LABEL_OFFSET_X, self.LABEL_OFFSET_Y)
+        self.setAcceptHoverEvents(True)
 
         self.locked = False # initializes colors
 
@@ -472,7 +480,6 @@ class BeadGraphic(QGraphicsRectItem):
         self.set_roi_bounds(roi)
 
         # Configure scene
-        self.scene_rect = self.scene().sceneRect()
         self._update_cached_roi()
         self._initializing = False
 
@@ -572,6 +579,7 @@ class BeadGraphic(QGraphicsRectItem):
     def _create_pen(color: tuple[int, int, int, int]) -> QPen:
         pen = QPen(QColor(*color))
         pen.setWidth(0)
+        pen.setCosmetic(True)
         return pen
 
     @staticmethod
@@ -585,6 +593,100 @@ class BeadGraphic(QGraphicsRectItem):
         assert self._shared_brushes is not None
         self.setPen(self._shared_pens[self._color_state])
         self.setBrush(self._shared_brushes[self._color_state])
+        self._update_cursor()
+        self.update()
+
+    def _current_visual_state(self) -> str:
+        if self._is_moving and not self.locked:
+            return 'dragging'
+        if self._is_hovered and not self.locked:
+            return 'hover'
+        return self._color_state
+
+    def _current_border_color(self) -> QColor:
+        visual_state = self._current_visual_state()
+        if visual_state == 'dragging':
+            return QColor(*self.DRAG_BORDER_COLOR)
+        if visual_state == 'hover':
+            return QColor(*self.HOVER_BORDER_COLOR)
+        if visual_state == 'selected':
+            return QColor(*self.BORDER_COLOR_SELECTED)
+        if visual_state == 'reference':
+            return QColor(*self.BORDER_COLOR_REFERENCE)
+        return QColor(*self.BORDER_COLOR_DEFAULT)
+
+    def _current_pen_width(self) -> int:
+        visual_state = self._current_visual_state()
+        if visual_state == 'dragging':
+            return self.DRAG_PEN_WIDTH
+        if visual_state == 'hover':
+            return self.HOVER_PEN_WIDTH
+        if visual_state == 'selected':
+            return self.SELECTED_PEN_WIDTH
+        return self.IDLE_PEN_WIDTH
+
+    def _update_cursor(self) -> None:
+        if self.locked:
+            self.unsetCursor()
+            return
+        if self._is_moving:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if self._is_hovered:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        self.unsetCursor()
+
+    def _corner_grip_rects(self) -> list[QRectF]:
+        if self._color_state != 'selected':
+            return []
+
+        rect = self._paint_rect()
+        grip_size = min(
+            self.CORNER_GRIP_SIZE,
+            rect.width() / 3,
+            rect.height() / 3,
+        )
+        return [
+            QRectF(rect.left(), rect.top(), grip_size, grip_size),
+            QRectF(rect.right() - grip_size, rect.top(), grip_size, grip_size),
+            QRectF(rect.left(), rect.bottom() - grip_size, grip_size, grip_size),
+            QRectF(rect.right() - grip_size, rect.bottom() - grip_size, grip_size, grip_size),
+        ]
+
+    def _paint_rect(self) -> QRectF:
+        rect = QRectF(self.rect())
+        pen_inset = self._current_pen_width() / 2
+        if pen_inset <= 0:
+            return rect
+        return rect.adjusted(pen_inset, pen_inset, -pen_inset, -pen_inset)
+
+    def _current_scene_rect(self) -> QRectF:
+        scene_rect_getter = getattr(self._parent, '_current_scene_rect', None)
+        if callable(scene_rect_getter):
+            scene_rect = scene_rect_getter()
+            if not scene_rect.isNull():
+                return scene_rect
+        return self.scene().sceneRect()
+
+    def paint(self, painter, option, widget=None):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(self._current_border_color())
+        pen.setWidth(self._current_pen_width())
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(self.brush())
+        painter.drawRect(self._paint_rect())
+
+        grip_rects = self._corner_grip_rects()
+        if grip_rects:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._current_border_color())
+            for grip_rect in grip_rects:
+                painter.drawRect(grip_rect)
+
+        painter.restore()
 
     def move(self, dx, dy):
         value = self.pos()
@@ -596,23 +698,25 @@ class BeadGraphic(QGraphicsRectItem):
 
     def validate_move(self, value):
         """ Prevents the graphic from moving outside the scene border"""
-        scene_rect = self.scene().sceneRect()
-        if self.scene_rect is not None:
-            scene_rect = self.scene_rect
+        scene_rect = self._current_scene_rect()
+
+        roi_rect = self.rect()
+        roi_width = roi_rect.width()
+        roi_height = roi_rect.height()
 
         if value.x() < scene_rect.left() - self.pen_width / 2:
             value.setX(scene_rect.left() - self.pen_width / 2)
-        elif value.x() + self.boundingRect().width() > scene_rect.right(
+        elif value.x() + roi_width > scene_rect.right(
         ) + self.pen_width / 2:
             value.setX(scene_rect.right() + self.pen_width / 2 -
-                       self.boundingRect().width())
+                       roi_width)
 
         if value.y() < scene_rect.top() - self.pen_width / 2:
             value.setY(scene_rect.top() - self.pen_width / 2)
-        elif value.y() + self.boundingRect().height() > scene_rect.bottom(
+        elif value.y() + roi_height > scene_rect.bottom(
         ) + self.pen_width / 2:
             value.setY(scene_rect.bottom() + self.pen_width / 2 -
-                       self.boundingRect().height())
+                       roi_height)
 
         return value
 
@@ -640,12 +744,29 @@ class BeadGraphic(QGraphicsRectItem):
                 self.on_move_completed()
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_cached_roi()
+            if self._is_moving:
+                self.update()
         return super().itemChange(change, value)
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self._update_cursor()
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self._update_cursor()
+        self.update()
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         # Left click - Maybe move
         if event.button() == Qt.MouseButton.LeftButton and not self.locked:
             self._is_moving = True
+            self._update_cursor()
+            self.update()
+            super().mousePressEvent(event)
         # Right Click - Delete self
         elif event.button() == Qt.MouseButton.RightButton:
             if not self.locked:
@@ -657,6 +778,8 @@ class BeadGraphic(QGraphicsRectItem):
         # Call function when done moving
         if event.button() == Qt.MouseButton.LeftButton and self._is_moving and not self.locked:
             self._is_moving = False
+            self._update_cursor()
+            self.update()
             self.on_move_completed()
         super().mouseReleaseEvent(event)
 

@@ -353,6 +353,11 @@ class UIManager(ManagerProcessBase):
     def _current_scene_rect(self) -> QRectF:
         if self.video_viewer is None:
             return QRectF()
+        image_scene_rect = getattr(self.video_viewer, 'image_scene_rect', None)
+        if callable(image_scene_rect):
+            rect = image_scene_rect()
+            if not rect.isNull():
+                return rect
         scene = getattr(self.video_viewer, 'scene', None)
         if scene is None or not hasattr(scene, 'sceneRect'):
             return QRectF()
