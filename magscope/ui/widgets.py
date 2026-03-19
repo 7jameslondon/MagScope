@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
                           QRectF, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGroupBox,
-                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
-                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem,
+                             QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel,
+                             QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSplitter,
+                             QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
@@ -452,6 +453,14 @@ class BeadGraphic(QGraphicsRectItem):
 
         # Set up the graphic (must happen in this order)
         super().__init__()
+        self.label = QGraphicsSimpleTextItem(str(id), self)
+        self.label.setFont(self.LABEL_FONT)
+        self.label.setBrush(self.LABEL_COLOR)
+        self.label.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+            True,
+        )
+        self.label.setPos(self.LABEL_OFFSET_X, self.LABEL_OFFSET_Y)
 
         self.locked = False # initializes colors
 

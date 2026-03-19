@@ -45,7 +45,7 @@ class VideoViewer(QGraphicsView):
 
         self._overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
         self._visible_overlay_entries: list[tuple[QRectF, str, bool]] | None = None
-        self._visible_label_entries: list[tuple[QPointF, QStaticText]] | None = None
+        self._visible_label_entries: list[tuple[QPointF, QStaticText, bool]] | None = None
         self._overlay_cache_pixmap = QPixmap()
         self._overlay_cache_dirty = True
         self._overlay_cache_size = QSize()
@@ -156,7 +156,7 @@ class VideoViewer(QGraphicsView):
 
         visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
         visible_overlay_entries: list[tuple[QRectF, str, bool]] = []
-        visible_label_entries: list[tuple[QPointF, QStaticText]] = []
+        visible_label_entries: list[tuple[QPointF, QStaticText, bool]] = []
 
         for roi_rect, label_point, state, is_active, label_text in self._overlay_entries:
             if not is_active and not roi_rect.intersects(visible_scene_rect):
@@ -167,6 +167,7 @@ class VideoViewer(QGraphicsView):
             visible_label_entries.append((
                 QPointF(view_point.x(), view_point.y() + self._label_ascent),
                 self._get_static_label(label_text),
+                is_active,
             ))
 
         self._visible_overlay_entries = visible_overlay_entries
@@ -223,7 +224,9 @@ class VideoViewer(QGraphicsView):
 
             painter.setFont(BeadGraphic.LABEL_FONT)
             painter.setPen(BeadGraphic.LABEL_COLOR)
-            for label_point, label_text in visible_label_entries:
+            for label_point, label_text, is_active in visible_label_entries:
+                if is_active:
+                    continue
                 painter.drawStaticText(label_point, label_text)
         finally:
             painter.end()

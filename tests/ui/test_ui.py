@@ -402,6 +402,28 @@ def test_bead_graphic_reports_label_scene_position(qtbot, ui_manager):
     graphic.remove()
 
 
+def test_bead_graphic_label_moves_with_active_roi(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    initial_label_pos = graphic.label.scenePos()
+    initial_roi_label_pos = graphic.get_label_scene_position()
+    assert initial_label_pos == initial_roi_label_pos
+
+    graphic.set_roi_bounds(BeadGraphic.roi_from_center(140, 160, 40))
+
+    moved_label_pos = graphic.label.scenePos()
+    moved_roi_label_pos = graphic.get_label_scene_position()
+    assert moved_label_pos == moved_roi_label_pos
+    assert moved_label_pos != initial_label_pos
+    graphic.remove()
+
+
 def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
     scene = QGraphicsScene(0, 0, 512, 512)
     qtbot.wait(1)
