@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap, QStaticText
 from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
 
@@ -45,7 +45,8 @@ class VideoViewer(QGraphicsView):
 
         self._overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
         self._visible_overlay_entries: list[tuple[QRectF, str, bool]] | None = None
-        self._visible_label_entries: list[tuple[QPointF, str]] | None = None
+        self._visible_label_entries: list[tuple[QPointF, QStaticText]] | None = None
+        self._static_label_cache: dict[str, QStaticText] = {}
         self._label_metrics = QFontMetricsF(BeadGraphic.LABEL_FONT)
         self._label_ascent = self._label_metrics.ascent()
         self._marker_x = np.empty((0,), dtype=float)
@@ -131,6 +132,14 @@ class VideoViewer(QGraphicsView):
         self._visible_overlay_entries = None
         self._visible_label_entries = None
 
+    def _get_static_label(self, label_text: str) -> QStaticText:
+        static_label = self._static_label_cache.get(label_text)
+        if static_label is None:
+            static_label = QStaticText(label_text)
+            static_label.prepare(font=BeadGraphic.LABEL_FONT)
+            self._static_label_cache[label_text] = static_label
+        return static_label
+
     def _rebuild_overlay_view_cache(self) -> None:
         if not self._overlay_entries:
             self._visible_overlay_entries = []
@@ -139,7 +148,7 @@ class VideoViewer(QGraphicsView):
 
         visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
         visible_overlay_entries: list[tuple[QRectF, str, bool]] = []
-        visible_label_entries: list[tuple[QPointF, str]] = []
+        visible_label_entries: list[tuple[QPointF, QStaticText]] = []
 
         for roi_rect, label_point, state, is_active, label_text in self._overlay_entries:
             if not is_active and not roi_rect.intersects(visible_scene_rect):
@@ -148,7 +157,7 @@ class VideoViewer(QGraphicsView):
             view_point = self.mapFromScene(label_point)
             visible_label_entries.append((
                 QPointF(view_point.x(), view_point.y() + self._label_ascent),
-                label_text,
+                self._get_static_label(label_text),
             ))
 
         self._visible_overlay_entries = visible_overlay_entries
@@ -516,7 +525,7 @@ class VideoViewer(QGraphicsView):
             painter.setPen(BeadGraphic.LABEL_COLOR)
 
             for label_point, label_text in visible_label_entries:
-                painter.drawText(label_point, label_text)
+                painter.drawStaticText(label_point, label_text)
             painter.restore()
 
         if self._marker_size <= 0 or self._marker_x.size == 0 or self._marker_y.size == 0:
