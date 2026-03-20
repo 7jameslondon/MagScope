@@ -46,6 +46,7 @@ class FakeStatusPanel:
 class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
+        self.locked_overlay = None
         self.plot_args = None
         self.overlay_args = None
         self.scene = SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 512, 512))
@@ -69,6 +70,9 @@ class FakeVideoViewer:
 
     def clear_crosshairs(self) -> None:
         self.cleared = True
+
+    def set_locked_overlay(self, locked: bool) -> None:
+        self.locked_overlay = locked
 
     def plot(self, x, y, marker_size):
         self.plot_args = (np.asarray(x), np.asarray(y), marker_size)
@@ -550,20 +554,42 @@ def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
     ui_manager._add_bead_roi = lambda bead_id, roi: None
     ui_manager._update_bead_highlight = lambda bead_id: None
     ui_manager._update_bead_highlights = lambda **kwargs: None
-    ui_manager.selected_bead = None
+    ui_manager.selected_bead = 5
     ui_manager.reference_bead = None
 
     ui_manager.add_bead(SimpleNamespace(x=lambda: 100, y=lambda: 100))
     ui_manager.add_bead(SimpleNamespace(x=lambda: 200, y=lambda: 200))
     second_roi = ui_manager._bead_rois.pop(1)
     ui_manager._bead_rois[5] = second_roi
+    ui_manager._set_active_bead(5)
 
     ui_manager.reset_bead_ids()
 
     assert list(sorted(ui_manager._bead_rois)) == [0, 1]
     assert ui_manager._bead_next_id == 2
     assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 2
+    assert ui_manager.selected_bead == 1
+    assert ui_manager._active_bead_id == 1
     assert ui_manager.video_viewer.viewport_updates >= 3
+
+
+def test_unlock_beads_restores_selected_bead_as_active(ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = scene
+    ui_manager._bead_rois = {3: (10, 20, 30, 40)}
+    ui_manager.selected_bead = 3
+    ui_manager._set_active_bead(3)
+
+    ui_manager.lock_beads(True)
+
+    assert ui_manager.video_viewer.locked_overlay is True
+    assert ui_manager._active_bead_id is None
+
+    ui_manager.lock_beads(False)
+
+    assert ui_manager.video_viewer.locked_overlay is False
+    assert ui_manager._active_bead_id == 3
 
 
 def test_bead_graphic_right_click_defers_deletion_to_scene_handler(qtbot, ui_manager):

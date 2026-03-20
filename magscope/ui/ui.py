@@ -930,6 +930,7 @@ class UIManager(ManagerProcessBase):
             self._update_next_bead_id_label()
             return
 
+        old_active_bead = self._active_bead_id
         new_rois: dict[int, tuple[int, int, int, int]] = {}
         id_mapping: dict[int, int] = {}
         for new_id, (old_id, roi) in enumerate(sorted(self._bead_rois.items())):
@@ -950,7 +951,7 @@ class UIManager(ManagerProcessBase):
         self._update_bead_highlights()
         self.update_bead_rois()
         self._update_next_bead_id_label()
-        self._set_active_bead(id_mapping.get(self._active_bead_id))
+        self._set_active_bead(id_mapping.get(old_active_bead))
         self._refresh_bead_overlay()
 
     def _update_roi_labels(self, roi: int) -> None:
@@ -989,6 +990,8 @@ class UIManager(ManagerProcessBase):
             self._active_bead_graphic.locked = locked
         if locked:
             self._set_active_bead(None)
+        else:
+            self._set_active_bead(self._normalize_bead_id(self.selected_bead))
 
     def update_video_processors_status(self):
         busy = self.shared_values.video_process_busy_count.value
