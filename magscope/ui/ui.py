@@ -937,6 +937,7 @@ class UIManager(ManagerProcessBase):
             new_rois[new_id] = roi
 
         self._bead_rois = new_rois
+        self._bead_next_id = len(self._bead_rois)
 
         if self.selected_bead is not None:
             new_selected = id_mapping.get(self.selected_bead, -1)
@@ -950,7 +951,6 @@ class UIManager(ManagerProcessBase):
         self.update_bead_rois()
         self._update_next_bead_id_label()
         self._set_active_bead(id_mapping.get(self._active_bead_id))
-        self._bead_next_id = len(self._bead_rois)
         self._refresh_bead_overlay()
 
     def _update_roi_labels(self, roi: int) -> None:

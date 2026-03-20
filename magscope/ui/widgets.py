@@ -767,10 +767,10 @@ class BeadGraphic(QGraphicsRectItem):
             self._update_cursor()
             self.update()
             super().mousePressEvent(event)
-        # Right Click - Delete self
+        # Right click is handled by the scene/view release path so overlapping
+        # ROIs only delete a single bead.
         elif event.button() == Qt.MouseButton.RightButton:
-            if not self.locked:
-                self._parent.remove_bead(self.id)
+            event.ignore()
         else:
             super().mousePressEvent(event)
 

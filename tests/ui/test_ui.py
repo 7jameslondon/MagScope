@@ -561,7 +561,37 @@ def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
     ui_manager.reset_bead_ids()
 
     assert list(sorted(ui_manager._bead_rois)) == [0, 1]
+    assert ui_manager._bead_next_id == 2
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 2
     assert ui_manager.video_viewer.viewport_updates >= 3
+
+
+def test_bead_graphic_right_click_defers_deletion_to_scene_handler(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+
+    removed = []
+    ui_manager.remove_bead = lambda bead_id: removed.append(bead_id)
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+
+    class FakeMouseEvent:
+        def __init__(self):
+            self.ignored = False
+
+        def button(self):
+            return Qt.MouseButton.RightButton
+
+        def ignore(self):
+            self.ignored = True
+
+    event = FakeMouseEvent()
+
+    graphic.mousePressEvent(event)
+
+    assert removed == []
+    assert event.ignored is True
+    graphic.remove()
 
 
 def test_acquisition_setters_update_controls_and_state(ui_manager):
