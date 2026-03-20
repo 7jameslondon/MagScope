@@ -503,6 +503,8 @@ class BeadSelectionPanel(ControlPanelBase):
         note_text = textwrap.dedent(
             """
             <b>Add a bead:</b> Left-click on the video<br>
+            <b>Activate a bead:</b> Left-click on the bead ROI<br>
+            <b>Move a bead:</b> Drag the active bead ROI<br>
             <b>Remove a bead:</b> Right-click on the bead<br>
             <b>Lock beads:</b> Click the lock button to prevent accidentally moving/adding/removing beads.
             """
@@ -922,7 +924,6 @@ class PlotSettingsPanel(ControlPanelBase):
             bead = int(value)
         except (TypeError, ValueError):
             bead = -1
-        self.manager.plot_worker.selected_bead_signal.emit(bead)
         self.manager.set_selected_bead(bead)
 
     def reference_bead_callback(self, value):
@@ -931,8 +932,7 @@ class PlotSettingsPanel(ControlPanelBase):
             bead = int(value)
         except (TypeError, ValueError):
             bead = -1
-        self.manager.plot_worker.reference_bead_signal.emit(bead)
-        self.manager.set_reference_bead(bead)
+        self.manager.set_reference_bead(None if bead < 0 else bead)
 
     def time_mode_callback(self, value: str):
         mode = value.lower()

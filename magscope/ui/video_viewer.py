@@ -1,15 +1,18 @@
 import time
 
 import numpy as np
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QCursor, QImage, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import (QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene,
+from PyQt6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter, QPen, QPixmap, QStaticText
+from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
+
+from magscope.ui.widgets import BeadGraphic
 
 
 class VideoViewer(QGraphicsView):
     coordinatesChanged: 'pyqtSignal' = pyqtSignal(QPoint)
     clicked: 'pyqtSignal' = pyqtSignal(QPoint)
+    sceneClicked: 'pyqtSignal' = pyqtSignal(QPoint, object)
 
     _MINIMAP_MARGIN = 12
     _MINIMAP_MIN_SIZE = 120
@@ -38,8 +41,21 @@ class VideoViewer(QGraphicsView):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
-        self.crosshairs = []
+        self._overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
+        self._visible_overlay_entries: list[tuple[QRectF, str, bool]] | None = None
+        self._visible_label_entries: list[tuple[QPointF, QStaticText, bool]] | None = None
+        self._overlay_cache_pixmap = QPixmap()
+        self._overlay_cache_dirty = True
+        self._overlay_cache_size = QSize()
+        self._overlay_cache_device_pixel_ratio = 0.0
+        self._static_label_cache: dict[str, QStaticText] = {}
+        self._label_metrics = QFontMetricsF(BeadGraphic.LABEL_FONT)
+        self._label_ascent = self._label_metrics.ascent()
+        self._marker_x = np.empty((0,), dtype=float)
+        self._marker_y = np.empty((0,), dtype=float)
+        self._marker_size = 0
 
         self._minimap_label = QLabel(self.viewport())
         self._minimap_label.setFrameShape(QFrame.Shape.Panel)
@@ -90,27 +106,165 @@ class VideoViewer(QGraphicsView):
 
         self.set_image_to_default()
 
+    def set_bead_overlay(
+        self,
+        bead_rois: dict[int, tuple[int, int, int, int]],
+        active_bead_id: int | None,
+        selected_bead_id: int | None,
+        reference_bead_id: int | None,
+    ) -> None:
+        overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
+        for bead_id, roi in bead_rois.items():
+            if bead_id == selected_bead_id:
+                state = 'selected'
+            elif bead_id == reference_bead_id:
+                state = 'reference'
+            else:
+                state = 'default'
+            x0, x1, y0, y1 = roi
+            overlay_entries.append((
+                QRectF(x0, y0, x1 - x0, y1 - y0),
+                BeadGraphic.label_scene_position_for_roi(roi),
+                state,
+                bead_id == active_bead_id,
+                str(bead_id),
+            ))
+        self._overlay_entries = overlay_entries
+        self._invalidate_overlay_view_cache()
+
+    def _invalidate_overlay_view_cache(self) -> None:
+        self._visible_overlay_entries = None
+        self._visible_label_entries = None
+        self._overlay_cache_dirty = True
+        self._overlay_cache_pixmap = QPixmap()
+        self._overlay_cache_size = QSize()
+        self._overlay_cache_device_pixel_ratio = 0.0
+
+    def _get_static_label(self, label_text: str) -> QStaticText:
+        static_label = self._static_label_cache.get(label_text)
+        if static_label is None:
+            static_label = QStaticText(label_text)
+            static_label.prepare(font=BeadGraphic.LABEL_FONT)
+            self._static_label_cache[label_text] = static_label
+        return static_label
+
+    def _rebuild_overlay_view_cache(self) -> None:
+        if not self._overlay_entries:
+            self._visible_overlay_entries = []
+            self._visible_label_entries = []
+            return
+
+        visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        visible_overlay_entries: list[tuple[QRectF, str, bool]] = []
+        visible_label_entries: list[tuple[QPointF, QStaticText, bool]] = []
+
+        for roi_rect, label_point, state, is_active, label_text in self._overlay_entries:
+            if not is_active and not roi_rect.intersects(visible_scene_rect):
+                continue
+            view_rect = QRectF(self.mapFromScene(roi_rect).boundingRect())
+            visible_overlay_entries.append((view_rect, state, is_active))
+            view_point = self.mapFromScene(label_point)
+            visible_label_entries.append((
+                QPointF(view_point.x(), view_point.y() + self._label_ascent),
+                self._get_static_label(label_text),
+                is_active,
+            ))
+
+        self._visible_overlay_entries = visible_overlay_entries
+        self._visible_label_entries = visible_label_entries
+
+    def _rebuild_overlay_cache_pixmap(self) -> None:
+        viewport_size = self.viewport().size()
+        if viewport_size.isEmpty() or not self._overlay_entries:
+            self._overlay_cache_pixmap = QPixmap()
+            self._overlay_cache_dirty = False
+            self._overlay_cache_size = QSize()
+            self._overlay_cache_device_pixel_ratio = 0.0
+            return
+
+        if self._visible_overlay_entries is None or self._visible_label_entries is None:
+            self._rebuild_overlay_view_cache()
+
+        visible_overlay_entries = self._visible_overlay_entries
+        visible_label_entries = self._visible_label_entries
+        assert visible_overlay_entries is not None
+        assert visible_label_entries is not None
+
+        device_pixel_ratio = self.devicePixelRatioF()
+        overlay_pixmap = QPixmap(
+            max(1, int(round(viewport_size.width() * device_pixel_ratio))),
+            max(1, int(round(viewport_size.height() * device_pixel_ratio))),
+        )
+        overlay_pixmap.setDevicePixelRatio(device_pixel_ratio)
+        overlay_pixmap.fill(Qt.GlobalColor.transparent)
+
+        BeadGraphic._ensure_shared_pens_and_brushes()
+        assert BeadGraphic._shared_pens is not None
+        assert BeadGraphic._shared_brushes is not None
+
+        painter = QPainter(overlay_pixmap)
+        try:
+            state_rects: dict[str, list[QRectF]] = {
+                'default': [],
+                'selected': [],
+                'reference': [],
+            }
+            for roi_rect, state, is_active in visible_overlay_entries:
+                if is_active:
+                    continue
+                state_rects[state].append(roi_rect)
+
+            for state in ('default', 'selected', 'reference'):
+                if not state_rects[state]:
+                    continue
+                painter.setPen(BeadGraphic._shared_pens[state])
+                painter.setBrush(BeadGraphic._shared_brushes[state])
+                for roi_rect in state_rects[state]:
+                    painter.drawRect(roi_rect)
+
+            painter.setFont(BeadGraphic.LABEL_FONT)
+            painter.setPen(BeadGraphic.LABEL_COLOR)
+            for label_point, label_text, is_active in visible_label_entries:
+                if is_active:
+                    continue
+                painter.drawStaticText(label_point, label_text)
+        finally:
+            painter.end()
+
+        self._overlay_cache_pixmap = overlay_pixmap
+        self._overlay_cache_dirty = False
+        self._overlay_cache_size = viewport_size
+        self._overlay_cache_device_pixel_ratio = device_pixel_ratio
+
+    def _ensure_overlay_cache_pixmap(self) -> None:
+        viewport_size = self.viewport().size()
+        if viewport_size.isEmpty() or not self._overlay_entries:
+            self._overlay_cache_pixmap = QPixmap()
+            self._overlay_cache_dirty = False
+            self._overlay_cache_size = QSize()
+            self._overlay_cache_device_pixel_ratio = 0.0
+            return
+
+        device_pixel_ratio = self.devicePixelRatioF()
+        if (
+            self._overlay_cache_dirty
+            or self._overlay_cache_pixmap.isNull()
+            or self._overlay_cache_size != viewport_size
+            or self._overlay_cache_device_pixel_ratio != device_pixel_ratio
+        ):
+            self._rebuild_overlay_cache_pixmap()
+
     def plot(self, x, y, size):
-        """
-        Plot precise, lightweight cross+circle markers at each (x, y).
-        """
-        self.clear_crosshairs()
-
-        color = QColor("red")
-        radius = size / 2
-        thickness = max(1.0, size / 10)
-        offset = 0.5
-
-        for xi, yi in zip(x, y):
-            marker = CrossCircleItem(xi+offset, yi+offset, radius=radius, color=color, thickness=thickness)
-            self.scene.addItem(marker)
-            self.crosshairs.append(marker)
+        self._marker_x = np.asarray(x, dtype=float)
+        self._marker_y = np.asarray(y, dtype=float)
+        self._marker_size = max(1, int(round(size)))
+        self.viewport().update()
 
     def clear_crosshairs(self):
-        """Remove all crosshairs"""
-        for ch in self.crosshairs:
-            self.scene.removeItem(ch)
-        self.crosshairs.clear()
+        self._marker_x = np.empty((0,), dtype=float)
+        self._marker_y = np.empty((0,), dtype=float)
+        self._marker_size = 0
+        self.viewport().update()
 
     def set_image_to_default(self):
         width = 128
@@ -129,9 +283,13 @@ class VideoViewer(QGraphicsView):
     def has_image(self):
         return not self._empty
 
+    def image_scene_rect(self) -> QRectF:
+        return QRectF(self._image.pixmap().rect())
+
     def reset_view(self, scale=1):
-        rect = QRectF(self._image.pixmap().rect())
+        rect = self.image_scene_rect()
         if not rect.isNull():
+            self.scene.setSceneRect(rect)
             self.setSceneRect(rect)
             if (scale := max(1, scale)) == 1:
                 self._zoom = 0
@@ -146,12 +304,14 @@ class VideoViewer(QGraphicsView):
                 self.scale(factor, factor)
                 self.centerOn(self._image)
                 self.update_coordinates()
+        self._invalidate_overlay_view_cache()
         self._refresh_minimap()
 
     def clear_image(self):
         self._empty = True
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self._image.setPixmap(QPixmap())
+        self.scene.setSceneRect(QRectF())
         self.reset_view(round(self.scale_factor**self._zoom))
         self._minimap_base = QPixmap()
         self._minimap_label.hide()
@@ -163,6 +323,9 @@ class VideoViewer(QGraphicsView):
         if not pixmap.isNull():
             self._empty = False
             self._minimap_base = pixmap
+            rect = self.image_scene_rect()
+            self.scene.setSceneRect(rect)
+            self.setSceneRect(rect)
         self._refresh_minimap()
 
     def set_locked_overlay(self, locked: bool):
@@ -185,6 +348,7 @@ class VideoViewer(QGraphicsView):
                 else:
                     factor = 1 / self.scale_factor**abs(step)
                 self.scale(factor, factor)
+                self._invalidate_overlay_view_cache()
             else:
                 self.reset_view()
         self._refresh_minimap()
@@ -230,8 +394,10 @@ class VideoViewer(QGraphicsView):
     def mouseReleaseEvent(self, event):
         duration = time.time() - self._mouse_start_time
         if duration < 0.5:
-            if self._image.isUnderMouse() and event.button(
-            ) == Qt.MouseButton.LeftButton:
+            if self._image.isUnderMouse() and event.button() in (
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.RightButton,
+            ):
                 mouse_move_dist = event.position().toPoint(
                 ) - self._mouse_start_pos
                 mouse_move_dist = mouse_move_dist.x() * mouse_move_dist.x(
@@ -239,11 +405,14 @@ class VideoViewer(QGraphicsView):
                 if mouse_move_dist < 32:
                     point = self.mapToScene(
                         event.position().toPoint()).toPoint()
-                    self.clicked.emit(point)
+                    if event.button() == Qt.MouseButton.LeftButton:
+                        self.clicked.emit(point)
+                    self.sceneClicked.emit(point, event.button())
         super().mouseReleaseEvent(event)
 
     def scrollContentsBy(self, dx, dy):
         super().scrollContentsBy(dx, dy)
+        self._invalidate_overlay_view_cache()
         self._refresh_minimap()
 
     def _layout_lock_overlay(self):
@@ -423,31 +592,37 @@ class VideoViewer(QGraphicsView):
             return None
         return (current_scale / self._fit_scale) * 100
 
-class CrossCircleItem(QGraphicsItem):
-    """A lightweight, centered ⊕-style marker drawn with simple geometry."""
-    def __init__(self, x, y, radius=6.0, color=QColor("red"), thickness=1.0, fixed_size=True):
-        super().__init__()
-        self.radius = radius
-        self.color = color
-        self.thickness = thickness
-        self.setPos(x, y)
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
 
-        # Keeps marker size constant when zooming, optional
-        if fixed_size:
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        if self._overlay_entries:
+            self._ensure_overlay_cache_pixmap()
+            if not self._overlay_cache_pixmap.isNull():
+                painter.save()
+                painter.resetTransform()
+                painter.drawPixmap(0, 0, self._overlay_cache_pixmap)
+                painter.restore()
 
-    def boundingRect(self):
-        r = self.radius + self.thickness
-        return QRectF(-r, -r, 2 * r, 2 * r)
+        if self._marker_size <= 0 or self._marker_x.size == 0 or self._marker_y.size == 0:
+            return
 
-    def paint(self, painter, option, widget):
-        pen = QPen(self.color, self.thickness)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
+        scene_transform = painter.worldTransform()
+        painter.save()
+        painter.resetTransform()
+        marker_pen = QPen(QColor('red'))
+        marker_pen.setWidth(1 if self._marker_size <= 3 else 2)
+        painter.setPen(marker_pen)
 
-        r = int(self.radius)
-        # Circle outline
-        painter.drawEllipse(QPointF(0, 0), r, r)
-        # Crosshair lines
-        painter.drawLine(-r, 0, r, 0)
-        painter.drawLine(0, -r, 0, r)
+        half_size = max(1, self._marker_size // 2)
+        for x, y in zip(self._marker_x, self._marker_y):
+            if not rect.contains(x, y):
+                continue
+            view_point = scene_transform.map(QPointF(float(x), float(y)))
+            px = view_point.x()
+            py = view_point.y()
+            if half_size <= 1:
+                painter.drawPoint(QPointF(px, py))
+                continue
+            painter.drawLine(QPointF(px - half_size, py), QPointF(px + half_size, py))
+            painter.drawLine(QPointF(px, py - half_size), QPointF(px, py + half_size))
+        painter.restore()

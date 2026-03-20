@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
                           QRectF, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
-from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem, QGraphicsTextItem,
-                             QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
-                             QSizePolicy, QSplitter, QSplitterHandle, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem,
+                             QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel,
+                             QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSplitter,
+                             QSplitterHandle, QVBoxLayout, QWidget)
 
 if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
@@ -419,54 +420,123 @@ class GripSplitter(QSplitter):
 
 
 class BeadGraphic(QGraphicsRectItem):
+    LABEL_FONT = QFont('Arial', 10)
+    LABEL_COLOR = QColor(255, 255, 255, 255)
+    LABEL_OFFSET_X = 10
+    LABEL_OFFSET_Y = 1
+    BORDER_COLOR_DEFAULT = (0, 255, 255, 255)
+    FILL_COLOR_DEFAULT = None
+    BORDER_COLOR_SELECTED = (255, 0, 0, 255)
+    FILL_COLOR_SELECTED = None
+    BORDER_COLOR_REFERENCE = (0, 255, 0, 255)
+    FILL_COLOR_REFERENCE = None
+    HOVER_BORDER_COLOR = (255, 96, 96, 255)
+    DRAG_BORDER_COLOR = (255, 255, 255, 255)
+    IDLE_PEN_WIDTH = 0
+    HOVER_PEN_WIDTH = 2
+    SELECTED_PEN_WIDTH = 2
+    DRAG_PEN_WIDTH = 3
+    CORNER_GRIP_SIZE = 6.0
+    _shared_pens: dict[str, QPen] | None = None
+    _shared_brushes: dict[str, QBrush] | None = None
 
-    def __init__(self, parent: UIManager, id: int, x, y, width, view_scene):
+    def __init__(
+        self,
+        parent: UIManager,
+        id: int,
+        roi: tuple[int, int, int, int],
+        view_scene,
+    ):
         self._parent: UIManager = parent
         self.id: int = id
+        self._initializing: bool = True
         self._is_moving: bool = False
+        self._is_hovered: bool = False
         self._locked: bool
         self._color_state: str = 'default'
-        self.scene_rect = None
         self._cached_roi: tuple[int, int, int, int] | None = None
-        self.border_color_default = (0, 255, 255, 255)
-        self.fill_color_default = (0, 183, 235, 25)
-        self.border_color_selected = (255, 0, 0, 255)
-        self.fill_color_selected = (255, 0, 0, 25)
-        self.border_color_reference = (0, 255, 0, 255)
-        self.fill_color_reference = (0, 255, 0, 25)
         self.pen_width = 0
-        self.width = width
-
-        # Calculate shape of rect (accounting for pen/border width)
-        offset_pos = self.pen_width / 2
-        offset_width = self.width - self.pen_width
-        rect = QRectF(offset_pos, offset_pos, offset_width, offset_width)
+        self._ensure_shared_pens_and_brushes()
 
         # Set up the graphic (must happen in this order)
-        super().__init__(rect)
+        super().__init__()
+        self.label = QGraphicsSimpleTextItem(str(id), self)
+        self.label.setFont(self.LABEL_FONT)
+        self.label.setBrush(self.LABEL_COLOR)
+        self.label.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+            True,
+        )
+        self.label.setPos(self.LABEL_OFFSET_X, self.LABEL_OFFSET_Y)
+        self.setAcceptHoverEvents(True)
 
-        # Label
-        self.label = QGraphicsTextItem('', self)
-        self.label.setFont(QFont('Arial', int(view_scene.width() / 100)))
-
-        self.locked = False # initializes colors/text
+        self.locked = False # initializes colors
 
         # Add to the scene
         self.view_scene = view_scene
         self.view_scene.addItem(self)
 
         # Set position
-        pos = QPointF()
-        pos.setX(x - self.width / 2)  # convert from center to top-left
-        pos.setY(y - self.width / 2)  # convert from center to top-left
-        self.setPos(pos)
+        self.set_roi_bounds(roi)
 
         # Configure scene
-        self.scene_rect = self.scene().sceneRect()
         self._update_cached_roi()
+        self._initializing = False
 
     def remove(self):
         self.view_scene.removeItem(self)
+
+    @classmethod
+    def roi_from_center(
+        cls,
+        x: float,
+        y: float,
+        width: float,
+    ) -> tuple[int, int, int, int]:
+        half_width = width / 2
+        x0 = int(round(x - half_width))
+        y0 = int(round(y - half_width))
+        x1 = int(round(x0 + width))
+        y1 = int(round(y0 + width))
+        return (x0, x1, y0, y1)
+
+    @classmethod
+    def label_scene_position_for_roi(cls, roi: tuple[int, int, int, int]) -> QPointF:
+        x0, _x1, y0, _y1 = roi
+        return QPointF(x0 + cls.LABEL_OFFSET_X, y0 + cls.LABEL_OFFSET_Y)
+
+    @classmethod
+    def clamp_roi_to_scene(
+        cls,
+        roi: tuple[int, int, int, int],
+        scene_rect: QRectF,
+    ) -> tuple[int, int, int, int]:
+        if scene_rect.isNull():
+            return roi
+        x0, x1, y0, y1 = roi
+        width = x1 - x0
+        height = y1 - y0
+        min_x = int(round(scene_rect.left()))
+        max_x = int(round(scene_rect.right() - width))
+        min_y = int(round(scene_rect.top()))
+        max_y = int(round(scene_rect.bottom() - height))
+        if max_x < min_x or max_y < min_y:
+            return roi
+        x0 = min(max(x0, min_x), max_x)
+        y0 = min(max(y0, min_y), max_y)
+        return (x0, x0 + width, y0, y0 + height)
+
+    @classmethod
+    def move_roi(
+        cls,
+        roi: tuple[int, int, int, int],
+        dx: int,
+        dy: int,
+        scene_rect: QRectF,
+    ) -> tuple[int, int, int, int]:
+        x0, x1, y0, y1 = roi
+        moved_roi = (x0 + dx, x1 + dx, y0 + dy, y1 + dy)
+        return cls.clamp_roi_to_scene(moved_roi, scene_rect)
 
     @property
     def locked(self):
@@ -475,9 +545,6 @@ class BeadGraphic(QGraphicsRectItem):
     @locked.setter
     def locked(self, locked: bool):
         self._locked = locked
-
-        # Text
-        self.label.setPlainText(f'{self.id}')
 
         # Draggable
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, not locked)
@@ -488,26 +555,138 @@ class BeadGraphic(QGraphicsRectItem):
 
     def set_selection_state(self, state: str):
         """Update the bead overlay color to match selection/reference state."""
+        if state == self._color_state:
+            return
         self._color_state = state
         self._apply_color()
 
+    @classmethod
+    def _ensure_shared_pens_and_brushes(cls) -> None:
+        if cls._shared_pens is None:
+            cls._shared_pens = {
+                'default': cls._create_pen(cls.BORDER_COLOR_DEFAULT),
+                'selected': cls._create_pen(cls.BORDER_COLOR_SELECTED),
+                'reference': cls._create_pen(cls.BORDER_COLOR_REFERENCE),
+            }
+        if cls._shared_brushes is None:
+            cls._shared_brushes = {
+                'default': cls._create_brush(cls.FILL_COLOR_DEFAULT),
+                'selected': cls._create_brush(cls.FILL_COLOR_SELECTED),
+                'reference': cls._create_brush(cls.FILL_COLOR_REFERENCE),
+            }
+
+    @staticmethod
+    def _create_pen(color: tuple[int, int, int, int]) -> QPen:
+        pen = QPen(QColor(*color))
+        pen.setWidth(0)
+        pen.setCosmetic(True)
+        return pen
+
+    @staticmethod
+    def _create_brush(color: tuple[int, int, int, int] | None) -> QBrush:
+        if color is None:
+            return QBrush(Qt.BrushStyle.NoBrush)
+        return QBrush(QColor(*color))
+
     def _apply_color(self):
-        if self._color_state == 'selected':
-            border_color = self.border_color_selected
-            fill_color = self.fill_color_selected
-        elif self._color_state == 'reference':
-            border_color = self.border_color_reference
-            fill_color = self.fill_color_reference
-        else:
-            border_color = self.border_color_default
-            fill_color = self.fill_color_default
+        assert self._shared_pens is not None
+        assert self._shared_brushes is not None
+        self.setPen(self._shared_pens[self._color_state])
+        self.setBrush(self._shared_brushes[self._color_state])
+        self._update_cursor()
+        self.update()
 
-        pen = QPen(QColor(*border_color))
-        pen.setWidth(self.pen_width)
-        self.setPen(pen)
+    def _current_visual_state(self) -> str:
+        if self._is_moving and not self.locked:
+            return 'dragging'
+        if self._is_hovered and not self.locked:
+            return 'hover'
+        return self._color_state
 
-        brush = QBrush(QColor(*fill_color))
-        self.setBrush(brush)
+    def _current_border_color(self) -> QColor:
+        visual_state = self._current_visual_state()
+        if visual_state == 'dragging':
+            return QColor(*self.DRAG_BORDER_COLOR)
+        if visual_state == 'hover':
+            return QColor(*self.HOVER_BORDER_COLOR)
+        if visual_state == 'selected':
+            return QColor(*self.BORDER_COLOR_SELECTED)
+        if visual_state == 'reference':
+            return QColor(*self.BORDER_COLOR_REFERENCE)
+        return QColor(*self.BORDER_COLOR_DEFAULT)
+
+    def _current_pen_width(self) -> int:
+        visual_state = self._current_visual_state()
+        if visual_state == 'dragging':
+            return self.DRAG_PEN_WIDTH
+        if visual_state == 'hover':
+            return self.HOVER_PEN_WIDTH
+        if visual_state == 'selected':
+            return self.SELECTED_PEN_WIDTH
+        return self.IDLE_PEN_WIDTH
+
+    def _update_cursor(self) -> None:
+        if self.locked:
+            self.unsetCursor()
+            return
+        if self._is_moving:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if self._is_hovered:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        self.unsetCursor()
+
+    def _corner_grip_rects(self) -> list[QRectF]:
+        if self._color_state != 'selected':
+            return []
+
+        rect = self._paint_rect()
+        grip_size = min(
+            self.CORNER_GRIP_SIZE,
+            rect.width() / 3,
+            rect.height() / 3,
+        )
+        return [
+            QRectF(rect.left(), rect.top(), grip_size, grip_size),
+            QRectF(rect.right() - grip_size, rect.top(), grip_size, grip_size),
+            QRectF(rect.left(), rect.bottom() - grip_size, grip_size, grip_size),
+            QRectF(rect.right() - grip_size, rect.bottom() - grip_size, grip_size, grip_size),
+        ]
+
+    def _paint_rect(self) -> QRectF:
+        rect = QRectF(self.rect())
+        pen_inset = self._current_pen_width() / 2
+        if pen_inset <= 0:
+            return rect
+        return rect.adjusted(pen_inset, pen_inset, -pen_inset, -pen_inset)
+
+    def _current_scene_rect(self) -> QRectF:
+        scene_rect_getter = getattr(self._parent, '_current_scene_rect', None)
+        if callable(scene_rect_getter):
+            scene_rect = scene_rect_getter()
+            if not scene_rect.isNull():
+                return scene_rect
+        return self.scene().sceneRect()
+
+    def paint(self, painter, option, widget=None):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(self._current_border_color())
+        pen.setWidth(self._current_pen_width())
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(self.brush())
+        painter.drawRect(self._paint_rect())
+
+        grip_rects = self._corner_grip_rects()
+        if grip_rects:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._current_border_color())
+            for grip_rect in grip_rects:
+                painter.drawRect(grip_rect)
+
+        painter.restore()
 
     def move(self, dx, dy):
         value = self.pos()
@@ -519,52 +698,79 @@ class BeadGraphic(QGraphicsRectItem):
 
     def validate_move(self, value):
         """ Prevents the graphic from moving outside the scene border"""
-        scene_rect = self.scene().sceneRect()
-        if self.scene_rect is not None:
-            scene_rect = self.scene_rect
+        scene_rect = self._current_scene_rect()
+
+        roi_rect = self.rect()
+        roi_width = roi_rect.width()
+        roi_height = roi_rect.height()
 
         if value.x() < scene_rect.left() - self.pen_width / 2:
             value.setX(scene_rect.left() - self.pen_width / 2)
-        elif value.x() + self.boundingRect().width() > scene_rect.right(
+        elif value.x() + roi_width > scene_rect.right(
         ) + self.pen_width / 2:
             value.setX(scene_rect.right() + self.pen_width / 2 -
-                       self.boundingRect().width())
+                       roi_width)
 
         if value.y() < scene_rect.top() - self.pen_width / 2:
             value.setY(scene_rect.top() - self.pen_width / 2)
-        elif value.y() + self.boundingRect().height() > scene_rect.bottom(
+        elif value.y() + roi_height > scene_rect.bottom(
         ) + self.pen_width / 2:
             value.setY(scene_rect.bottom() + self.pen_width / 2 -
-                       self.boundingRect().height())
+                       roi_height)
 
         return value
 
-    def move_label(self):
-        # Update the labels position
-        rect = self.rect()
-        x = rect.x() + 10
-        y = rect.y() + 1
-        self.label.setPos(x, y)
+    def get_label_scene_position(self) -> QPointF:
+        return self.label_scene_position_for_roi(self.get_roi_bounds())
+
+    def set_roi_bounds(self, roi: tuple[int, int, int, int]) -> None:
+        x0, x1, y0, y1 = roi
+        width = x1 - x0
+        height = y1 - y0
+        offset = self.pen_width / 2
+        self.setRect(QRectF(offset, offset, width - self.pen_width, height - self.pen_width))
+        self.setPos(QPointF(x0, y0))
+        self._update_cached_roi()
 
     def itemChange(self, change, value):
         # Constrain the item's movement within the scene
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             value = self.validate_move(value)
-            self.move_label()
-            if not self._is_moving and not self._parent.bead_roi_updates_suppressed:
+            if (
+                not self._initializing
+                and not self._is_moving
+                and not self._parent.bead_roi_updates_suppressed
+            ):
                 self.on_move_completed()
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_cached_roi()
+            if self._is_moving:
+                self.update()
         return super().itemChange(change, value)
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self._update_cursor()
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self._update_cursor()
+        self.update()
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         # Left click - Maybe move
         if event.button() == Qt.MouseButton.LeftButton and not self.locked:
             self._is_moving = True
-        # Right Click - Delete self
+            self._update_cursor()
+            self.update()
+            super().mousePressEvent(event)
+        # Right click is handled by the scene/view release path so overlapping
+        # ROIs only delete a single bead.
         elif event.button() == Qt.MouseButton.RightButton:
-            if not self.locked:
-                self._parent.remove_bead(self.id)
+            event.ignore()
         else:
             super().mousePressEvent(event)
 
@@ -572,20 +778,26 @@ class BeadGraphic(QGraphicsRectItem):
         # Call function when done moving
         if event.button() == Qt.MouseButton.LeftButton and self._is_moving and not self.locked:
             self._is_moving = False
+            self._update_cursor()
+            self.update()
             self.on_move_completed()
         super().mouseReleaseEvent(event)
 
     def on_move_completed(self):
-        self._parent.update_bead_rois()
+        self._parent.on_active_bead_move_completed(self.id, self.get_roi_bounds())
 
     def get_roi_bounds(self) -> tuple[int, int, int, int]:
         if self._cached_roi is None:
             self._update_cached_roi()
+        assert self._cached_roi is not None
         return self._cached_roi
 
     def _update_cached_roi(self):
-        tl = self.mapToScene(self.rect().topLeft())
-        br = self.mapToScene(self.rect().bottomRight())
+        rect = self.rect()
+        x = self.x()
+        y = self.y()
+        tl = QPointF(x + rect.left(), y + rect.top())
+        br = QPointF(x + rect.right(), y + rect.bottom())
         x0 = int(round(tl.x() - self.pen_width / 2))
         x1 = int(round(br.x() + self.pen_width / 2))
         y0 = int(round(tl.y() - self.pen_width / 2))

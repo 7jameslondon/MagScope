@@ -9,11 +9,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QMainWindow, QWidget
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
-from magscope.ui.ui import LoadingWindow, UIManager
+from magscope.ipc_commands import (
+    AddRandomBeadsCommand,
+    RemoveBeadsFromPendingMovesCommand,
+    UpdateBeadRoisCommand,
+)
 from magscope.settings import MagScopeSettings
+from magscope.ui.ui import LoadingWindow, UIManager
+from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
 
 
@@ -40,13 +46,50 @@ class FakeStatusPanel:
 class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
+        self.locked_overlay = None
         self.plot_args = None
+        self.overlay_args = None
+        self.scene = SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 512, 512))
+        self.viewport_updates = 0
+        self._viewport_rect = QRect(0, 0, 512, 512)
+
+    def viewport(self):
+        return SimpleNamespace(update=self._update_viewport, rect=self._viewport_rect_fn)
+
+    def _viewport_rect_fn(self):
+        return self._viewport_rect
+
+    def mapToScene(self, rect):
+        return SimpleNamespace(boundingRect=lambda: QRectF(rect))
+
+    def image_scene_rect(self):
+        return self.scene.sceneRect()
+
+    def _update_viewport(self) -> None:
+        self.viewport_updates += 1
 
     def clear_crosshairs(self) -> None:
         self.cleared = True
 
+    def set_locked_overlay(self, locked: bool) -> None:
+        self.locked_overlay = locked
+
     def plot(self, x, y, marker_size):
         self.plot_args = (np.asarray(x), np.asarray(y), marker_size)
+
+    def set_bead_overlay(
+        self,
+        bead_rois: dict[int, tuple[int, int, int, int]],
+        active_bead_id: int | None,
+        selected_bead_id: int | None,
+        reference_bead_id: int | None,
+    ) -> None:
+        self.overlay_args = (
+            dict(bead_rois),
+            active_bead_id,
+            selected_bead_id,
+            reference_bead_id,
+        )
 
 
 class FakeCheckable:
@@ -60,6 +103,9 @@ class FakeCheckable:
     def setChecked(self, value: bool) -> None:
         self.checked = value
 
+    def isChecked(self) -> bool:
+        return bool(self.checked)
+
 
 class FakeTextEdit:
     def __init__(self):
@@ -71,6 +117,24 @@ class FakeTextEdit:
 
     def setText(self, text: str) -> None:
         self.text = text
+
+    def toPlainText(self) -> str:
+        return self.text or ''
+
+
+class FakeLineEdit:
+    def __init__(self, text: str = ''):
+        self.block_calls = []
+        self._text = text
+
+    def blockSignals(self, state: bool) -> None:
+        self.block_calls.append(state)
+
+    def setText(self, text: str) -> None:
+        self._text = text
+
+    def text(self) -> str:
+        return self._text
 
 
 class FakeComboBox:
@@ -109,6 +173,7 @@ class FakeBeadSelectionPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
         self.next_bead_id_label = None
+        self.lock_button = FakeCheckable()
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label = next_bead_id
@@ -124,7 +189,19 @@ class FakeControls:
         self.status_panel = FakeStatusPanel()
         self.acquisition_panel = FakeAcquisitionPanel()
         self.bead_selection_panel = FakeBeadSelectionPanel()
+        self.plot_settings_panel = SimpleNamespace(
+            selected_bead=SimpleNamespace(lineedit=FakeLineEdit('0')),
+            reference_bead=SimpleNamespace(lineedit=FakeLineEdit('')),
+        )
         self.z_lut_generation_panel = FakeZLutGenerationPanel()
+
+
+class FakeSignal:
+    def __init__(self):
+        self.calls = []
+
+    def emit(self, value) -> None:
+        self.calls.append(value)
 
 
 class FakeSharedValues:
@@ -140,6 +217,36 @@ class FakeTracksBuffer:
         return self._data
 
 
+class FakeBeadRoiBuffer:
+    def __init__(self):
+        self.add_calls = []
+        self.update_calls = []
+        self.remove_calls = []
+
+    def add_beads(self, value):
+        self.add_calls.append(value)
+
+    def update_beads(self, value):
+        self.update_calls.append(value)
+
+    def remove_beads(self, value):
+        self.remove_calls.append(value)
+
+
+class FakeGraphic:
+    def __init__(self, roi: tuple[int, int, int, int]):
+        self.roi = roi
+        self.moves = []
+
+    def move(self, dx: int, dy: int) -> None:
+        self.moves.append((dx, dy))
+        x0, x1, y0, y1 = self.roi
+        self.roi = (x0 + dx, x1 + dx, y0 + dy, y1 + dy)
+
+    def get_roi_bounds(self) -> tuple[int, int, int, int]:
+        return self.roi
+
+
 @pytest.fixture
 def ui_manager():
     clear_ui_manager_singleton()
@@ -150,6 +257,10 @@ def ui_manager():
         'magnification': 2,
     }
     manager.camera_type = SimpleNamespace(bits=12, nm_per_px=100)
+    manager.plot_worker = SimpleNamespace(
+        selected_bead_signal=FakeSignal(),
+        reference_bead_signal=FakeSignal(),
+    )
     yield manager
     clear_ui_manager_singleton()
 
@@ -251,6 +362,264 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     assert marker_size == ui_manager.beads_in_view_marker_size
 
 
+def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):
+    fake_viewer = FakeVideoViewer()
+    ui_manager.video_viewer = fake_viewer
+    ui_manager._bead_rois = {1: (10, 20, 30, 40), 2: (50, 60, 70, 80)}
+    ui_manager._active_bead_id = 2
+    ui_manager.selected_bead = 1
+    ui_manager.reference_bead = 2
+
+    ui_manager._refresh_bead_overlay()
+
+    assert fake_viewer.overlay_args == (
+        {1: (10, 20, 30, 40), 2: (50, 60, 70, 80)},
+        2,
+        1,
+        2,
+    )
+    assert fake_viewer.viewport_updates == 1
+
+
+def test_clear_beads_refreshes_overlay_cache(ui_manager):
+    fake_viewer = FakeVideoViewer()
+    ui_manager.video_viewer = fake_viewer
+    ui_manager._bead_rois = {1: (10, 20, 30, 40)}
+    ui_manager._bead_next_id = 1
+    ui_manager._broadcast_bead_roi_update = lambda: None
+
+    ui_manager.clear_beads()
+
+    assert fake_viewer.overlay_args == ({}, None, 0, None)
+
+
+def test_bead_graphic_reports_label_scene_position(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    label_pos = graphic.get_label_scene_position()
+    assert graphic.LABEL_FONT.family() == 'Arial'
+    assert label_pos.x() == 90
+    assert label_pos.y() == 101
+    graphic.remove()
+
+
+def test_bead_graphic_label_moves_with_active_roi(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    initial_label_pos = graphic.label.scenePos()
+    initial_roi_label_pos = graphic.get_label_scene_position()
+    assert initial_label_pos == initial_roi_label_pos
+
+    graphic.set_roi_bounds(BeadGraphic.roi_from_center(140, 160, 40))
+
+    moved_label_pos = graphic.label.scenePos()
+    moved_roi_label_pos = graphic.get_label_scene_position()
+    assert moved_label_pos == moved_roi_label_pos
+    assert moved_label_pos != initial_label_pos
+    graphic.remove()
+
+
+def test_bead_graphic_selected_roi_shows_four_corner_grips(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+    graphic.set_selection_state('selected')
+
+    grip_rects = graphic._corner_grip_rects()
+
+    assert len(grip_rects) == 4
+    assert all(grip_rect.width() > 0 for grip_rect in grip_rects)
+    assert all(grip_rect.height() > 0 for grip_rect in grip_rects)
+    graphic.remove()
+
+
+def test_bead_graphic_non_selected_roi_hides_corner_grips(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    assert graphic._corner_grip_rects() == []
+    graphic.set_selection_state('reference')
+    assert graphic._corner_grip_rects() == []
+    graphic.remove()
+
+
+def test_bead_graphic_updates_cursor_for_hover_and_drag(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, BeadGraphic.roi_from_center(100, 120, 40), scene)
+
+    assert graphic.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+    graphic._is_hovered = True
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+    graphic._is_moving = True
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+    graphic._is_moving = False
+    graphic._is_hovered = False
+    graphic._update_cursor()
+    assert graphic.cursor().shape() == Qt.CursorShape.ArrowCursor
+    graphic.remove()
+
+
+def test_bead_graphic_validate_move_clamps_to_scene_bounds(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+    graphic.set_selection_state('selected')
+
+    clamped_bottom_right = graphic.validate_move(graphic.pos() + QPointF(600, 600))
+    assert clamped_bottom_right.x() == 472
+    assert clamped_bottom_right.y() == 472
+
+    clamped_top_left = graphic.validate_move(QPointF(-100, -100))
+    assert clamped_top_left.x() == 0
+    assert clamped_top_left.y() == 0
+    graphic.remove()
+
+
+def test_bead_graphic_move_keeps_roi_inside_scene(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+    graphic.set_selection_state('selected')
+
+    graphic.move(600, 600)
+    assert graphic.get_roi_bounds() == (472, 512, 472, 512)
+
+    graphic.move(-1000, -1000)
+    assert graphic.get_roi_bounds() == (0, 40, 0, 40)
+    graphic.remove()
+
+
+def test_bead_graphic_selected_grips_stay_inside_roi(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager._suppress_bead_roi_updates = False
+    ui_manager._update_bead_roi = lambda bead_id, roi: None
+    ui_manager.remove_bead = lambda bead_id: None
+
+    graphic = BeadGraphic(ui_manager, 12, (472, 512, 472, 512), scene)
+    graphic.set_selection_state('selected')
+
+    paint_rect = graphic._paint_rect()
+    for grip_rect in graphic._corner_grip_rects():
+        assert paint_rect.contains(grip_rect)
+    graphic.remove()
+
+
+def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = scene
+    ui_manager.settings['ROI'] = 40
+    ui_manager._bead_roi_capacity = 10000
+    ui_manager._add_bead_roi = lambda bead_id, roi: None
+    ui_manager._update_bead_highlight = lambda bead_id: None
+    ui_manager._update_bead_highlights = lambda **kwargs: None
+    ui_manager.selected_bead = 5
+    ui_manager.reference_bead = None
+
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 100, y=lambda: 100))
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 200, y=lambda: 200))
+    second_roi = ui_manager._bead_rois.pop(1)
+    ui_manager._bead_rois[5] = second_roi
+    ui_manager._set_active_bead(5)
+
+    ui_manager.reset_bead_ids()
+
+    assert list(sorted(ui_manager._bead_rois)) == [0, 1]
+    assert ui_manager._bead_next_id == 2
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 2
+    assert ui_manager.selected_bead == 1
+    assert ui_manager._active_bead_id == 1
+    assert ui_manager.video_viewer.viewport_updates >= 3
+
+
+def test_unlock_beads_restores_selected_bead_as_active(ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = scene
+    ui_manager._bead_rois = {3: (10, 20, 30, 40)}
+    ui_manager.selected_bead = 3
+    ui_manager._set_active_bead(3)
+
+    ui_manager.lock_beads(True)
+
+    assert ui_manager.video_viewer.locked_overlay is True
+    assert ui_manager._active_bead_id is None
+
+    ui_manager.lock_beads(False)
+
+    assert ui_manager.video_viewer.locked_overlay is False
+    assert ui_manager._active_bead_id == 3
+
+
+def test_bead_graphic_right_click_defers_deletion_to_scene_handler(qtbot, ui_manager):
+    scene = QGraphicsScene(0, 0, 512, 512)
+    qtbot.wait(1)
+
+    removed = []
+    ui_manager.remove_bead = lambda bead_id: removed.append(bead_id)
+
+    graphic = BeadGraphic(ui_manager, 12, (100, 140, 100, 140), scene)
+
+    class FakeMouseEvent:
+        def __init__(self):
+            self.ignored = False
+
+        def button(self):
+            return Qt.MouseButton.RightButton
+
+        def ignore(self):
+            self.ignored = True
+
+    event = FakeMouseEvent()
+
+    graphic.mousePressEvent(event)
+
+    assert removed == []
+    assert event.ignored is True
+    graphic.remove()
+
+
 def test_acquisition_setters_update_controls_and_state(ui_manager):
     panel = ui_manager.controls.acquisition_panel
 
@@ -313,3 +682,303 @@ def test_set_settings_warns_when_persistence_becomes_unavailable(qtbot, ui_manag
     ui_manager.set_settings(MagScopeSettings({"ROI": 50}, persistence_available=False))
 
     assert warning_calls == ["shown"]
+
+
+def test_incremental_bead_roi_helpers_update_buffer_and_broadcast(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+
+    ui_manager._add_bead_roi(2, (1, 2, 3, 4))
+    ui_manager._update_bead_roi(2, (5, 6, 7, 8))
+    ui_manager._remove_bead_roi(2)
+
+    assert buffer.add_calls == [{2: (1, 2, 3, 4)}]
+    assert buffer.update_calls == [{2: (5, 6, 7, 8)}]
+    assert buffer.remove_calls == [[2]]
+    assert [type(command) for command in commands] == [
+        UpdateBeadRoisCommand,
+        UpdateBeadRoisCommand,
+        UpdateBeadRoisCommand,
+    ]
+
+
+def test_move_beads_updates_only_moved_rois_and_clears_pending(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+    ui_manager.send_ipc = commands.append
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    ui_manager._bead_rois = {
+        1: (10, 20, 30, 40),
+        2: (50, 60, 70, 80),
+    }
+
+    ui_manager.move_beads([(1, 2, 3), (99, 4, 5)])
+
+    assert buffer.update_calls == [{1: (12, 22, 33, 43)}]
+    assert len(commands) == 2
+    assert isinstance(commands[0], UpdateBeadRoisCommand)
+    assert isinstance(commands[1], RemoveBeadsFromPendingMovesCommand)
+    assert commands[1].ids == [1]
+
+
+def test_callback_view_clicked_ignores_new_add_while_bead_sync_pending(ui_manager, monkeypatch):
+    calls = []
+    pos = SimpleNamespace(x=lambda: 10, y=lambda: 20)
+    monkeypatch.setattr(ui_manager, "add_bead", lambda value: calls.append(value))
+
+    ui_manager._pending_bead_add_id = 3
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager.callback_view_clicked(pos)
+
+    assert calls == []
+
+
+def test_callback_view_clicked_selects_and_activates_existing_bead(ui_manager, monkeypatch):
+    pos = SimpleNamespace(x=lambda: 15, y=lambda: 35)
+    ui_manager._bead_rois = {4: (10, 20, 30, 40)}
+    selected = []
+    activated = []
+    monkeypatch.setattr(ui_manager, 'set_selected_bead', lambda bead_id: selected.append(bead_id))
+    monkeypatch.setattr(ui_manager, '_set_active_bead', lambda bead_id: activated.append(bead_id))
+
+    ui_manager.callback_view_clicked(pos)
+
+    assert activated == [4]
+    assert selected == [4]
+
+
+def test_set_selected_bead_syncs_plot_worker_and_controls(ui_manager, monkeypatch):
+    activated = []
+    ui_manager._bead_rois = {7: (10, 20, 30, 40)}
+
+    ui_manager.video_viewer = FakeVideoViewer()
+    monkeypatch.setattr(
+        ui_manager,
+        '_set_active_bead',
+        lambda bead_id: (activated.append(bead_id), setattr(ui_manager, '_active_bead_id', bead_id)),
+    )
+
+    ui_manager.set_selected_bead(7)
+
+    assert ui_manager.selected_bead == 7
+    assert ui_manager.plot_worker.selected_bead_signal.calls == [7]
+    assert ui_manager.controls.plot_settings_panel.selected_bead.lineedit.block_calls == [True, False]
+    assert ui_manager.controls.plot_settings_panel.selected_bead.lineedit.text() == '7'
+    assert activated == [7]
+    assert ui_manager._active_bead_id == 7
+
+
+def test_set_selected_bead_does_not_activate_bead_while_locked(ui_manager, monkeypatch):
+    activated = []
+    ui_manager._bead_rois = {7: (10, 20, 30, 40)}
+    ui_manager.controls.bead_selection_panel.lock_button.checked = True
+
+    monkeypatch.setattr(
+        ui_manager,
+        '_set_active_bead',
+        lambda bead_id: activated.append(bead_id),
+    )
+
+    ui_manager.set_selected_bead(7)
+
+    assert activated == [None]
+
+
+def test_set_reference_bead_syncs_plot_worker_and_controls(ui_manager):
+    ui_manager.set_reference_bead(9)
+    ui_manager.set_reference_bead(None)
+
+    assert ui_manager.reference_bead is None
+    assert ui_manager.plot_worker.reference_bead_signal.calls == [9, -1]
+    assert ui_manager.controls.plot_settings_panel.reference_bead.lineedit.block_calls == [True, False, True, False]
+    assert ui_manager.controls.plot_settings_panel.reference_bead.lineedit.text() == ''
+
+
+def test_callback_view_clicked_right_click_removes_existing_bead(ui_manager, monkeypatch):
+    pos = SimpleNamespace(x=lambda: 15, y=lambda: 35)
+    ui_manager._bead_rois = {4: (10, 20, 30, 40)}
+    removed = []
+    monkeypatch.setattr(ui_manager, 'remove_bead', lambda bead_id: removed.append(bead_id))
+
+    ui_manager.callback_view_clicked(pos, Qt.MouseButton.RightButton)
+
+    assert removed == [4]
+
+
+def test_add_random_beads_adds_requested_count_inside_visible_view(ui_manager):
+    buffer = FakeBeadRoiBuffer()
+    commands = []
+    ui_manager.bead_roi_buffer = buffer
+    ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    ui_manager._set_active_bead = lambda bead_id: None
+
+    ui_manager.add_random_beads(5, seed=7)
+
+    assert len(ui_manager._bead_rois) == 5
+    assert list(sorted(ui_manager._bead_rois)) == [0, 1, 2, 3, 4]
+    assert len(buffer.add_calls) == 1
+    assert set(buffer.add_calls[0]) == {0, 1, 2, 3, 4}
+    assert len(commands) == 1
+    for roi in ui_manager._bead_rois.values():
+        x0, x1, y0, y1 = roi
+        assert 0 <= x0 < x1 <= 512
+        assert 0 <= y0 < y1 <= 512
+
+
+def test_add_random_beads_respects_capacity_and_lock(ui_manager, monkeypatch):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager._bead_next_id = ui_manager._bead_roi_capacity
+    errors = []
+    monkeypatch.setattr(ui_manager, 'show_error', lambda text, details: errors.append((text, details)))
+
+    ui_manager.add_random_beads(3, seed=1)
+
+    assert errors[0][0] == 'Maximum bead count reached'
+
+    ui_manager._bead_next_id = 0
+    ui_manager.controls.bead_selection_panel.lock_button.checked = True
+    ui_manager.add_random_beads(3, seed=1)
+
+    assert errors[1][0] == 'Beads are locked'
+    assert ui_manager._bead_rois == {}
+
+
+def test_add_random_beads_rolls_back_next_id_on_buffer_failure(ui_manager):
+    class FailingBeadRoiBuffer(FakeBeadRoiBuffer):
+        def add_beads(self, value):
+            super().add_beads(value)
+            raise RuntimeError('boom')
+
+    ui_manager.bead_roi_buffer = FailingBeadRoiBuffer()
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+
+    with pytest.raises(RuntimeError, match='boom'):
+        ui_manager.add_random_beads(3, seed=7)
+
+    assert ui_manager._bead_rois == {}
+    assert ui_manager._bead_next_id == 0
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0
+
+
+def test_add_random_beads_command_dataclass_defaults():
+    command = AddRandomBeadsCommand(count=100)
+
+    assert command.count == 100
+    assert command.seed is None
+
+
+def test_add_random_beads_activates_selected_bead(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    activated = []
+    ui_manager._set_active_bead = lambda bead_id: activated.append(
+        bead_id if bead_id in ui_manager._bead_rois else None
+    )
+
+    ui_manager.add_random_beads(3, seed=7)
+
+    assert activated == [0]
+
+
+def test_first_selected_bead_is_active_after_add(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    ui_manager._add_bead_roi = lambda bead_id, roi: None
+    activated = []
+    ui_manager._set_active_bead = lambda bead_id: activated.append(bead_id)
+
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 50, y=lambda: 60))
+
+    assert activated == [0]
+
+
+def test_clear_beads_resets_selection_so_next_add_activates_first_bead(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    ui_manager._add_bead_roi = lambda bead_id, roi: None
+    ui_manager._bead_rois = {4: (10, 30, 20, 40)}
+    ui_manager.selected_bead = 4
+    ui_manager.reference_bead = 4
+
+    activated = []
+    ui_manager._set_active_bead = lambda bead_id: activated.append(
+        bead_id if bead_id in ui_manager._bead_rois else None
+    )
+
+    ui_manager.clear_beads()
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 50, y=lambda: 60))
+
+    assert ui_manager.selected_bead == 0
+    assert ui_manager.reference_bead is None
+    assert activated == [None, None, 0]
+
+
+def test_invalid_selected_bead_clears_active_bead(ui_manager):
+    cleared = []
+    ui_manager._set_active_bead = lambda bead_id: cleared.append(bead_id)
+
+    ui_manager.set_selected_bead(-1)
+
+    assert cleared == [None]
+
+
+def test_refresh_bead_rois_clears_pending_only_after_matching_roi(ui_manager):
+    ui_manager._refresh_bead_roi_cache = lambda: None
+    ui_manager._pending_bead_add_id = 2
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    ui_manager._bead_roi_values = np.asarray([[9, 9, 9, 9], [1, 2, 3, 4]], dtype=np.uint32)
+
+    ui_manager.refresh_bead_rois()
+
+    assert ui_manager._pending_bead_add_id is None
+    assert ui_manager._pending_bead_add_roi is None
+
+
+def test_refresh_bead_rois_keeps_pending_for_unrelated_update(ui_manager):
+    ui_manager._refresh_bead_roi_cache = lambda: None
+    ui_manager._pending_bead_add_id = 2
+    ui_manager._pending_bead_add_roi = (1, 2, 3, 4)
+    ui_manager._bead_roi_ids = np.asarray([1, 3], dtype=np.uint32)
+    ui_manager._bead_roi_values = np.asarray([[9, 9, 9, 9], [5, 6, 7, 8]], dtype=np.uint32)
+
+    ui_manager.refresh_bead_rois()
+
+    assert ui_manager._pending_bead_add_id == 2
+    assert ui_manager._pending_bead_add_roi == (1, 2, 3, 4)
+
+
+def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeypatch):
+    ui_manager.settings["ROI"] = 20
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    ui_manager._update_next_bead_id_label = lambda: None
+    monkeypatch.setattr(ui_manager, "_add_bead_roi", lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
+
+    assert ui_manager._pending_bead_add_id is None
+    assert ui_manager._pending_bead_add_roi is None
+    assert ui_manager._bead_rois == {}
+    assert ui_manager._bead_next_id == 0
+
+
+def test_add_bead_rolls_back_next_id_label_on_roi_update_failure(ui_manager, monkeypatch):
+    ui_manager.settings['ROI'] = 20
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    monkeypatch.setattr(ui_manager, '_add_bead_roi', lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError('boom')))
+
+    with pytest.raises(RuntimeError, match='boom'):
+        ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
+
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0

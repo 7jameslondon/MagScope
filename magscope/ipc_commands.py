@@ -92,6 +92,12 @@ class MoveBeadsCommand(Command):
 
 
 @dataclass(frozen=True)
+class AddRandomBeadsCommand(Command):
+    count: int
+    seed: int | None = None
+
+
+@dataclass(frozen=True)
 class UpdateXYLockEnabledCommand(Command):
     value: bool
 
