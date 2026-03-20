@@ -773,6 +773,22 @@ def test_set_selected_bead_syncs_plot_worker_and_controls(ui_manager, monkeypatc
     assert ui_manager._active_bead_id == 7
 
 
+def test_set_selected_bead_does_not_activate_bead_while_locked(ui_manager, monkeypatch):
+    activated = []
+    ui_manager._bead_rois = {7: (10, 20, 30, 40)}
+    ui_manager.controls.bead_selection_panel.lock_button.checked = True
+
+    monkeypatch.setattr(
+        ui_manager,
+        '_set_active_bead',
+        lambda bead_id: activated.append(bead_id),
+    )
+
+    ui_manager.set_selected_bead(7)
+
+    assert activated == [None]
+
+
 def test_set_reference_bead_syncs_plot_worker_and_controls(ui_manager):
     ui_manager.set_reference_bead(9)
     ui_manager.set_reference_bead(None)
@@ -801,6 +817,7 @@ def test_add_random_beads_adds_requested_count_inside_visible_view(ui_manager):
     ui_manager._broadcast_bead_roi_update = lambda: commands.append(UpdateBeadRoisCommand())
     ui_manager.video_viewer = FakeVideoViewer()
     ui_manager.settings['ROI'] = 20
+    ui_manager._set_active_bead = lambda bead_id: None
 
     ui_manager.add_random_beads(5, seed=7)
 
@@ -858,6 +875,19 @@ def test_add_random_beads_command_dataclass_defaults():
     assert command.seed is None
 
 
+def test_add_random_beads_activates_selected_bead(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    activated = []
+    ui_manager._set_active_bead = lambda bead_id: activated.append(
+        bead_id if bead_id in ui_manager._bead_rois else None
+    )
+
+    ui_manager.add_random_beads(3, seed=7)
+
+    assert activated == [0]
+
+
 def test_first_selected_bead_is_active_after_add(ui_manager):
     ui_manager.video_viewer = FakeVideoViewer()
     ui_manager.settings['ROI'] = 20
@@ -868,6 +898,27 @@ def test_first_selected_bead_is_active_after_add(ui_manager):
     ui_manager.add_bead(SimpleNamespace(x=lambda: 50, y=lambda: 60))
 
     assert activated == [0]
+
+
+def test_clear_beads_resets_selection_so_next_add_activates_first_bead(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+    ui_manager._add_bead_roi = lambda bead_id, roi: None
+    ui_manager._bead_rois = {4: (10, 30, 20, 40)}
+    ui_manager.selected_bead = 4
+    ui_manager.reference_bead = 4
+
+    activated = []
+    ui_manager._set_active_bead = lambda bead_id: activated.append(
+        bead_id if bead_id in ui_manager._bead_rois else None
+    )
+
+    ui_manager.clear_beads()
+    ui_manager.add_bead(SimpleNamespace(x=lambda: 50, y=lambda: 60))
+
+    assert ui_manager.selected_bead == 0
+    assert ui_manager.reference_bead is None
+    assert activated == [None, None, 0]
 
 
 def test_invalid_selected_bead_clears_active_bead(ui_manager):

@@ -284,7 +284,10 @@ class UIManager(ManagerProcessBase):
         if self.shared_values is not None:
             self.shared_values.live_profile_bead.value = bead
         self._clear_live_profile_buffer()
-        self._set_active_bead(normalized_bead)
+        if self._beads_locked():
+            self._set_active_bead(None)
+        else:
+            self._set_active_bead(normalized_bead)
         self._update_bead_highlights(
             old_selected=old_selected,
             old_reference=old_reference,
@@ -496,6 +499,8 @@ class UIManager(ManagerProcessBase):
         self._bead_rois.update(bead_rois)
         self._bead_next_id = next_bead_id
         self._update_next_bead_id_label()
+        if not self._beads_locked():
+            self._set_active_bead(self._normalize_bead_id(self.selected_bead))
         self._refresh_bead_overlay()
 
     def _hit_test_bead(self, pos: QPoint) -> int | None:
@@ -933,6 +938,8 @@ class UIManager(ManagerProcessBase):
             self._bead_roi_ids = np.zeros((0,), dtype=np.uint32)
             self._bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
         self._broadcast_bead_roi_update()
+        self.set_reference_bead(None)
+        self.set_selected_bead(0)
         self._refresh_bead_overlay()
 
     def reset_bead_ids(self):
