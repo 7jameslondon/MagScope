@@ -833,6 +833,24 @@ def test_add_random_beads_respects_capacity_and_lock(ui_manager, monkeypatch):
     assert ui_manager._bead_rois == {}
 
 
+def test_add_random_beads_rolls_back_next_id_on_buffer_failure(ui_manager):
+    class FailingBeadRoiBuffer(FakeBeadRoiBuffer):
+        def add_beads(self, value):
+            super().add_beads(value)
+            raise RuntimeError('boom')
+
+    ui_manager.bead_roi_buffer = FailingBeadRoiBuffer()
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.settings['ROI'] = 20
+
+    with pytest.raises(RuntimeError, match='boom'):
+        ui_manager.add_random_beads(3, seed=7)
+
+    assert ui_manager._bead_rois == {}
+    assert ui_manager._bead_next_id == 0
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0
+
+
 def test_add_random_beads_command_dataclass_defaults():
     command = AddRandomBeadsCommand(count=100)
 
@@ -900,3 +918,16 @@ def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeyp
     assert ui_manager._pending_bead_add_id is None
     assert ui_manager._pending_bead_add_roi is None
     assert ui_manager._bead_rois == {}
+    assert ui_manager._bead_next_id == 0
+
+
+def test_add_bead_rolls_back_next_id_label_on_roi_update_failure(ui_manager, monkeypatch):
+    ui_manager.settings['ROI'] = 20
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
+    monkeypatch.setattr(ui_manager, '_add_bead_roi', lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError('boom')))
+
+    with pytest.raises(RuntimeError, match='boom'):
+        ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
+
+    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0

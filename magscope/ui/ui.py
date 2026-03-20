@@ -468,25 +468,34 @@ class UIManager(ManagerProcessBase):
 
         rng = np.random.default_rng(seed)
         bead_rois: dict[int, tuple[int, int, int, int]] = {}
+        next_bead_id = self._bead_next_id
         count_to_add = min(count, remaining_capacity)
         for _ in range(count_to_add):
-            bead_id = self._bead_next_id
+            bead_id = next_bead_id
             roi = self._next_random_bead_roi(rng, visible_rect)
             if roi is None:
                 break
             bead_rois[bead_id] = roi
-            self._bead_rois[bead_id] = roi
-            self._bead_next_id += 1
+            next_bead_id += 1
 
         if not bead_rois:
             return
 
+        try:
+            if self.bead_roi_buffer is None:
+                updated_bead_rois = {**self._bead_rois, **bead_rois}
+                self._write_bead_rois_to_buffer(updated_bead_rois)
+                self._broadcast_bead_roi_update()
+            else:
+                self.bead_roi_buffer.add_beads(bead_rois)
+                self._broadcast_bead_roi_update()
+        except Exception:
+            self._update_next_bead_id_label()
+            raise
+
+        self._bead_rois.update(bead_rois)
+        self._bead_next_id = next_bead_id
         self._update_next_bead_id_label()
-        if self.bead_roi_buffer is None:
-            self.update_bead_rois()
-        else:
-            self.bead_roi_buffer.add_beads(bead_rois)
-            self._broadcast_bead_roi_update()
         self._refresh_bead_overlay()
 
     def _hit_test_bead(self, pos: QPoint) -> int | None:
@@ -869,6 +878,7 @@ class UIManager(ManagerProcessBase):
             scene_rect,
         )
         self._bead_rois[id] = roi
+        previous_next_bead_id = self._bead_next_id
         self._bead_next_id += 1
         self._update_next_bead_id_label()
 
@@ -879,6 +889,8 @@ class UIManager(ManagerProcessBase):
             self._add_bead_roi(id, roi)
         except Exception:
             self._bead_rois.pop(id, None)
+            self._bead_next_id = previous_next_bead_id
+            self._update_next_bead_id_label()
             self._clear_pending_bead_add()
             raise
         if id == self._normalize_bead_id(self.selected_bead):
