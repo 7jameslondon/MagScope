@@ -112,10 +112,16 @@ class VideoViewer(QGraphicsView):
         active_bead_id: int | None,
         selected_bead_id: int | None,
         reference_bead_id: int | None,
+        label_overrides: dict[int, str] | None = None,
+        state_overrides: dict[int, str] | None = None,
     ) -> None:
         overlay_entries: list[tuple[QRectF, QPointF, str, bool, str]] = []
+        label_overrides = {} if label_overrides is None else label_overrides
+        state_overrides = {} if state_overrides is None else state_overrides
         for bead_id, roi in bead_rois.items():
-            if bead_id == selected_bead_id:
+            if bead_id in state_overrides:
+                state = state_overrides[bead_id]
+            elif bead_id == selected_bead_id:
                 state = 'selected'
             elif bead_id == reference_bead_id:
                 state = 'reference'
@@ -127,7 +133,7 @@ class VideoViewer(QGraphicsView):
                 BeadGraphic.label_scene_position_for_roi(roi),
                 state,
                 bead_id == active_bead_id,
-                str(bead_id),
+                label_overrides.get(bead_id, str(bead_id)),
             ))
         self._overlay_entries = overlay_entries
         self._invalidate_overlay_view_cache()

@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+)
+
+from magscope.auto_bead_selection import (
+    AutoBeadCandidate,
+    detect_matching_beads,
+    filter_candidates_by_percentile,
+    score_threshold_for_percentile,
+)
+from magscope.ui.video_viewer import VideoViewer
+from magscope.ui.widgets import BeadGraphic
+from magscope.utils import numpy_type_to_qt_image_type
+
+if TYPE_CHECKING:
+    from PyQt6.QtCore import QPoint
+
+
+class AutoBeadSelectionDialog(QDialog):
+    selectionAccepted = pyqtSignal(object)
+
+    def __init__(
+        self,
+        *,
+        parent,
+        image: np.ndarray,
+        roi_size: int,
+        existing_rois: dict[int, tuple[int, int, int, int]],
+        display_scale: int,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle('Auto Bead Selection')
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.resize(900, 780)
+
+        self._image = np.asarray(image)
+        self._roi_size = int(roi_size)
+        self._existing_rois = dict(existing_rois)
+        self._display_scale = max(1, int(display_scale))
+        self._seed_roi: tuple[int, int, int, int] | None = None
+        self._candidates: list[AutoBeadCandidate] = []
+        self._visible_candidates: list[AutoBeadCandidate] = []
+        self._score_map: np.ndarray | None = None
+
+        layout = QVBoxLayout(self)
+
+        self.instructions_label = QLabel('Click one bead in the frozen image to use it as the seed.')
+        self.instructions_label.setWordWrap(True)
+        layout.addWidget(self.instructions_label)
+
+        self.video_viewer = VideoViewer()
+        self.video_viewer.setMinimumHeight(420)
+        self.video_viewer.set_pixmap(self._image_to_pixmap())
+        self.video_viewer.reset_view()
+        self.video_viewer.sceneClicked.connect(self._on_scene_clicked)
+        layout.addWidget(self.video_viewer, 1)
+
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(QLabel('Percentile Threshold'))
+        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        self.threshold_slider.setRange(0, 100)
+        self.threshold_slider.setValue(95)
+        self.threshold_slider.valueChanged.connect(self._refresh_visible_candidates)
+        slider_row.addWidget(self.threshold_slider, 1)
+        self.threshold_value_label = QLabel()
+        slider_row.addWidget(self.threshold_value_label)
+        layout.addLayout(slider_row)
+
+        self.status_label = QLabel('No seed bead selected yet.')
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(self.cancel_button)
+        self.accept_button = QPushButton('Accept Proposed Beads')
+        self.accept_button.clicked.connect(self._accept_selection)
+        button_row.addWidget(self.accept_button)
+        layout.addLayout(button_row)
+
+        self._refresh_visible_candidates()
+
+    @property
+    def seed_roi(self) -> tuple[int, int, int, int] | None:
+        return self._seed_roi
+
+    @property
+    def visible_candidates(self) -> list[AutoBeadCandidate]:
+        return list(self._visible_candidates)
+
+    def _image_to_pixmap(self) -> QPixmap:
+        display_image = np.ascontiguousarray(self._image)
+        if self._display_scale != 1:
+            display_image = np.ascontiguousarray(display_image * self._display_scale)
+        qimage = QImage(
+            display_image,
+            display_image.shape[0],
+            display_image.shape[1],
+            numpy_type_to_qt_image_type(display_image.dtype.type),
+        )
+        return QPixmap.fromImage(qimage.copy())
+
+    def _accept_selection(self) -> None:
+        if not self._visible_candidates:
+            return
+        self.selectionAccepted.emit([candidate.roi for candidate in self._visible_candidates])
+        self.accept()
+
+    def _on_scene_clicked(self, pos: 'QPoint', button) -> None:
+        if button != Qt.MouseButton.LeftButton:
+            return
+        seed_roi = BeadGraphic.clamp_roi_to_scene(
+            BeadGraphic.roi_from_center(pos.x(), pos.y(), self._roi_size),
+            self.video_viewer.image_scene_rect(),
+        )
+        self._set_seed_roi(seed_roi)
+
+    def _set_seed_roi(self, seed_roi: tuple[int, int, int, int]) -> None:
+        self._seed_roi = seed_roi
+        self._score_map, self._candidates = detect_matching_beads(
+            self._image,
+            seed_roi,
+            self._existing_rois.values(),
+        )
+        self._refresh_visible_candidates()
+
+    def _refresh_visible_candidates(self) -> None:
+        percentile = self.threshold_slider.value()
+        self.threshold_value_label.setText(f'{percentile}%')
+
+        if self._seed_roi is None:
+            self._visible_candidates = []
+            self.accept_button.setEnabled(False)
+            self._update_overlay()
+            return
+
+        self._visible_candidates = filter_candidates_by_percentile(self._candidates, percentile)
+        threshold = score_threshold_for_percentile(self._candidates, percentile)
+        self.accept_button.setEnabled(bool(self._visible_candidates))
+
+        if self._candidates:
+            self.instructions_label.setText('Click a different bead to change the seed, then adjust the percentile slider.')
+            self.status_label.setText(
+                f'Showing {len(self._visible_candidates)} of {len(self._candidates)} proposed beads '
+                f'at percentile {percentile}% (score >= {threshold:.3f}).'
+            )
+        else:
+            self.instructions_label.setText('Click a different bead to change the seed.')
+            self.status_label.setText('No valid proposed beads were found for the selected seed bead.')
+
+        self._update_overlay()
+
+    def _update_overlay(self) -> None:
+        overlay_rois: dict[int, tuple[int, int, int, int]] = {}
+        label_overrides: dict[int, str] = {}
+        state_overrides: dict[int, str] = {}
+
+        for bead_id, roi in self._existing_rois.items():
+            overlay_rois[bead_id] = roi
+
+        if self._seed_roi is not None:
+            overlay_rois[-1] = self._seed_roi
+            label_overrides[-1] = 'seed'
+            state_overrides[-1] = 'selected'
+
+        for index, candidate in enumerate(self._visible_candidates, start=2):
+            bead_id = -index
+            overlay_rois[bead_id] = candidate.roi
+            label_overrides[bead_id] = f'{candidate.score:.3f}'
+            state_overrides[bead_id] = 'reference'
+
+        self.video_viewer.set_bead_overlay(
+            overlay_rois,
+            active_bead_id=None,
+            selected_bead_id=None,
+            reference_bead_id=None,
+            label_overrides=label_overrides,
+            state_overrides=state_overrides,
+        )
