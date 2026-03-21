@@ -192,3 +192,4 @@ class AutoBeadSelectionDialog(QDialog):
             label_overrides=label_overrides,
             state_overrides=state_overrides,
         )
+        self.video_viewer.viewport().update()
