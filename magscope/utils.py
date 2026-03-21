@@ -18,7 +18,6 @@ class AcquisitionMode(StrEnum):
     TRACK_AND_FULL_VIDEO = 'track & video (full)'
     CROP_VIDEO = 'video (cropped)'
     FULL_VIDEO = 'video (full)'
-    ZLUT = 'zlut'
 
 def crop_stack_to_rois(stack, rois):
     rois = np.asarray(rois, dtype=np.int64)
