@@ -505,8 +505,7 @@ class BeadSelectionPanel(ControlPanelBase):
             <b>Add a bead:</b> Left-click on the video<br>
             <b>Activate a bead:</b> Left-click on the bead ROI<br>
             <b>Move a bead:</b> Drag the active bead ROI<br>
-            <b>Remove a bead:</b> Right-click on the bead<br>
-            <b>Lock beads:</b> Click the lock button to prevent accidentally moving/adding/removing beads.
+            <b>Remove a bead:</b> Right-click on the bead
             """
         ).strip()
         note = QLabel(note_text)
@@ -540,12 +539,6 @@ class BeadSelectionPanel(ControlPanelBase):
         button_row = QHBoxLayout()
         self.layout().addLayout(button_row)
 
-        # Lock/Unlock
-        self.lock_button = QPushButton('🔓')
-        self.lock_button.setCheckable(True)
-        self.lock_button.clicked.connect(self.callback_lock)  # type: ignore
-        button_row.addWidget(self.lock_button)
-
         # Remove All Beads
         self.clear_button = QPushButton('Remove All Beads')
         self.clear_button.setEnabled(True)
@@ -560,14 +553,6 @@ class BeadSelectionPanel(ControlPanelBase):
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label.setText(f"Next Bead ID: {next_bead_id}")
-
-    def callback_lock(self):
-        is_locked = self.lock_button.isChecked()
-        self.lock_button.setText('🔒' if is_locked else '🔓')
-        self.clear_button.setEnabled(not is_locked)
-        self.set_highlighted(is_locked)
-        self.manager.lock_beads(is_locked)
-
 
 class CameraPanel(ControlPanelBase):
 
