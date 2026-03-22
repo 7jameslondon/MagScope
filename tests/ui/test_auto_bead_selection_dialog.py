@@ -148,3 +148,25 @@ def test_auto_bead_selection_dialog_defaults_to_largest_gap_threshold(qtbot):
     dialog._refresh_visible_candidates()
 
     assert dialog.threshold_value_label.text() == '0.910'
+
+
+def test_auto_bead_selection_dialog_shows_no_matches_for_seed_only_image(qtbot):
+    image = np.zeros((40, 40), dtype=np.uint16)
+    template = np.arange(64, dtype=np.uint16).reshape(8, 8)
+    seed_roi = (4, 12, 4, 12)
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+
+    dialog = AutoBeadSelectionDialog(
+        parent=None,
+        image=image,
+        roi_size=8,
+        existing_rois={},
+        display_scale=1,
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._set_seed_roi(seed_roi)
+
+    assert dialog.visible_candidates == []
+    assert dialog.status_label.text() == 'No valid proposed beads were found for the selected seed bead.'
+    assert dialog.accept_button.isEnabled()

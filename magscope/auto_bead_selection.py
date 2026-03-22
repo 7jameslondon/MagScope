@@ -7,6 +7,9 @@ import numpy as np
 from scipy.signal import correlate2d
 
 
+_MIN_CANDIDATE_SCORE = np.finfo(np.float64).eps
+
+
 @dataclass(frozen=True, slots=True)
 class AutoBeadCandidate:
     roi: tuple[int, int, int, int]
@@ -130,6 +133,9 @@ def detect_matching_beads(
     candidates: list[AutoBeadCandidate] = []
     for flat_index in np.argsort(score_map, axis=None)[::-1]:
         y0, x0 = np.unravel_index(flat_index, score_map.shape)
+        score = float(score_map[y0, x0])
+        if score <= _MIN_CANDIDATE_SCORE:
+            break
         roi: tuple[int, int, int, int] = (
             int(x0),
             int(x0 + roi_width),
@@ -140,7 +146,7 @@ def detect_matching_beads(
             continue
         if any(roi_overlaps(roi, blocked_roi) for blocked_roi in blocked_rois):
             continue
-        candidate = AutoBeadCandidate(roi=roi, score=float(score_map[y0, x0]))
+        candidate = AutoBeadCandidate(roi=roi, score=score)
         candidates.append(candidate)
         blocked_rois.append(roi)
 

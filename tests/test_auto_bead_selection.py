@@ -84,3 +84,15 @@ def test_detect_matching_beads_uses_viewer_coordinates_on_rectangular_image():
     _score_map, candidates = detect_matching_beads(image, seed_roi, [])
 
     assert candidates[0].roi == match_roi
+
+
+def test_detect_matching_beads_discards_zero_score_candidates():
+    image = np.zeros((40, 40), dtype=np.uint16)
+    template = np.arange(64, dtype=np.uint16).reshape(8, 8)
+    seed_roi = (4, 12, 4, 12)
+
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+
+    _score_map, candidates = detect_matching_beads(image, seed_roi, [])
+
+    assert candidates == []
