@@ -121,9 +121,15 @@ class AutoBeadSelectionDialog(QDialog):
         return QPixmap.fromImage(qimage.copy())
 
     def _accept_selection(self) -> None:
-        if not self._visible_candidates:
+        if self._seed_roi is None:
             return
-        self.selectionAccepted.emit([candidate.roi for candidate in self._visible_candidates])
+
+        accepted_rois: list[tuple[int, int, int, int]] = [self._seed_roi]
+        for candidate in self._visible_candidates:
+            if candidate.roi != self._seed_roi:
+                accepted_rois.append(candidate.roi)
+
+        self.selectionAccepted.emit(accepted_rois)
         self.accept()
 
     def _on_scene_clicked(self, pos: 'QPoint', button) -> None:
@@ -196,7 +202,7 @@ class AutoBeadSelectionDialog(QDialog):
             return
 
         self._visible_candidates = filter_candidates_by_score_threshold(self._candidates, threshold)
-        self.accept_button.setEnabled(bool(self._visible_candidates))
+        self.accept_button.setEnabled(True)
 
         if self._candidates:
             self.instructions_label.setText('Click a different bead to change the seed, then adjust the score threshold.')

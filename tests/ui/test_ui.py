@@ -1008,6 +1008,21 @@ def test_apply_auto_bead_selection_respects_remaining_capacity(ui_manager, monke
     assert added == [(0, 10, 0, 10)]
 
 
+def test_apply_auto_bead_selection_keeps_seed_first(ui_manager, monkeypatch):
+    added = []
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+
+    ui_manager._apply_auto_bead_selection([
+        (1, 11, 2, 12),
+        (20, 30, 22, 32),
+    ])
+
+    assert added == [
+        (1, 11, 2, 12),
+        (20, 30, 22, 32),
+    ]
+
+
 def test_invalid_selected_bead_clears_active_bead(ui_manager):
     cleared = []
     ui_manager._set_active_bead = lambda bead_id: cleared.append(bead_id)
