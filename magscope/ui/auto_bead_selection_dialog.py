@@ -16,9 +16,9 @@ from PyQt6.QtWidgets import (
 
 from magscope.auto_bead_selection import (
     AutoBeadCandidate,
+    default_candidate_score_threshold,
     detect_matching_beads,
-    filter_candidates_by_percentile,
-    score_threshold_for_percentile,
+    filter_candidates_by_score_threshold,
 )
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 class AutoBeadSelectionDialog(QDialog):
     selectionAccepted = pyqtSignal(object)
+    SLIDER_STEPS = 1000
 
     def __init__(
         self,
@@ -53,6 +54,8 @@ class AutoBeadSelectionDialog(QDialog):
         self._seed_roi: tuple[int, int, int, int] | None = None
         self._candidates: list[AutoBeadCandidate] = []
         self._visible_candidates: list[AutoBeadCandidate] = []
+        self._candidate_min_score = 0.0
+        self._candidate_max_score = 1.0
         self._score_map: np.ndarray | None = None
 
         layout = QVBoxLayout(self)
@@ -69,10 +72,10 @@ class AutoBeadSelectionDialog(QDialog):
         layout.addWidget(self.video_viewer, 1)
 
         slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel('Percentile Threshold'))
+        slider_row.addWidget(QLabel('Score Threshold'))
         self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
-        self.threshold_slider.setRange(0, 100)
-        self.threshold_slider.setValue(95)
+        self.threshold_slider.setRange(0, self.SLIDER_STEPS)
+        self.threshold_slider.setValue(0)
         self.threshold_slider.valueChanged.connect(self._refresh_visible_candidates)
         slider_row.addWidget(self.threshold_slider, 1)
         self.threshold_value_label = QLabel()
@@ -139,11 +142,52 @@ class AutoBeadSelectionDialog(QDialog):
             seed_roi,
             self._existing_rois.values(),
         )
+        self._configure_threshold_slider()
         self._refresh_visible_candidates()
 
+    def _configure_threshold_slider(self) -> None:
+        if not self._candidates:
+            self._candidate_min_score = 0.0
+            self._candidate_max_score = 1.0
+            self.threshold_slider.blockSignals(True)
+            self.threshold_slider.setRange(0, 0)
+            self.threshold_slider.setValue(0)
+            self.threshold_slider.setEnabled(False)
+            self.threshold_slider.blockSignals(False)
+            return
+
+        scores = np.asarray([candidate.score for candidate in self._candidates], dtype=np.float64)
+        self._candidate_min_score = float(scores.min())
+        self._candidate_max_score = float(scores.max())
+        default_threshold = default_candidate_score_threshold(self._candidates)
+        default_value = self._score_to_slider_value(default_threshold)
+
+        self.threshold_slider.blockSignals(True)
+        self.threshold_slider.setRange(0, self.SLIDER_STEPS)
+        self.threshold_slider.setValue(default_value)
+        self.threshold_slider.setEnabled(not np.isclose(self._candidate_min_score, self._candidate_max_score))
+        self.threshold_slider.blockSignals(False)
+
+    def _score_to_slider_value(self, score: float) -> int:
+        if np.isclose(self._candidate_min_score, self._candidate_max_score):
+            return 0
+        ratio = (float(score) - self._candidate_min_score) / (
+            self._candidate_max_score - self._candidate_min_score
+        )
+        ratio = min(max(ratio, 0.0), 1.0)
+        return int(round(ratio * self.SLIDER_STEPS))
+
+    def _slider_value_to_score(self, slider_value: int) -> float:
+        if np.isclose(self._candidate_min_score, self._candidate_max_score):
+            return self._candidate_min_score
+        ratio = min(max(int(slider_value), 0), self.SLIDER_STEPS) / self.SLIDER_STEPS
+        return self._candidate_min_score + ratio * (
+            self._candidate_max_score - self._candidate_min_score
+        )
+
     def _refresh_visible_candidates(self) -> None:
-        percentile = self.threshold_slider.value()
-        self.threshold_value_label.setText(f'{percentile}%')
+        threshold = self._slider_value_to_score(self.threshold_slider.value())
+        self.threshold_value_label.setText(f'{threshold:.3f}')
 
         if self._seed_roi is None:
             self._visible_candidates = []
@@ -151,15 +195,15 @@ class AutoBeadSelectionDialog(QDialog):
             self._update_overlay()
             return
 
-        self._visible_candidates = filter_candidates_by_percentile(self._candidates, percentile)
-        threshold = score_threshold_for_percentile(self._candidates, percentile)
+        self._visible_candidates = filter_candidates_by_score_threshold(self._candidates, threshold)
         self.accept_button.setEnabled(bool(self._visible_candidates))
 
         if self._candidates:
-            self.instructions_label.setText('Click a different bead to change the seed, then adjust the percentile slider.')
+            self.instructions_label.setText('Click a different bead to change the seed, then adjust the score threshold.')
             self.status_label.setText(
                 f'Showing {len(self._visible_candidates)} of {len(self._candidates)} proposed beads '
-                f'at percentile {percentile}% (score >= {threshold:.3f}).'
+                f'at score threshold {threshold:.3f} '
+                f'(candidate range {self._candidate_min_score:.3f} to {self._candidate_max_score:.3f}).'
             )
         else:
             self.instructions_label.setText('Click a different bead to change the seed.')

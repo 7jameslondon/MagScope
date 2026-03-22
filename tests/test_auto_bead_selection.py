@@ -4,8 +4,9 @@ import pytest
 from magscope.auto_bead_selection import (
     AutoBeadCandidate,
     copy_latest_image,
+    default_candidate_score_threshold,
     detect_matching_beads,
-    filter_candidates_by_percentile,
+    filter_candidates_by_score_threshold,
     roi_overlaps,
 )
 
@@ -35,16 +36,30 @@ def test_detect_matching_beads_excludes_seed_existing_and_overlaps():
     assert candidates[0].score == pytest.approx(1.0)
 
 
-def test_filter_candidates_by_percentile_keeps_top_scores():
+def test_filter_candidates_by_score_threshold_keeps_top_scores():
     candidates = [
         AutoBeadCandidate((0, 8, 0, 8), 0.1),
         AutoBeadCandidate((8, 16, 0, 8), 0.5),
         AutoBeadCandidate((16, 24, 0, 8), 0.9),
     ]
 
-    filtered = filter_candidates_by_percentile(candidates, 50)
+    filtered = filter_candidates_by_score_threshold(candidates, 0.5)
 
     assert [candidate.score for candidate in filtered] == [0.5, 0.9]
+
+
+def test_default_candidate_score_threshold_uses_largest_gap():
+    candidates = [
+        AutoBeadCandidate((0, 8, 0, 8), 0.97),
+        AutoBeadCandidate((8, 16, 0, 8), 0.94),
+        AutoBeadCandidate((16, 24, 0, 8), 0.91),
+        AutoBeadCandidate((24, 32, 0, 8), 0.52),
+        AutoBeadCandidate((32, 40, 0, 8), 0.50),
+    ]
+
+    threshold = default_candidate_score_threshold(candidates)
+
+    assert threshold == pytest.approx(0.91)
 
 
 def test_copy_latest_image_matches_viewer_orientation_for_rectangular_frames():

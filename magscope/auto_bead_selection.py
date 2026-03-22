@@ -83,26 +83,31 @@ def roi_is_within_image(
     return 0 <= x0 < x1 <= image_shape[1] and 0 <= y0 < y1 <= image_shape[0]
 
 
-def score_threshold_for_percentile(
+def filter_candidates_by_score_threshold(
     candidates: Iterable[AutoBeadCandidate],
-    percentile: int,
-) -> float:
-    """Return the minimum score required to keep candidates at a percentile."""
+    threshold: float,
+) -> list[AutoBeadCandidate]:
+    return [candidate for candidate in candidates if candidate.score >= threshold]
 
-    scores = np.asarray([candidate.score for candidate in candidates], dtype=np.float64)
+
+def default_candidate_score_threshold(
+    candidates: Iterable[AutoBeadCandidate],
+) -> float:
+    """Choose a default score threshold that favors the strongest score cluster."""
+
+    scores = np.asarray(sorted((candidate.score for candidate in candidates), reverse=True), dtype=np.float64)
     if scores.size == 0:
         return np.inf
-    percentile = min(max(int(percentile), 0), 100)
-    return float(np.percentile(scores, percentile))
+    if scores.size == 1:
+        return float(scores[0])
+    if scores.size < 5:
+        return float(np.percentile(scores, 75))
 
-
-def filter_candidates_by_percentile(
-    candidates: Iterable[AutoBeadCandidate],
-    percentile: int,
-) -> list[AutoBeadCandidate]:
-    candidates_list = list(candidates)
-    threshold = score_threshold_for_percentile(candidates_list, percentile)
-    return [candidate for candidate in candidates_list if candidate.score >= threshold]
+    gaps = scores[:-1] - scores[1:]
+    gap_index = int(np.argmax(gaps))
+    if gaps[gap_index] > 0:
+        return float(scores[gap_index])
+    return float(np.percentile(scores, 75))
 
 
 def detect_matching_beads(
