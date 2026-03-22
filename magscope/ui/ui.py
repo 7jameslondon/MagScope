@@ -287,10 +287,7 @@ class UIManager(ManagerProcessBase):
         if self.shared_values is not None:
             self.shared_values.live_profile_bead.value = bead
         self._clear_live_profile_buffer()
-        if self._beads_locked():
-            self._set_active_bead(None)
-        else:
-            self._set_active_bead(normalized_bead)
+        self._set_active_bead(normalized_bead)
         self._update_bead_highlights(
             old_selected=old_selected,
             old_reference=old_reference,
@@ -371,7 +368,6 @@ class UIManager(ManagerProcessBase):
             and self.video_viewer is not None
             and self.video_buffer is not None
             and self._auto_bead_selection_dialog is None
-            and not self._beads_locked()
             and self._pending_bead_add_id is None
             and not self._current_scene_rect().isNull()
         )
@@ -427,11 +423,6 @@ class UIManager(ManagerProcessBase):
         visible_rect = visible_rect.intersected(scene_rect)
         return scene_rect if visible_rect.isEmpty() else visible_rect
 
-    def _beads_locked(self) -> bool:
-        if self.controls is None:
-            return False
-        return self.controls.bead_selection_panel.lock_button.isChecked()
-
     def _next_random_bead_roi(
         self,
         rng: np.random.Generator,
@@ -472,9 +463,6 @@ class UIManager(ManagerProcessBase):
 
         roi = self._bead_rois[normalized_id]
         self._active_bead_graphic = BeadGraphic(self, normalized_id, roi, self.video_viewer.scene)
-        self._active_bead_graphic.locked = (
-            self.controls is not None and self.controls.bead_selection_panel.lock_button.isChecked()
-        )
         self._active_bead_graphic.set_selection_state(
             self._get_bead_highlight_state(normalized_id)
         )
@@ -495,9 +483,6 @@ class UIManager(ManagerProcessBase):
     @register_script_command(AddRandomBeadsCommand)
     def add_random_beads(self, count: int, seed: int | None = None) -> None:
         if count <= 0:
-            return
-        if self._beads_locked():
-            self.show_error('Beads are locked', 'Unlock beads before adding scripted bead ROIs.')
             return
 
         visible_rect = self._current_visible_scene_rect()
@@ -557,8 +542,7 @@ class UIManager(ManagerProcessBase):
         self._bead_rois.update(bead_rois)
         self._bead_next_id = next_bead_id
         self._update_next_bead_id_label()
-        if not self._beads_locked():
-            self._set_active_bead(self._normalize_bead_id(self.selected_bead))
+        self._set_active_bead(self._normalize_bead_id(self.selected_bead))
         self._refresh_bead_overlay()
         return bead_rois
 
@@ -820,7 +804,7 @@ class UIManager(ManagerProcessBase):
             self._display_rate_counter += 1
 
     def callback_view_clicked(self, pos: QPoint, button=Qt.MouseButton.LeftButton):
-        if self.controls is None or self.controls.bead_selection_panel.lock_button.isChecked():
+        if self.controls is None:
             return
         if self._pending_bead_add_id is not None:
             return
@@ -1122,17 +1106,6 @@ class UIManager(ManagerProcessBase):
             return 0
 
         return max(self._bead_rois.keys()) + 1
-
-    def lock_beads(self, locked: bool):
-        if self.video_viewer is not None:
-            self.video_viewer.set_locked_overlay(locked)
-        if self._active_bead_graphic is not None:
-            self._active_bead_graphic.locked = locked
-        if locked:
-            self._set_active_bead(None)
-        else:
-            self._set_active_bead(self._normalize_bead_id(self.selected_bead))
-        self._update_auto_bead_selection_button_state()
 
     def update_video_processors_status(self):
         busy = self.shared_values.video_process_busy_count.value

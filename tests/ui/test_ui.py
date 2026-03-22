@@ -46,7 +46,6 @@ class FakeStatusPanel:
 class FakeVideoViewer:
     def __init__(self):
         self.cleared = False
-        self.locked_overlay = None
         self.plot_args = None
         self.overlay_args = None
         self.scene = SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 512, 512))
@@ -70,9 +69,6 @@ class FakeVideoViewer:
 
     def clear_crosshairs(self) -> None:
         self.cleared = True
-
-    def set_locked_overlay(self, locked: bool) -> None:
-        self.locked_overlay = locked
 
     def plot(self, x, y, marker_size):
         self.plot_args = (np.asarray(x), np.asarray(y), marker_size)
@@ -181,7 +177,6 @@ class FakeBeadSelectionPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
         self.next_bead_id_label = None
-        self.lock_button = FakeCheckable()
         self.auto_select_button = FakeButton()
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
@@ -582,25 +577,6 @@ def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
     assert ui_manager.video_viewer.viewport_updates >= 3
 
 
-def test_unlock_beads_restores_selected_bead_as_active(ui_manager):
-    scene = QGraphicsScene(0, 0, 512, 512)
-    ui_manager.video_viewer = FakeVideoViewer()
-    ui_manager.video_viewer.scene = scene
-    ui_manager._bead_rois = {3: (10, 20, 30, 40)}
-    ui_manager.selected_bead = 3
-    ui_manager._set_active_bead(3)
-
-    ui_manager.lock_beads(True)
-
-    assert ui_manager.video_viewer.locked_overlay is True
-    assert ui_manager._active_bead_id is None
-
-    ui_manager.lock_beads(False)
-
-    assert ui_manager.video_viewer.locked_overlay is False
-    assert ui_manager._active_bead_id == 3
-
-
 def test_bead_graphic_right_click_defers_deletion_to_scene_handler(qtbot, ui_manager):
     scene = QGraphicsScene(0, 0, 512, 512)
     qtbot.wait(1)
@@ -782,10 +758,9 @@ def test_set_selected_bead_syncs_plot_worker_and_controls(ui_manager, monkeypatc
     assert ui_manager._active_bead_id == 7
 
 
-def test_set_selected_bead_does_not_activate_bead_while_locked(ui_manager, monkeypatch):
+def test_set_selected_bead_activates_selected_bead(ui_manager, monkeypatch):
     activated = []
     ui_manager._bead_rois = {7: (10, 20, 30, 40)}
-    ui_manager.controls.bead_selection_panel.lock_button.checked = True
 
     monkeypatch.setattr(
         ui_manager,
@@ -795,7 +770,7 @@ def test_set_selected_bead_does_not_activate_bead_while_locked(ui_manager, monke
 
     ui_manager.set_selected_bead(7)
 
-    assert activated == [None]
+    assert activated == [7]
 
 
 def test_set_reference_bead_syncs_plot_worker_and_controls(ui_manager):
@@ -841,7 +816,7 @@ def test_add_random_beads_adds_requested_count_inside_visible_view(ui_manager):
         assert 0 <= y0 < y1 <= 512
 
 
-def test_add_random_beads_respects_capacity_and_lock(ui_manager, monkeypatch):
+def test_add_random_beads_respects_capacity(ui_manager, monkeypatch):
     ui_manager.video_viewer = FakeVideoViewer()
     ui_manager._bead_next_id = ui_manager._bead_roi_capacity
     errors = []
@@ -850,13 +825,6 @@ def test_add_random_beads_respects_capacity_and_lock(ui_manager, monkeypatch):
     ui_manager.add_random_beads(3, seed=1)
 
     assert errors[0][0] == 'Maximum bead count reached'
-
-    ui_manager._bead_next_id = 0
-    ui_manager.controls.bead_selection_panel.lock_button.checked = True
-    ui_manager.add_random_beads(3, seed=1)
-
-    assert errors[1][0] == 'Beads are locked'
-    assert ui_manager._bead_rois == {}
 
 
 def test_add_random_beads_rolls_back_next_id_on_buffer_failure(ui_manager):
@@ -935,11 +903,6 @@ def test_auto_bead_selection_button_state_tracks_conflicts(ui_manager):
     ui_manager._update_auto_bead_selection_button_state()
     assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is True
 
-    ui_manager.controls.bead_selection_panel.lock_button.checked = True
-    ui_manager._update_auto_bead_selection_button_state()
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
-
-    ui_manager.controls.bead_selection_panel.lock_button.checked = False
     ui_manager._pending_bead_add_id = 4
     ui_manager._update_auto_bead_selection_button_state()
     assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
