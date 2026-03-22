@@ -18,20 +18,21 @@ def copy_latest_image(
     image_shape: tuple[int, int],
     dtype: np.dtype,
 ) -> np.ndarray:
-    """Copy a recent image snapshot from the shared video buffer."""
+    """Copy a recent image snapshot in the same orientation shown in the UI."""
 
-    return np.frombuffer(image_bytes, dtype=dtype).copy().reshape(image_shape)
+    width, height = image_shape
+    return np.frombuffer(image_bytes, dtype=dtype).copy().reshape((height, width))
 
 
 def crop_roi(image: np.ndarray, roi: tuple[int, int, int, int]) -> np.ndarray:
-    """Return the ROI crop using MagScope's ``(x, y)`` image indexing."""
+    """Return the ROI crop from a viewer-oriented ``(height, width)`` image."""
 
     x0, x1, y0, y1 = roi
-    if x0 < 0 or y0 < 0 or x1 > image.shape[0] or y1 > image.shape[1]:
+    if x0 < 0 or y0 < 0 or x1 > image.shape[1] or y1 > image.shape[0]:
         raise ValueError('ROI is out of bounds for the provided image')
     if x1 <= x0 or y1 <= y0:
         raise ValueError('ROI must have a positive width and height')
-    return image[x0:x1, y0:y1]
+    return image[y0:y1, x0:x1]
 
 
 def normalized_cross_correlation(image: np.ndarray, template: np.ndarray) -> np.ndarray:
@@ -79,7 +80,7 @@ def roi_is_within_image(
     image_shape: tuple[int, int],
 ) -> bool:
     x0, x1, y0, y1 = roi
-    return 0 <= x0 < x1 <= image_shape[0] and 0 <= y0 < y1 <= image_shape[1]
+    return 0 <= x0 < x1 <= image_shape[1] and 0 <= y0 < y1 <= image_shape[0]
 
 
 def score_threshold_for_percentile(
@@ -113,21 +114,28 @@ def detect_matching_beads(
 
     template = crop_roi(image, seed_roi)
     score_map = normalized_cross_correlation(image, template)
-    roi_width = template.shape[0]
-    roi_height = template.shape[1]
+    roi_height, roi_width = template.shape
 
-    blocked_rois = [tuple(int(value) for value in roi) for roi in existing_rois]
+    blocked_rois: list[tuple[int, int, int, int]] = [
+        (int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3]))
+        for roi in existing_rois
+    ]
     blocked_rois.append(seed_roi)
 
     candidates: list[AutoBeadCandidate] = []
     for flat_index in np.argsort(score_map, axis=None)[::-1]:
-        x0, y0 = np.unravel_index(flat_index, score_map.shape)
-        roi = (x0, x0 + roi_width, y0, y0 + roi_height)
+        y0, x0 = np.unravel_index(flat_index, score_map.shape)
+        roi: tuple[int, int, int, int] = (
+            int(x0),
+            int(x0 + roi_width),
+            int(y0),
+            int(y0 + roi_height),
+        )
         if not roi_is_within_image(roi, image.shape):
             continue
         if any(roi_overlaps(roi, blocked_roi) for blocked_roi in blocked_rois):
             continue
-        candidate = AutoBeadCandidate(roi=roi, score=float(score_map[x0, y0]))
+        candidate = AutoBeadCandidate(roi=roi, score=float(score_map[y0, x0]))
         candidates.append(candidate)
         blocked_rois.append(roi)
 

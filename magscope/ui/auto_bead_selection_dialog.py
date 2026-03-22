@@ -107,10 +107,12 @@ class AutoBeadSelectionDialog(QDialog):
         display_image = np.ascontiguousarray(self._image)
         if self._display_scale != 1:
             display_image = np.ascontiguousarray(display_image * self._display_scale)
+        image_bytes = display_image.tobytes()
         qimage = QImage(
-            display_image,
-            display_image.shape[0],
+            image_bytes,
             display_image.shape[1],
+            display_image.shape[0],
+            display_image.strides[0],
             numpy_type_to_qt_image_type(display_image.dtype.type),
         )
         return QPixmap.fromImage(qimage.copy())

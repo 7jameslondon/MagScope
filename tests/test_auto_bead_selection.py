@@ -3,6 +3,7 @@ import pytest
 
 from magscope.auto_bead_selection import (
     AutoBeadCandidate,
+    copy_latest_image,
     detect_matching_beads,
     filter_candidates_by_percentile,
     roi_overlaps,
@@ -17,11 +18,11 @@ def test_detect_matching_beads_excludes_seed_existing_and_overlaps():
     existing_roi = (20, 28, 6, 14)
     expected_candidate_roi = (10, 18, 20, 28)
 
-    image[seed_roi[0]:seed_roi[1], seed_roi[2]:seed_roi[3]] = template
-    image[existing_roi[0]:existing_roi[1], existing_roi[2]:existing_roi[3]] = template
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+    image[existing_roi[2]:existing_roi[3], existing_roi[0]:existing_roi[1]] = template
     image[
-        expected_candidate_roi[0]:expected_candidate_roi[1],
         expected_candidate_roi[2]:expected_candidate_roi[3],
+        expected_candidate_roi[0]:expected_candidate_roi[1],
     ] = template
 
     _score_map, candidates = detect_matching_beads(image, seed_roi, [existing_roi])
@@ -44,3 +45,27 @@ def test_filter_candidates_by_percentile_keeps_top_scores():
     filtered = filter_candidates_by_percentile(candidates, 50)
 
     assert [candidate.score for candidate in filtered] == [0.5, 0.9]
+
+
+def test_copy_latest_image_matches_viewer_orientation_for_rectangular_frames():
+    width, height = 6, 4
+    raw = np.arange(width * height, dtype=np.uint16)
+
+    image = copy_latest_image(raw.tobytes(), (width, height), np.dtype(np.uint16))
+
+    expected = raw.reshape((height, width))
+    np.testing.assert_array_equal(image, expected)
+
+
+def test_detect_matching_beads_uses_viewer_coordinates_on_rectangular_image():
+    image = np.zeros((40, 72), dtype=np.uint16)
+    template = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    seed_roi = (10, 18, 8, 14)
+    match_roi = (42, 50, 24, 30)
+
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+    image[match_roi[2]:match_roi[3], match_roi[0]:match_roi[1]] = template
+
+    _score_map, candidates = detect_matching_beads(image, seed_roi, [])
+
+    assert candidates[0].roi == match_roi
