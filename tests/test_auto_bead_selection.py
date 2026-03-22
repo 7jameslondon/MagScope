@@ -1,0 +1,98 @@
+import numpy as np
+import pytest
+
+from magscope.auto_bead_selection import (
+    AutoBeadCandidate,
+    copy_latest_image,
+    default_candidate_score_threshold,
+    detect_matching_beads,
+    filter_candidates_by_score_threshold,
+    roi_overlaps,
+)
+
+
+def test_detect_matching_beads_excludes_seed_existing_and_overlaps():
+    image = np.zeros((40, 40), dtype=np.uint16)
+    template = np.arange(64, dtype=np.uint16).reshape(8, 8)
+
+    seed_roi = (4, 12, 5, 13)
+    existing_roi = (20, 28, 6, 14)
+    expected_candidate_roi = (10, 18, 20, 28)
+
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+    image[existing_roi[2]:existing_roi[3], existing_roi[0]:existing_roi[1]] = template
+    image[
+        expected_candidate_roi[2]:expected_candidate_roi[3],
+        expected_candidate_roi[0]:expected_candidate_roi[1],
+    ] = template
+
+    _score_map, candidates = detect_matching_beads(image, seed_roi, [existing_roi])
+
+    assert expected_candidate_roi in [candidate.roi for candidate in candidates]
+    assert seed_roi not in [candidate.roi for candidate in candidates]
+    assert existing_roi not in [candidate.roi for candidate in candidates]
+    assert all(not roi_overlaps(candidate.roi, existing_roi) for candidate in candidates)
+    assert candidates[0].roi == expected_candidate_roi
+    assert candidates[0].score == pytest.approx(1.0)
+
+
+def test_filter_candidates_by_score_threshold_keeps_top_scores():
+    candidates = [
+        AutoBeadCandidate((0, 8, 0, 8), 0.1),
+        AutoBeadCandidate((8, 16, 0, 8), 0.5),
+        AutoBeadCandidate((16, 24, 0, 8), 0.9),
+    ]
+
+    filtered = filter_candidates_by_score_threshold(candidates, 0.5)
+
+    assert [candidate.score for candidate in filtered] == [0.5, 0.9]
+
+
+def test_default_candidate_score_threshold_uses_largest_gap():
+    candidates = [
+        AutoBeadCandidate((0, 8, 0, 8), 0.97),
+        AutoBeadCandidate((8, 16, 0, 8), 0.94),
+        AutoBeadCandidate((16, 24, 0, 8), 0.91),
+        AutoBeadCandidate((24, 32, 0, 8), 0.52),
+        AutoBeadCandidate((32, 40, 0, 8), 0.50),
+    ]
+
+    threshold = default_candidate_score_threshold(candidates)
+
+    assert threshold == pytest.approx(0.91)
+
+
+def test_copy_latest_image_matches_viewer_orientation_for_rectangular_frames():
+    width, height = 6, 4
+    raw = np.arange(width * height, dtype=np.uint16)
+
+    image = copy_latest_image(raw.tobytes(), (width, height), np.dtype(np.uint16))
+
+    expected = raw.reshape((height, width))
+    np.testing.assert_array_equal(image, expected)
+
+
+def test_detect_matching_beads_uses_viewer_coordinates_on_rectangular_image():
+    image = np.zeros((40, 72), dtype=np.uint16)
+    template = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    seed_roi = (10, 18, 8, 14)
+    match_roi = (42, 50, 24, 30)
+
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+    image[match_roi[2]:match_roi[3], match_roi[0]:match_roi[1]] = template
+
+    _score_map, candidates = detect_matching_beads(image, seed_roi, [])
+
+    assert candidates[0].roi == match_roi
+
+
+def test_detect_matching_beads_discards_zero_score_candidates():
+    image = np.zeros((40, 40), dtype=np.uint16)
+    template = np.arange(64, dtype=np.uint16).reshape(8, 8)
+    seed_roi = (4, 12, 4, 12)
+
+    image[seed_roi[2]:seed_roi[3], seed_roi[0]:seed_roi[1]] = template
+
+    _score_map, candidates = detect_matching_beads(image, seed_roi, [])
+
+    assert candidates == []

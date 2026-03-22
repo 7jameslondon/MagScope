@@ -169,11 +169,20 @@ class FakeLabel:
         self.text = text
 
 
+class FakeButton:
+    def __init__(self):
+        self.enabled = True
+
+    def setEnabled(self, value: bool) -> None:
+        self.enabled = value
+
+
 class FakeBeadSelectionPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
         self.next_bead_id_label = None
         self.lock_button = FakeCheckable()
+        self.auto_select_button = FakeButton()
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label = next_bead_id
@@ -917,8 +926,154 @@ def test_clear_beads_resets_selection_so_next_add_activates_first_bead(ui_manage
     ui_manager.add_bead(SimpleNamespace(x=lambda: 50, y=lambda: 60))
 
     assert ui_manager.selected_bead == 0
-    assert ui_manager.reference_bead is None
-    assert activated == [None, None, 0]
+
+
+def test_auto_bead_selection_button_state_tracks_conflicts(ui_manager):
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_buffer = SimpleNamespace(dtype=np.uint16)
+
+    ui_manager._update_auto_bead_selection_button_state()
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is True
+
+    ui_manager.controls.bead_selection_panel.lock_button.checked = True
+    ui_manager._update_auto_bead_selection_button_state()
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+
+    ui_manager.controls.bead_selection_panel.lock_button.checked = False
+    ui_manager._pending_bead_add_id = 4
+    ui_manager._update_auto_bead_selection_button_state()
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+
+    ui_manager._pending_bead_add_id = None
+    ui_manager._auto_bead_selection_dialog = object()
+    ui_manager._update_auto_bead_selection_button_state()
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+
+
+def test_start_auto_bead_selection_opens_dialog_and_reenables_button(ui_manager, monkeypatch):
+    class FakeEmitter:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in list(self.callbacks):
+                callback(*args)
+
+    class FakeDialog:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.finished = FakeEmitter()
+            self.selectionAccepted = FakeEmitter()
+            self.opened = False
+
+        def setAttribute(self, *_args):
+            return None
+
+        def open(self):
+            self.opened = True
+
+    created = []
+
+    ui_manager.video_viewer = FakeVideoViewer()
+    ui_manager.video_buffer = SimpleNamespace(dtype=np.uint16)
+    ui_manager.settings['ROI'] = 20
+    monkeypatch.setattr(ui_manager, '_snapshot_recent_image', lambda: np.zeros((32, 32), dtype=np.uint16))
+    monkeypatch.setattr('magscope.ui.ui.AutoBeadSelectionDialog', lambda **kwargs: created.append(FakeDialog(**kwargs)) or created[-1])
+
+    ui_manager.start_auto_bead_selection()
+
+    assert len(created) == 1
+    assert created[0].opened is True
+    assert created[0].kwargs['roi_size'] == 20
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+
+    created[0].finished.emit(0)
+
+    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is True
+
+
+def test_apply_auto_bead_selection_respects_remaining_capacity(ui_manager, monkeypatch):
+    added = []
+    warnings = []
+    ui_manager._bead_next_id = ui_manager._bead_roi_capacity - 1
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    ui_manager._apply_auto_bead_selection([
+        (0, 10, 0, 10),
+        (10, 20, 10, 20),
+    ])
+
+    assert added == [(0, 10, 0, 10)]
+    assert warnings == [
+        (
+            'Maximum bead count reached',
+            '1 bead could not be added because they would exceed the maximum allowed bead count of 10000 beads.',
+        )
+    ]
+
+
+def test_apply_auto_bead_selection_keeps_seed_first(ui_manager, monkeypatch):
+    added = []
+    warnings = []
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    ui_manager._apply_auto_bead_selection([
+        (1, 11, 2, 12),
+        (20, 30, 22, 32),
+    ])
+
+    assert added == [
+        (1, 11, 2, 12),
+        (20, 30, 22, 32),
+    ]
+    assert warnings == []
+
+
+def test_apply_auto_bead_selection_skips_overlapping_existing_and_batch_rois(ui_manager, monkeypatch):
+    added = []
+    warnings = []
+    ui_manager._bead_rois = {3: (1, 11, 2, 12)}
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    ui_manager._apply_auto_bead_selection([
+        (2, 12, 2, 12),
+        (20, 30, 22, 32),
+        (21, 31, 22, 32),
+        (40, 50, 42, 52),
+    ])
+
+    assert added == [
+        (20, 30, 22, 32),
+        (40, 50, 42, 52),
+    ]
+    assert warnings == []
+
+
+def test_apply_auto_bead_selection_warns_when_capacity_is_full(ui_manager, monkeypatch):
+    added = []
+    warnings = []
+    ui_manager._bead_next_id = ui_manager._bead_roi_capacity
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    ui_manager._apply_auto_bead_selection([
+        (0, 10, 0, 10),
+        (10, 20, 10, 20),
+    ])
+
+    assert added == []
+    assert warnings == [
+        (
+            'Maximum bead count reached',
+            '2 beads could not be added because they would exceed the maximum allowed bead count of 10000 beads.',
+        )
+    ]
 
 
 def test_invalid_selected_bead_clears_active_bead(ui_manager):

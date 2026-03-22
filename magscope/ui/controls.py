@@ -552,6 +552,12 @@ class BeadSelectionPanel(ControlPanelBase):
         self.clear_button.clicked.connect(self.manager.clear_beads)  # type: ignore
         button_row.addWidget(self.clear_button)
 
+        self.auto_select_button = QPushButton('Auto Bead Selection')
+        self.auto_select_button.clicked.connect(self.manager.start_auto_bead_selection)  # type: ignore
+        button_row.addWidget(self.auto_select_button)
+
+        self.manager._update_auto_bead_selection_button_state()
+
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label.setText(f"Next Bead ID: {next_bead_id}")
 

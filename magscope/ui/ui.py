@@ -24,9 +24,11 @@ from PyQt6.QtWidgets import (
 )
 
 from magscope._logging import get_logger
+from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
+from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
 from magscope.ui import (
     AcquisitionPanel,
     BeadGraphic,
@@ -105,6 +107,7 @@ class UIManager(ManagerProcessBase):
         self._last_applied_roi: int | None = None
         self._settings_persistence_warning_shown = False
         self._bead_roi_capacity = 10000
+        self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -352,6 +355,47 @@ class UIManager(ManagerProcessBase):
                 self._normalize_bead_id(self.reference_bead),
             )
             self.video_viewer.viewport().update()
+        self._update_auto_bead_selection_button_state()
+
+    def _update_auto_bead_selection_button_state(self) -> None:
+        if self.controls is None:
+            return
+        button = getattr(self.controls.bead_selection_panel, 'auto_select_button', None)
+        if button is None:
+            return
+        button.setEnabled(self._can_start_auto_bead_selection())
+
+    def _can_start_auto_bead_selection(self) -> bool:
+        return (
+            self.controls is not None
+            and self.video_viewer is not None
+            and self.video_buffer is not None
+            and self._auto_bead_selection_dialog is None
+            and not self._beads_locked()
+            and self._pending_bead_add_id is None
+            and not self._current_scene_rect().isNull()
+        )
+
+    def _snapshot_recent_image(self) -> np.ndarray | None:
+        if self.video_buffer is None:
+            return None
+        # Intentionally use peak_image() as a lightweight snapshot. It does not
+        # verify that a frame has been written yet, but by the time a user
+        # starts auto bead selection the buffer is expected to already contain
+        # a recent frame.
+        _index, image_bytes = self.video_buffer.peak_image()
+        return copy_latest_image(
+            image_bytes,
+            self.video_buffer.image_shape,
+            self.video_buffer.dtype,
+        )
+
+    def _current_image_display_scale(self) -> int:
+        if self.video_buffer is None:
+            return 1
+        cam_bits = self.camera_type.bits
+        dtype_bits = np.iinfo(self.video_buffer.dtype).bits
+        return 2 ** (dtype_bits - cam_bits)
 
     def _current_scene_rect(self) -> QRectF:
         if self.video_viewer is None:
@@ -471,18 +515,32 @@ class UIManager(ManagerProcessBase):
 
         rng = np.random.default_rng(seed)
         bead_rois: dict[int, tuple[int, int, int, int]] = {}
-        next_bead_id = self._bead_next_id
         count_to_add = min(count, remaining_capacity)
         for _ in range(count_to_add):
-            bead_id = next_bead_id
             roi = self._next_random_bead_roi(rng, visible_rect)
             if roi is None:
                 break
-            bead_rois[bead_id] = roi
-            next_bead_id += 1
+            bead_rois[len(bead_rois)] = roi
 
         if not bead_rois:
             return
+
+        self._add_new_bead_batch(list(bead_rois.values()))
+
+    def _add_new_bead_batch(
+        self,
+        rois: Iterable[tuple[int, int, int, int]],
+    ) -> dict[int, tuple[int, int, int, int]]:
+        bead_rois: dict[int, tuple[int, int, int, int]] = {}
+        next_bead_id = self._bead_next_id
+        for roi in rois:
+            if next_bead_id >= self._bead_roi_capacity:
+                break
+            bead_rois[next_bead_id] = tuple(int(value) for value in roi)
+            next_bead_id += 1
+
+        if not bead_rois:
+            return {}
 
         try:
             if self.bead_roi_buffer is None:
@@ -502,6 +560,7 @@ class UIManager(ManagerProcessBase):
         if not self._beads_locked():
             self._set_active_bead(self._normalize_bead_id(self.selected_bead))
         self._refresh_bead_overlay()
+        return bead_rois
 
     def _hit_test_bead(self, pos: QPoint) -> int | None:
         if not self._bead_rois:
@@ -902,6 +961,67 @@ class UIManager(ManagerProcessBase):
             self._set_active_bead(id)
         self._refresh_bead_overlay()
 
+    def start_auto_bead_selection(self) -> None:
+        if not self._can_start_auto_bead_selection():
+            return
+
+        image = self._snapshot_recent_image()
+        if image is None:
+            self.show_error('No live image available', 'Cannot start auto bead selection without a recent frame.')
+            return
+
+        dialog_parent = self.windows[0] if self.windows else None
+        dialog = AutoBeadSelectionDialog(
+            parent=dialog_parent,
+            image=image,
+            roi_size=self.settings['ROI'],
+            existing_rois=self._bead_rois,
+            display_scale=self._current_image_display_scale(),
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.finished.connect(self._on_auto_bead_selection_dialog_finished)
+        dialog.selectionAccepted.connect(self._apply_auto_bead_selection)
+        self._auto_bead_selection_dialog = dialog
+        self._update_auto_bead_selection_button_state()
+        dialog.open()
+
+    def _apply_auto_bead_selection(self, rois: list[tuple[int, int, int, int]]) -> None:
+        remaining_capacity = self._bead_roi_capacity - self._bead_next_id
+        existing_rois = list(self._bead_rois.values())
+        accepted_rois: list[tuple[int, int, int, int]] = []
+        for roi in rois:
+            normalized_roi = tuple(int(value) for value in roi)
+            if any(roi_overlaps(normalized_roi, existing_roi) for existing_roi in existing_rois):
+                continue
+            if any(roi_overlaps(normalized_roi, kept_roi) for kept_roi in accepted_rois):
+                continue
+            accepted_rois.append(normalized_roi)
+
+        if not accepted_rois:
+            return
+
+        rois_to_add = accepted_rois[:max(0, remaining_capacity)]
+        skipped_due_to_capacity = len(accepted_rois) - len(rois_to_add)
+        if not rois_to_add:
+            if skipped_due_to_capacity > 0:
+                self._show_auto_bead_selection_capacity_warning(skipped_due_to_capacity)
+            return
+        self._add_new_bead_batch(rois_to_add)
+        if skipped_due_to_capacity > 0:
+            self._show_auto_bead_selection_capacity_warning(skipped_due_to_capacity)
+
+    def _show_auto_bead_selection_capacity_warning(self, skipped_count: int) -> None:
+        bead_label = 'bead' if skipped_count == 1 else 'beads'
+        self.show_warning(
+            'Maximum bead count reached',
+            f'{skipped_count} {bead_label} could not be added because they would exceed '
+            f'the maximum allowed bead count of {self._bead_roi_capacity} beads.',
+        )
+
+    def _on_auto_bead_selection_dialog_finished(self, _result: int) -> None:
+        self._auto_bead_selection_dialog = None
+        self._update_auto_bead_selection_button_state()
+
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
         old_reference = self._normalize_bead_id(self.reference_bead)
@@ -995,6 +1115,7 @@ class UIManager(ManagerProcessBase):
     def _clear_pending_bead_add(self) -> None:
         self._pending_bead_add_id = None
         self._pending_bead_add_roi = None
+        self._update_auto_bead_selection_button_state()
 
     def _calculate_next_bead_id(self) -> int:
         if not self._bead_rois:
@@ -1011,6 +1132,7 @@ class UIManager(ManagerProcessBase):
             self._set_active_bead(None)
         else:
             self._set_active_bead(self._normalize_bead_id(self.selected_bead))
+        self._update_auto_bead_selection_button_state()
 
     def update_video_processors_status(self):
         busy = self.shared_values.video_process_busy_count.value
@@ -1108,6 +1230,19 @@ class UIManager(ManagerProcessBase):
             msg.setDetailedText(details)
         else:
             logger.error('%s', text)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.show()
+
+    def show_warning(self, text: str, details: str | None = None):
+        msg = QMessageBox(self.windows[0])
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Warning")
+        msg.setText(text)
+        if details:
+            logger.warning('%s: %s', text, details)
+            msg.setDetailedText(details)
+        else:
+            logger.warning('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 
