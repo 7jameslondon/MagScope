@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -60,9 +61,25 @@ class AutoBeadSelectionDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        self.instructions_label = QLabel('Click one bead in the frozen image to use it as the seed.')
-        self.instructions_label.setWordWrap(True)
-        layout.addWidget(self.instructions_label)
+        self.step_1_card = self._create_instruction_card(
+            'autoBeadStep1',
+            'Step 1: Choose a Seed Bead',
+            'Click a bead in the frozen image to choose the seed ROI for auto selection.',
+        )
+        self.step_1_title_label = self.step_1_card.findChild(QLabel, 'autoBeadStep1Title')
+        self.step_1_body_label = self.step_1_card.findChild(QLabel, 'autoBeadStep1Body')
+        layout.addWidget(self.step_1_card)
+
+        self.step_2_card = self._create_instruction_card(
+            'autoBeadStep2',
+            'Step 2: Review and Confirm',
+            'Select a seed bead first. Then adjust the score threshold to refine the highlighted matches before accepting them.',
+        )
+        self.step_2_title_label = self.step_2_card.findChild(QLabel, 'autoBeadStep2Title')
+        self.step_2_body_label = self.step_2_card.findChild(QLabel, 'autoBeadStep2Body')
+        layout.addWidget(self.step_2_card)
+
+        self._set_instruction_cards_state(has_seed=False, has_candidates=False)
 
         self.video_viewer = VideoViewer()
         self.video_viewer.setMinimumHeight(420)
@@ -97,6 +114,23 @@ class AutoBeadSelectionDialog(QDialog):
         layout.addLayout(button_row)
 
         self._refresh_visible_candidates()
+
+    def _create_instruction_card(self, name: str, title: str, body: str) -> QFrame:
+        card = QFrame()
+        card.setFrameShape(QFrame.Shape.StyledPanel)
+        card.setObjectName(name)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        title_label = QLabel(title)
+        title_label.setObjectName(f'{name}Title')
+        body_label = QLabel(body)
+        body_label.setWordWrap(True)
+        body_label.setObjectName(f'{name}Body')
+        layout.addWidget(title_label)
+        layout.addWidget(body_label)
+        return card
 
     @property
     def seed_roi(self) -> tuple[int, int, int, int] | None:
@@ -198,6 +232,7 @@ class AutoBeadSelectionDialog(QDialog):
         if self._seed_roi is None:
             self._visible_candidates = []
             self.accept_button.setEnabled(False)
+            self._set_instruction_cards_state(has_seed=False, has_candidates=False)
             self._update_overlay()
             return
 
@@ -205,17 +240,64 @@ class AutoBeadSelectionDialog(QDialog):
         self.accept_button.setEnabled(True)
 
         if self._candidates:
-            self.instructions_label.setText('Click a different bead to change the seed, then adjust the score threshold.')
+            self._set_instruction_cards_state(has_seed=True, has_candidates=bool(self._visible_candidates))
             self.status_label.setText(
                 f'Showing {len(self._visible_candidates)} of {len(self._candidates)} proposed beads '
                 f'at score threshold {threshold:.3f} '
                 f'(candidate range {self._candidate_min_score:.3f} to {self._candidate_max_score:.3f}).'
             )
         else:
-            self.instructions_label.setText('Click a different bead to change the seed.')
+            self._set_instruction_cards_state(has_seed=True, has_candidates=False)
             self.status_label.setText('No valid proposed beads were found for the selected seed bead.')
 
         self._update_overlay()
+
+    def _set_instruction_cards_state(self, *, has_seed: bool, has_candidates: bool) -> None:
+        if has_seed:
+            self.step_1_body_label.setText('Click another bead in the frozen image any time to choose a different seed ROI.')
+            if has_candidates:
+                self.step_2_body_label.setText(
+                    'Adjust the score threshold to refine the highlighted matches, then click Accept Proposed Beads.'
+                )
+            else:
+                self.step_2_body_label.setText(
+                    'No additional matches are highlighted. You can accept the seed bead alone or click another bead to try again.'
+                )
+        else:
+            self.step_1_body_label.setText('Click a bead in the frozen image to choose the seed ROI for auto selection.')
+            self.step_2_body_label.setText(
+                'Select a seed bead first. Then adjust the score threshold to refine the highlighted matches before accepting them.'
+            )
+
+        self._apply_instruction_card_style(self.step_1_card, active=not has_seed)
+        self._apply_instruction_card_style(self.step_2_card, active=has_seed)
+
+    def _apply_instruction_card_style(self, card: QFrame, *, active: bool) -> None:
+        if active:
+            background = '#eef5ff'
+            border = '#aac4ee'
+            title_color = '#17365d'
+            body_color = '#26476f'
+        else:
+            background = '#f4f6f8'
+            border = '#cfd8e3'
+            title_color = '#51657f'
+            body_color = '#6b7d93'
+
+        card.setStyleSheet(
+            f'QFrame#{card.objectName()} {{'
+            f' background-color: {background};'
+            f' border: 1px solid {border};'
+            ' border-radius: 6px;'
+            '}'
+            f'QLabel#{card.objectName()}Title {{'
+            ' font-weight: 700;'
+            f' color: {title_color};'
+            '}'
+            f'QLabel#{card.objectName()}Body {{'
+            f' color: {body_color};'
+            '}'
+        )
 
     def _update_overlay(self) -> None:
         overlay_rois: dict[int, tuple[int, int, int, int]] = {}

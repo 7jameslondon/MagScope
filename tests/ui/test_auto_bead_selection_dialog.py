@@ -33,11 +33,18 @@ def test_auto_bead_selection_dialog_updates_preview_with_score_threshold(qtbot):
     )
     qtbot.addWidget(dialog)
 
+    assert dialog.step_1_title_label.text() == 'Step 1: Choose a Seed Bead'
+    assert dialog.step_2_title_label.text() == 'Step 2: Review and Confirm'
+    assert 'Click a bead in the frozen image' in dialog.step_1_body_label.text()
+    assert 'Select a seed bead first' in dialog.step_2_body_label.text()
+
     dialog._set_seed_roi(seed_roi)
 
     assert len(dialog.visible_candidates) >= 2
     assert dialog.threshold_value_label.text() != '0%'
     assert 'score threshold' in dialog.status_label.text()
+    assert 'Click another bead' in dialog.step_1_body_label.text()
+    assert 'Adjust the score threshold' in dialog.step_2_body_label.text()
 
     dialog.threshold_slider.setValue(dialog.threshold_slider.maximum())
 
