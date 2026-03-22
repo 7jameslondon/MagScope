@@ -379,6 +379,10 @@ class UIManager(ManagerProcessBase):
     def _snapshot_recent_image(self) -> np.ndarray | None:
         if self.video_buffer is None:
             return None
+        # Intentionally use peak_image() as a lightweight snapshot. It does not
+        # verify that a frame has been written yet, but by the time a user
+        # starts auto bead selection the buffer is expected to already contain
+        # a recent frame.
         _index, image_bytes = self.video_buffer.peak_image()
         return copy_latest_image(
             image_bytes,
