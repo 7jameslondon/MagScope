@@ -997,8 +997,10 @@ def test_start_auto_bead_selection_opens_dialog_and_reenables_button(ui_manager,
 
 def test_apply_auto_bead_selection_respects_remaining_capacity(ui_manager, monkeypatch):
     added = []
+    warnings = []
     ui_manager._bead_next_id = ui_manager._bead_roi_capacity - 1
     monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
 
     ui_manager._apply_auto_bead_selection([
         (0, 10, 0, 10),
@@ -1006,11 +1008,19 @@ def test_apply_auto_bead_selection_respects_remaining_capacity(ui_manager, monke
     ])
 
     assert added == [(0, 10, 0, 10)]
+    assert warnings == [
+        (
+            'Maximum bead count reached',
+            '1 bead could not be added because they would exceed the maximum allowed bead count of 10000 beads.',
+        )
+    ]
 
 
 def test_apply_auto_bead_selection_keeps_seed_first(ui_manager, monkeypatch):
     added = []
+    warnings = []
     monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
 
     ui_manager._apply_auto_bead_selection([
         (1, 11, 2, 12),
@@ -1021,12 +1031,15 @@ def test_apply_auto_bead_selection_keeps_seed_first(ui_manager, monkeypatch):
         (1, 11, 2, 12),
         (20, 30, 22, 32),
     ]
+    assert warnings == []
 
 
 def test_apply_auto_bead_selection_skips_overlapping_existing_and_batch_rois(ui_manager, monkeypatch):
     added = []
+    warnings = []
     ui_manager._bead_rois = {3: (1, 11, 2, 12)}
     monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
 
     ui_manager._apply_auto_bead_selection([
         (2, 12, 2, 12),
@@ -1038,6 +1051,28 @@ def test_apply_auto_bead_selection_skips_overlapping_existing_and_batch_rois(ui_
     assert added == [
         (20, 30, 22, 32),
         (40, 50, 42, 52),
+    ]
+    assert warnings == []
+
+
+def test_apply_auto_bead_selection_warns_when_capacity_is_full(ui_manager, monkeypatch):
+    added = []
+    warnings = []
+    ui_manager._bead_next_id = ui_manager._bead_roi_capacity
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+    monkeypatch.setattr(ui_manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    ui_manager._apply_auto_bead_selection([
+        (0, 10, 0, 10),
+        (10, 20, 10, 20),
+    ])
+
+    assert added == []
+    assert warnings == [
+        (
+            'Maximum bead count reached',
+            '2 beads could not be added because they would exceed the maximum allowed bead count of 10000 beads.',
+        )
     ]
 
 

@@ -988,19 +988,35 @@ class UIManager(ManagerProcessBase):
     def _apply_auto_bead_selection(self, rois: list[tuple[int, int, int, int]]) -> None:
         remaining_capacity = self._bead_roi_capacity - self._bead_next_id
         existing_rois = list(self._bead_rois.values())
-        rois_to_add: list[tuple[int, int, int, int]] = []
+        accepted_rois: list[tuple[int, int, int, int]] = []
         for roi in rois:
             normalized_roi = tuple(int(value) for value in roi)
             if any(roi_overlaps(normalized_roi, existing_roi) for existing_roi in existing_rois):
                 continue
-            if any(roi_overlaps(normalized_roi, kept_roi) for kept_roi in rois_to_add):
+            if any(roi_overlaps(normalized_roi, kept_roi) for kept_roi in accepted_rois):
                 continue
-            rois_to_add.append(normalized_roi)
-            if len(rois_to_add) >= max(0, remaining_capacity):
-                break
+            accepted_rois.append(normalized_roi)
+
+        if not accepted_rois:
+            return
+
+        rois_to_add = accepted_rois[:max(0, remaining_capacity)]
+        skipped_due_to_capacity = len(accepted_rois) - len(rois_to_add)
         if not rois_to_add:
+            if skipped_due_to_capacity > 0:
+                self._show_auto_bead_selection_capacity_warning(skipped_due_to_capacity)
             return
         self._add_new_bead_batch(rois_to_add)
+        if skipped_due_to_capacity > 0:
+            self._show_auto_bead_selection_capacity_warning(skipped_due_to_capacity)
+
+    def _show_auto_bead_selection_capacity_warning(self, skipped_count: int) -> None:
+        bead_label = 'bead' if skipped_count == 1 else 'beads'
+        self.show_warning(
+            'Maximum bead count reached',
+            f'{skipped_count} {bead_label} could not be added because they would exceed '
+            f'the maximum allowed bead count of {self._bead_roi_capacity} beads.',
+        )
 
     def _on_auto_bead_selection_dialog_finished(self, _result: int) -> None:
         self._auto_bead_selection_dialog = None
@@ -1214,6 +1230,19 @@ class UIManager(ManagerProcessBase):
             msg.setDetailedText(details)
         else:
             logger.error('%s', text)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.show()
+
+    def show_warning(self, text: str, details: str | None = None):
+        msg = QMessageBox(self.windows[0])
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Warning")
+        msg.setText(text)
+        if details:
+            logger.warning('%s: %s', text, details)
+            msg.setDetailedText(details)
+        else:
+            logger.warning('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 
