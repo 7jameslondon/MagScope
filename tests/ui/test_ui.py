@@ -1023,6 +1023,24 @@ def test_apply_auto_bead_selection_keeps_seed_first(ui_manager, monkeypatch):
     ]
 
 
+def test_apply_auto_bead_selection_skips_overlapping_existing_and_batch_rois(ui_manager, monkeypatch):
+    added = []
+    ui_manager._bead_rois = {3: (1, 11, 2, 12)}
+    monkeypatch.setattr(ui_manager, '_add_new_bead_batch', lambda rois: added.extend(rois) or {})
+
+    ui_manager._apply_auto_bead_selection([
+        (2, 12, 2, 12),
+        (20, 30, 22, 32),
+        (21, 31, 22, 32),
+        (40, 50, 42, 52),
+    ])
+
+    assert added == [
+        (20, 30, 22, 32),
+        (40, 50, 42, 52),
+    ]
+
+
 def test_invalid_selected_bead_clears_active_bead(ui_manager):
     cleared = []
     ui_manager._set_active_bead = lambda bead_id: cleared.append(bead_id)

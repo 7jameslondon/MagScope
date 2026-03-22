@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from magscope._logging import get_logger
-from magscope.auto_bead_selection import copy_latest_image
+from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
 from magscope.datatypes import VideoBuffer
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
@@ -983,7 +983,17 @@ class UIManager(ManagerProcessBase):
 
     def _apply_auto_bead_selection(self, rois: list[tuple[int, int, int, int]]) -> None:
         remaining_capacity = self._bead_roi_capacity - self._bead_next_id
-        rois_to_add = list(rois[:max(0, remaining_capacity)])
+        existing_rois = list(self._bead_rois.values())
+        rois_to_add: list[tuple[int, int, int, int]] = []
+        for roi in rois:
+            normalized_roi = tuple(int(value) for value in roi)
+            if any(roi_overlaps(normalized_roi, existing_roi) for existing_roi in existing_rois):
+                continue
+            if any(roi_overlaps(normalized_roi, kept_roi) for kept_roi in rois_to_add):
+                continue
+            rois_to_add.append(normalized_roi)
+            if len(rois_to_add) >= max(0, remaining_capacity):
+                break
         if not rois_to_add:
             return
         self._add_new_bead_batch(rois_to_add)

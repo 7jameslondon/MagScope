@@ -20,6 +20,7 @@ from magscope.auto_bead_selection import (
     default_candidate_score_threshold,
     detect_matching_beads,
     filter_candidates_by_score_threshold,
+    roi_overlaps,
 )
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic
@@ -158,7 +159,9 @@ class AutoBeadSelectionDialog(QDialog):
         if self._seed_roi is None:
             return
 
-        accepted_rois: list[tuple[int, int, int, int]] = [self._seed_roi]
+        accepted_rois: list[tuple[int, int, int, int]] = []
+        if not any(roi_overlaps(self._seed_roi, roi) for roi in self._existing_rois.values()):
+            accepted_rois.append(self._seed_roi)
         for candidate in self._visible_candidates:
             if candidate.roi != self._seed_roi:
                 accepted_rois.append(candidate.roi)

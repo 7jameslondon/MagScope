@@ -102,6 +102,30 @@ def test_auto_bead_selection_dialog_allows_seed_only_acceptance(qtbot):
     assert accepted == [[seed_roi]]
 
 
+def test_auto_bead_selection_dialog_skips_overlapping_existing_seed_on_accept(qtbot):
+    image, _seed_roi = _build_test_image()
+    seed_roi = (5, 13, 4, 12)
+    dialog = AutoBeadSelectionDialog(
+        parent=None,
+        image=image,
+        roi_size=8,
+        existing_rois={7: (4, 12, 4, 12)},
+        display_scale=1,
+    )
+    qtbot.addWidget(dialog)
+
+    accepted = []
+    dialog.selectionAccepted.connect(lambda rois: accepted.append(rois))
+
+    dialog._set_seed_roi(seed_roi)
+    dialog.threshold_slider.setValue(dialog.threshold_slider.maximum())
+    dialog._accept_selection()
+
+    assert accepted
+    assert seed_roi not in accepted[0]
+    assert accepted[0] == [candidate.roi for candidate in dialog.visible_candidates]
+
+
 def test_auto_bead_selection_dialog_defaults_to_largest_gap_threshold(qtbot):
     image = np.zeros((40, 40), dtype=np.uint16)
     dialog = AutoBeadSelectionDialog(
