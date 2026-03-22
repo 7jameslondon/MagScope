@@ -103,7 +103,7 @@ The ID number always increases to prevent mixing up beads.
 
 To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
 
-You can also click ``Auto Bead Selection`` to freeze one recent live image, choose a seed bead, and preview matching bead ROIs before adding them. The dialog shows the frozen image, the current bead ROIs, a percentile threshold slider for the proposed matches, and the match score next to each proposed ROI. Click ``Accept Proposed Beads`` to add the visible proposals through the normal bead creation path, or ``Cancel`` to leave the confirmed bead list unchanged.
+You can also click ``Auto Bead Selection`` to freeze one recent live image, choose a seed bead, and preview matching bead ROIs before adding them. The dialog shows the frozen image, the current bead ROIs, a score threshold control for the proposed matches, and the match score next to each proposed ROI. Click ``Accept Proposed Beads`` to add the visible proposals through the normal bead creation path, or ``Cancel`` to leave the confirmed bead list unchanged.
 
 During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
 You can do this by click the 🔓 button on the "Bead Selection" panel.
