@@ -2439,6 +2439,7 @@ class ZLUTGenerationDialog(QDialog):
         self.save_button.setEnabled(self._evaluation_active and self._selected_bead_id is not None)
         self.bead_selector.setEnabled(self.bead_selector.count() > 0)
         self.close_button.setEnabled(not running)
+        self.close_button.setText('Cancel' if self._evaluation_active else 'Close')
         if self._close_when_canceled and not running and phase == 'idle':
             self._close_when_canceled = False
             self.close()
@@ -2484,6 +2485,7 @@ class ZLUTGenerationDialog(QDialog):
         self.cancel_button.setVisible(self._running)
         self.cancel_button.setEnabled(self._running)
         self.cancel_button.setText('Cancel')
+        self.close_button.setText('Cancel' if active else 'Close')
 
     def force_close(self) -> None:
         self._running = False

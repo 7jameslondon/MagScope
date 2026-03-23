@@ -439,6 +439,7 @@ def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
     dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
 
     assert not dialog.cancel_button.isVisible()
+    assert dialog.close_button.text() == 'Cancel'
 
 
 def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
