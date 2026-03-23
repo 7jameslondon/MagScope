@@ -23,6 +23,7 @@ from magscope.ipc_commands import (
     UpdateBeadRoisCommand,
 )
 from magscope.settings import MagScopeSettings
+from magscope.ui.controls import ZLUTSweepPreviewWidget
 from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
@@ -385,6 +386,37 @@ def test_loading_window_defaults(qtbot):
     assert window.label.text() == 'MagScope\n\nloading ...'
     expected_flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
     assert window.windowFlags() & expected_flags == expected_flags
+
+
+def test_zlut_preview_widget_marks_non_finite_values_red(qtbot):
+    widget = ZLUTSweepPreviewWidget()
+    qtbot.addWidget(widget)
+
+    widget.update_preview(
+        state=3,
+        count=2,
+        capacity=6,
+        n_steps=3,
+        n_beads=1,
+        profiles_per_bead=2,
+        profile_length=2,
+        preview_image=np.asarray([[1.0, np.nan], [2.0, 3.0]], dtype=np.float64),
+        selected_bead_id=5,
+        mode='Raw sweep',
+        motor_z_min=10.0,
+        motor_z_max=20.0,
+        x_axis_label='Z Position (nm)',
+        x_axis_min=10.0,
+        x_axis_max=20.0,
+        image_x_min=10.0,
+        image_x_max=20.0,
+    )
+
+    rendered = widget._image.get_array()
+    assert np.ma.isMaskedArray(rendered)
+    assert bool(rendered.mask[0, 1])
+    bad_color = widget._image.cmap.get_bad()
+    assert bad_color[:3] == pytest.approx((1.0, 0.0, 0.0))
 
 
 @pytest.mark.parametrize('n_windows', [1, 2, 3])

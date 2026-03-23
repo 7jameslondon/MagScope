@@ -8,6 +8,7 @@ import textwrap
 import time
 from typing import TYPE_CHECKING, Any
 
+import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
@@ -2194,6 +2195,9 @@ class ZLUTSweepPreviewWidget(QWidget):
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
 
+        self._preview_cmap = matplotlib.colormaps['gray'].copy()
+        self._preview_cmap.set_bad(color='red')
+
         self.figure = Figure(dpi=100, facecolor='#1e1e1e')
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(280)
@@ -2205,7 +2209,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         self.axes.set_ylabel('Profile Radius (px)')
         self._image = self.axes.imshow(
             np.zeros((1, 1), dtype=np.float64),
-            cmap='gray',
+            cmap=self._preview_cmap,
             aspect='auto',
             interpolation='nearest',
             origin='lower',
@@ -2299,7 +2303,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         if image_x_min is not None and image_x_max is not None:
             extent_x_min = float(image_x_min)
             extent_x_max = float(image_x_max)
-        self._image.set_data(finite)
+        self._image.set_data(np.ma.masked_invalid(finite))
         self._image.set_extent((extent_x_min, extent_x_max, -0.5, finite.shape[0] - 0.5))
         self._image.set_clim(vmin, vmax)
         self.axes.set_title(f'{mode} preview')
