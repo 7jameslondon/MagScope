@@ -360,7 +360,7 @@ class VideoProcessorManager(ManagerProcessBase):
                 self._zlut_capture_earliest_timestamp = None
                 self._zlut_capture_motor_z_value = None
                 self._zlut_capture_remaining_profiles_per_bead = None
-                return True
+            return True
         except Full:
             logger.warning('Skipping video processing task because worker queue is full')
             return False
