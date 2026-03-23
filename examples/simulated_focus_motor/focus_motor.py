@@ -38,7 +38,7 @@ class SimulatedFocusMotor(FocusMotorBase):
     def __init__(self):
         super().__init__()
         self.fetch_interval = 0.05
-        self._state = FocusMotorState(position=0.0, target=0.0, speed=1.0)
+        self._state = FocusMotorState(position=0.0, target=0.0, speed=100.0)
         self._last_time = time()
 
     def connect(self):
