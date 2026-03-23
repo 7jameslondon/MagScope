@@ -117,7 +117,7 @@ class FocusMotorControls(magscope.ControlPanelBase):
 
         speed_row = QHBoxLayout()
         speed_row.addWidget(QLabel("Speed (nm/s):"))
-        self.speed_text = QLineEdit("1")
+        self.speed_text = QLineEdit("100")
         speed_row.addWidget(self.speed_text)
         self.layout().addLayout(speed_row)
 
