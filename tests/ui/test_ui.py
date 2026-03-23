@@ -1516,6 +1516,57 @@ def test_live_preview_uses_user_selected_bead(ui_manager, monkeypatch):
     )
 
 
+def test_live_preview_sorts_descending_z_positions_low_to_high(ui_manager, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class FakeDataset:
+        STATE_CAPTURING = 3
+        STATE_COMPLETE = 4
+
+        def __init__(self):
+            self.state = self.STATE_CAPTURING
+            self.n_steps = 3
+            self.n_beads = 1
+            self.profiles_per_bead = 1
+            self.profile_length = 2
+
+        @staticmethod
+        def attach(*, locks):
+            return FakeDataset()
+
+        def peak(self):
+            return {
+                'bead_ids': np.asarray([5, 5, 5], dtype=np.uint32),
+                'step_indices': np.asarray([0, 1, 2], dtype=np.uint32),
+                'timestamps': np.asarray([1.0, 2.0, 3.0], dtype=np.float64),
+                'motor_z_values': np.asarray([30.0, 20.0, 10.0], dtype=np.float64),
+                'valid_flags': np.asarray([1, 1, 1], dtype=np.uint8),
+                'profiles': np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=np.float64),
+            }
+
+        def get_capacity(self):
+            return 3
+
+        def close(self):
+            pass
+
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_generation_phase = 'capturing'
+    ui_manager._zlut_generation_z_axis_min_nm = 10.0
+    ui_manager._zlut_generation_z_axis_max_nm = 30.0
+    ui_manager.locks = {}
+    monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
+    monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
+
+    ui_manager._update_zlut_generation_dialog()
+
+    preview_call = ui_manager._zlut_generation_dialog.preview_widget.preview_calls[-1]
+    np.testing.assert_allclose(
+        preview_call['preview_image'],
+        np.asarray([[5.0, 3.0, 1.0], [6.0, 4.0, 2.0]], dtype=np.float64),
+    )
+
+
 def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
     from magscope.ui import ui as ui_module
 

@@ -1564,7 +1564,8 @@ class UIManager(ManagerProcessBase):
                         image_x_min = x_axis_min
                         image_x_max = x_axis_max
                 else:
-                    preview_image = np.asarray(profiles, dtype=np.float64).T
+                    sorted_order = np.argsort(selected_motor_z_values, kind='stable')
+                    preview_image = np.asarray(profiles[sorted_order], dtype=np.float64).T
                     if (
                         x_axis_min is not None
                         and x_axis_max is not None
