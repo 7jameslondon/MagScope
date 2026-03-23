@@ -2240,6 +2240,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         mode: str,
         motor_z_min: float | None,
         motor_z_max: float | None,
+        expected_capture_count: int | None = None,
     ) -> None:
         state_text = self._STATE_LABELS.get(int(state), str(state))
         summary_parts = [
@@ -2289,7 +2290,10 @@ class ZLUTSweepPreviewWidget(QWidget):
         self.axes.set_title(f'{mode} preview')
         self.axes.set_xlabel('Capture Index' if mode == 'Raw sweep' else 'Step Index')
         self.axes.set_ylabel('Profile Radius (px)')
-        self.axes.set_xlim(-0.5, finite.shape[1] - 0.5)
+        if mode == 'Raw sweep' and expected_capture_count is not None and expected_capture_count > 0:
+            self.axes.set_xlim(-0.5, expected_capture_count - 0.5)
+        else:
+            self.axes.set_xlim(-0.5, finite.shape[1] - 0.5)
         self.axes.set_ylim(-0.5, finite.shape[0] - 0.5)
         self.canvas.draw()
 

@@ -1476,3 +1476,50 @@ def test_live_preview_uses_user_selected_bead(ui_manager, monkeypatch):
         preview_call['preview_image'],
         np.asarray([[4.0], [5.0], [6.0]], dtype=np.float64),
     )
+
+
+def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class FakeDataset:
+        STATE_CAPTURING = 3
+        STATE_COMPLETE = 4
+
+        def __init__(self):
+            self.state = self.STATE_CAPTURING
+            self.n_steps = 4
+            self.n_beads = 2
+            self.profiles_per_bead = 3
+            self.profile_length = 2
+
+        @staticmethod
+        def attach(*, locks):
+            return FakeDataset()
+
+        def peak(self):
+            return {
+                'bead_ids': np.asarray([5, 5], dtype=np.uint32),
+                'step_indices': np.asarray([0, 1], dtype=np.uint32),
+                'timestamps': np.asarray([1.0, 2.0], dtype=np.float64),
+                'motor_z_values': np.asarray([10.0, 20.0], dtype=np.float64),
+                'valid_flags': np.asarray([1, 1], dtype=np.uint8),
+                'profiles': np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64),
+            }
+
+        def get_capacity(self):
+            return 24
+
+        def close(self):
+            pass
+
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_generation_phase = 'capturing'
+    ui_manager.locks = {}
+    monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
+    monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
+
+    ui_manager._update_zlut_generation_dialog()
+
+    preview_call = ui_manager._zlut_generation_dialog.preview_widget.preview_calls[-1]
+    assert preview_call['mode'] == 'Raw sweep'
+    assert preview_call['expected_capture_count'] == 12

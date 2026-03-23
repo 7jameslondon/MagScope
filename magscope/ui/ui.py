@@ -1518,6 +1518,7 @@ class UIManager(ManagerProcessBase):
         selected_bead_id = None
         preview_image = None
         mode = 'Raw sweep'
+        expected_capture_count = int(dataset.n_steps) * int(dataset.profiles_per_bead)
         if count > 0:
             bead_ids = snapshot['bead_ids']
             if self._zlut_evaluation_selected_bead_id is not None and self._zlut_evaluation_selected_bead_id in bead_ids:
@@ -1555,6 +1556,7 @@ class UIManager(ManagerProcessBase):
             mode=mode,
             motor_z_min=motor_z_min,
             motor_z_max=motor_z_max,
+            expected_capture_count=expected_capture_count,
         )
 
 class LoadingWindow(QMainWindow):
