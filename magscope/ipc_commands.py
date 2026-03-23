@@ -211,6 +211,8 @@ class UpdateZLUTGenerationStateCommand(Command):
     running: bool = False
     can_cancel: bool = False
     phase: str = 'idle'
+    z_axis_min_nm: float | None = None
+    z_axis_max_nm: float | None = None
 
 
 @dataclass(frozen=True)

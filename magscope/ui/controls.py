@@ -2241,6 +2241,11 @@ class ZLUTSweepPreviewWidget(QWidget):
         motor_z_min: float | None,
         motor_z_max: float | None,
         expected_capture_count: int | None = None,
+        x_axis_label: str = 'Z Position (nm)',
+        x_axis_min: float | None = None,
+        x_axis_max: float | None = None,
+        image_x_min: float | None = None,
+        image_x_max: float | None = None,
     ) -> None:
         state_text = self._STATE_LABELS.get(int(state), str(state))
         summary_parts = [
@@ -2262,6 +2267,8 @@ class ZLUTSweepPreviewWidget(QWidget):
             self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
             self._image.set_clim(0.0, 1.0)
             self.axes.set_title('No sweep preview available')
+            self.axes.set_xlabel(x_axis_label)
+            self.axes.set_ylabel('Profile Radius (px)')
             self.axes.set_xlim(-0.5, 0.5)
             self.axes.set_ylim(-0.5, 0.5)
             self.canvas.draw()
@@ -2274,6 +2281,8 @@ class ZLUTSweepPreviewWidget(QWidget):
             self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
             self._image.set_clim(0.0, 1.0)
             self.axes.set_title('No finite sweep data available')
+            self.axes.set_xlabel(x_axis_label)
+            self.axes.set_ylabel('Profile Radius (px)')
             self.axes.set_xlim(-0.5, 0.5)
             self.axes.set_ylim(-0.5, 0.5)
             self.canvas.draw()
@@ -2284,13 +2293,21 @@ class ZLUTSweepPreviewWidget(QWidget):
         vmax = float(np.max(finite_values))
         if np.isclose(vmin, vmax):
             vmax = vmin + 1.0
+
+        extent_x_min = -0.5
+        extent_x_max = finite.shape[1] - 0.5
+        if image_x_min is not None and image_x_max is not None:
+            extent_x_min = float(image_x_min)
+            extent_x_max = float(image_x_max)
         self._image.set_data(finite)
-        self._image.set_extent((-0.5, finite.shape[1] - 0.5, -0.5, finite.shape[0] - 0.5))
+        self._image.set_extent((extent_x_min, extent_x_max, -0.5, finite.shape[0] - 0.5))
         self._image.set_clim(vmin, vmax)
         self.axes.set_title(f'{mode} preview')
-        self.axes.set_xlabel('Capture Index' if mode == 'Raw sweep' else 'Step Index')
+        self.axes.set_xlabel(x_axis_label)
         self.axes.set_ylabel('Profile Radius (px)')
-        if mode == 'Raw sweep' and expected_capture_count is not None and expected_capture_count > 0:
+        if x_axis_min is not None and x_axis_max is not None:
+            self.axes.set_xlim(float(x_axis_min), float(x_axis_max))
+        elif mode == 'Raw sweep' and expected_capture_count is not None and expected_capture_count > 0:
             self.axes.set_xlim(-0.5, expected_capture_count - 0.5)
         else:
             self.axes.set_xlim(-0.5, finite.shape[1] - 0.5)

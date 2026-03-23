@@ -113,6 +113,8 @@ class UIManager(ManagerProcessBase):
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
         self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
         self._zlut_generation_phase = 'idle'
+        self._zlut_generation_z_axis_min_nm: float | None = None
+        self._zlut_generation_z_axis_max_nm: float | None = None
         self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
         self._zlut_evaluation_bead_ids: list[int] = []
         self._zlut_evaluation_selected_bead_id: int | None = None
@@ -255,6 +257,8 @@ class UIManager(ManagerProcessBase):
 
         self._detach_zlut_sweep_dataset()
         self._zlut_generation_phase = 'idle'
+        self._zlut_generation_z_axis_min_nm = None
+        self._zlut_generation_z_axis_max_nm = None
         self._zlut_evaluation_bead_ids = []
         self._zlut_evaluation_selected_bead_id = None
         if self._zlut_generation_dialog is not None:
@@ -1399,10 +1403,14 @@ class UIManager(ManagerProcessBase):
         running: bool = False,
         can_cancel: bool = False,
         phase: str = 'idle',
+        z_axis_min_nm: float | None = None,
+        z_axis_max_nm: float | None = None,
     ) -> None:
         if self.controls is None:
             return
         self._zlut_generation_phase = phase
+        self._zlut_generation_z_axis_min_nm = z_axis_min_nm
+        self._zlut_generation_z_axis_max_nm = z_axis_max_nm
         self.controls.z_lut_generation_panel.update_state(
             status,
             detail,
@@ -1519,6 +1527,10 @@ class UIManager(ManagerProcessBase):
         preview_image = None
         mode = 'Raw sweep'
         expected_capture_count = int(dataset.n_steps) * int(dataset.profiles_per_bead)
+        x_axis_min = self._zlut_generation_z_axis_min_nm
+        x_axis_max = self._zlut_generation_z_axis_max_nm
+        image_x_min = None
+        image_x_max = None
         if count > 0:
             bead_ids = snapshot['bead_ids']
             if self._zlut_evaluation_selected_bead_id is not None and self._zlut_evaluation_selected_bead_id in bead_ids:
@@ -1528,20 +1540,40 @@ class UIManager(ManagerProcessBase):
             selected_rows = bead_ids == selected_bead_id
             profiles = snapshot['profiles'][selected_rows]
             step_indices = snapshot['step_indices'][selected_rows]
+            selected_motor_z_values = snapshot['motor_z_values'][selected_rows]
             if profiles.size > 0:
                 if dataset.state == ZLUTSweepDataset.STATE_COMPLETE:
                     mode = 'Averaged sweep'
                     unique_steps = np.unique(step_indices)
                     averaged_profiles = []
+                    averaged_z_positions = []
                     for step_index in unique_steps:
                         step_profiles = profiles[step_indices == step_index]
+                        step_motor_z_values = selected_motor_z_values[step_indices == step_index]
                         if step_profiles.size == 0:
                             continue
                         averaged_profiles.append(np.nanmean(step_profiles, axis=0))
+                        averaged_z_positions.append(float(np.nanmean(step_motor_z_values)))
                     if averaged_profiles:
-                        preview_image = np.asarray(averaged_profiles, dtype=np.float64).T
+                        averaged_profiles_array = np.asarray(averaged_profiles, dtype=np.float64)
+                        averaged_z_positions_array = np.asarray(averaged_z_positions, dtype=np.float64)
+                        order = np.argsort(averaged_z_positions_array)
+                        preview_image = averaged_profiles_array[order].T
+                        x_axis_min = float(np.min(averaged_z_positions_array))
+                        x_axis_max = float(np.max(averaged_z_positions_array))
+                        image_x_min = x_axis_min
+                        image_x_max = x_axis_max
                 else:
                     preview_image = np.asarray(profiles, dtype=np.float64).T
+                    if (
+                        x_axis_min is not None
+                        and x_axis_max is not None
+                        and expected_capture_count > 0
+                        and preview_image.shape[1] > 0
+                    ):
+                        growth_fraction = min(preview_image.shape[1] / expected_capture_count, 1.0)
+                        image_x_min = float(x_axis_min)
+                        image_x_max = float(x_axis_min + growth_fraction * (x_axis_max - x_axis_min))
 
         self._zlut_generation_dialog.preview_widget.update_preview(
             state=dataset.state,
@@ -1557,6 +1589,11 @@ class UIManager(ManagerProcessBase):
             motor_z_min=motor_z_min,
             motor_z_max=motor_z_max,
             expected_capture_count=expected_capture_count,
+            x_axis_label='Z Position (nm)',
+            x_axis_min=x_axis_min,
+            x_axis_max=x_axis_max,
+            image_x_min=image_x_min,
+            image_x_max=image_x_max,
         )
 
 class LoadingWindow(QMainWindow):
