@@ -135,7 +135,11 @@ class FocusMotorControls(magscope.ControlPanelBase):
         if data.size == 0:
             return
 
-        _, position, target, is_moving_value = data[-1, :]
+        finite_rows = np.isfinite(data[:, 0])
+        if not np.any(finite_rows):
+            return
+
+        _, position, target, is_moving_value = data[finite_rows][-1, :]
         is_moving = bool(round(is_moving_value))
 
         # Update GUI
