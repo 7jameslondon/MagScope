@@ -207,6 +207,63 @@ class FakeZLutGenerationPanel:
         )
 
 
+class FakeZLutPreviewWidget:
+    def __init__(self):
+        self.clear_calls = []
+        self.preview_calls = []
+
+    def clear(self, message='Waiting for Z-LUT sweep data...') -> None:
+        self.clear_calls.append(message)
+
+    def update_preview(self, **kwargs) -> None:
+        self.preview_calls.append(kwargs)
+
+
+class FakeZLutGenerationDialog:
+    def __init__(self):
+        self.state_calls = []
+        self.progress_calls = []
+        self.preview_widget = FakeZLutPreviewWidget()
+        self.visible = True
+        self.show_calls = 0
+        self.raise_calls = 0
+        self.activate_calls = 0
+
+    def show(self) -> None:
+        self.show_calls += 1
+        self.visible = True
+
+    def raise_(self) -> None:
+        self.raise_calls += 1
+
+    def activateWindow(self) -> None:
+        self.activate_calls += 1
+
+    def isVisible(self) -> bool:
+        return self.visible
+
+    def update_state(self, status, detail=None, *, running=False, can_cancel=False) -> None:
+        self.state_calls.append((status, detail, running, can_cancel))
+
+    def update_progress(
+        self,
+        current_step,
+        total_steps,
+        capture_count,
+        capture_capacity,
+        motor_z_value=None,
+    ) -> None:
+        self.progress_calls.append(
+            (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
+        )
+
+    def close(self) -> None:
+        self.visible = False
+
+    def force_close(self) -> None:
+        self.visible = False
+
+
 class FakeControls:
     def __init__(self):
         self.status_panel = FakeStatusPanel()
@@ -1158,3 +1215,107 @@ def test_update_zlut_generation_progress_forwards_to_panel(ui_manager):
     assert ui_manager.controls.z_lut_generation_panel.progress_calls == [
         (1, 4, 8, 32, 12.5)
     ]
+
+
+def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+
+    ui_manager.update_zlut_generation_state(
+        'Running',
+        detail='Collecting step 1',
+        running=True,
+        can_cancel=True,
+    )
+
+    assert ui_manager._zlut_generation_dialog.state_calls == [
+        ('Running', 'Collecting step 1', True, True)
+    ]
+
+
+def test_update_zlut_generation_progress_forwards_to_dialog(ui_manager):
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+
+    ui_manager.update_zlut_generation_progress(1, 4, 8, 32, 12.5)
+
+    assert ui_manager._zlut_generation_dialog.progress_calls == [
+        (1, 4, 8, 32, 12.5)
+    ]
+
+
+def test_update_zlut_generation_dialog_clears_preview_when_dataset_missing(ui_manager, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class MissingDataset:
+        @staticmethod
+        def attach(*, locks):
+            raise FileNotFoundError('missing')
+
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager.locks = {}
+    monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', MissingDataset)
+    monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
+
+    ui_manager._update_zlut_generation_dialog()
+
+    assert ui_manager._zlut_generation_dialog.preview_widget.clear_calls == [
+        'Waiting for Z-LUT sweep data...'
+    ]
+
+
+def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class FakeDataset:
+        STATE_COMPLETE = 4
+
+        def __init__(self):
+            self.state = self.STATE_COMPLETE
+            self.n_steps = 2
+            self.n_beads = 2
+            self.profiles_per_bead = 2
+            self.profile_length = 3
+
+        @staticmethod
+        def attach(*, locks):
+            return FakeDataset()
+
+        def peak(self):
+            return {
+                'bead_ids': np.asarray([5, 5, 7], dtype=np.uint32),
+                'step_indices': np.asarray([0, 1, 0], dtype=np.uint32),
+                'timestamps': np.asarray([1.0, 2.0, 3.0], dtype=np.float64),
+                'motor_z_values': np.asarray([10.0, 20.0, 30.0], dtype=np.float64),
+                'valid_flags': np.asarray([1, 1, 1], dtype=np.uint8),
+                'profiles': np.asarray(
+                    [
+                        [1.0, 2.0, 3.0],
+                        [4.0, 5.0, 6.0],
+                        [7.0, 8.0, 9.0],
+                    ],
+                    dtype=np.float64,
+                ),
+            }
+
+        def get_capacity(self):
+            return 8
+
+        def close(self):
+            pass
+
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager.locks = {}
+    monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
+    monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
+
+    ui_manager._update_zlut_generation_dialog()
+
+    preview_call = ui_manager._zlut_generation_dialog.preview_widget.preview_calls[-1]
+    assert preview_call['state'] == FakeDataset.STATE_COMPLETE
+    assert preview_call['count'] == 3
+    assert preview_call['capacity'] == 8
+    assert preview_call['selected_bead_id'] == 5
+    assert preview_call['mode'] == 'Averaged sweep'
+    np.testing.assert_allclose(
+        preview_call['preview_image'],
+        np.asarray([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]], dtype=np.float64),
+    )

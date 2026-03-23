@@ -25,6 +25,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -2197,6 +2198,219 @@ class ZLUTGenerationPanel(ControlPanelBase):
         if motor_z_value is not None:
             progress_text += f' | Z = {motor_z_value:.1f} nm'
         self.progress_label.setText(progress_text)
+
+
+class ZLUTSweepPreviewWidget(QWidget):
+    _STATE_LABELS = {
+        0: 'Absent',
+        1: 'Creating',
+        2: 'Ready',
+        3: 'Capturing',
+        4: 'Complete',
+        5: 'Detaching',
+        6: 'Failed',
+        7: 'Destroyed',
+    }
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+
+        self.summary_label = QLabel('Waiting for Z-LUT sweep data...')
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(280)
+        layout.addWidget(self.canvas, 1)
+
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_xlabel('Capture Index')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self._image = self.axes.imshow(
+            np.zeros((1, 1), dtype=np.float64),
+            cmap='gray',
+            aspect='auto',
+            interpolation='nearest',
+            origin='lower',
+        )
+        self.axes.set_title('No sweep preview available')
+        self.figure.tight_layout()
+
+    def clear(self, message: str = 'Waiting for Z-LUT sweep data...') -> None:
+        self.summary_label.setText(message)
+        self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+        self._image.set_clim(0.0, 1.0)
+        self.axes.set_title('No sweep preview available')
+        self.axes.set_xlabel('Capture Index')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(-0.5, 0.5)
+        self.axes.set_ylim(-0.5, 0.5)
+        self.canvas.draw()
+
+    def update_preview(
+        self,
+        *,
+        state: int,
+        count: int,
+        capacity: int,
+        n_steps: int,
+        n_beads: int,
+        profiles_per_bead: int,
+        profile_length: int,
+        preview_image: np.ndarray | None,
+        selected_bead_id: int | None,
+        mode: str,
+        motor_z_min: float | None,
+        motor_z_max: float | None,
+    ) -> None:
+        state_text = self._STATE_LABELS.get(int(state), str(state))
+        summary_parts = [
+            f'State: {state_text}',
+            f'Captures: {count} / {capacity}',
+            f'Steps: {n_steps}',
+            f'Beads: {n_beads}',
+            f'Profiles/bead: {profiles_per_bead}',
+            f'Profile length: {profile_length}',
+        ]
+        if selected_bead_id is not None:
+            summary_parts.append(f'Preview bead: {selected_bead_id}')
+        if motor_z_min is not None and motor_z_max is not None:
+            summary_parts.append(f'Observed Z: {motor_z_min:.1f} to {motor_z_max:.1f} nm')
+        self.summary_label.setText(' | '.join(summary_parts))
+
+        if preview_image is None or preview_image.size == 0:
+            self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_clim(0.0, 1.0)
+            self.axes.set_title('No sweep preview available')
+            self.axes.set_xlim(-0.5, 0.5)
+            self.axes.set_ylim(-0.5, 0.5)
+            self.canvas.draw()
+            return
+
+        finite = np.asarray(preview_image, dtype=np.float64)
+        finite_mask = np.isfinite(finite)
+        if not np.any(finite_mask):
+            self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_clim(0.0, 1.0)
+            self.axes.set_title('No finite sweep data available')
+            self.axes.set_xlim(-0.5, 0.5)
+            self.axes.set_ylim(-0.5, 0.5)
+            self.canvas.draw()
+            return
+
+        finite_values = finite[finite_mask]
+        vmin = float(np.min(finite_values))
+        vmax = float(np.max(finite_values))
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1.0
+        self._image.set_data(finite)
+        self._image.set_clim(vmin, vmax)
+        self.axes.set_title(f'{mode} preview')
+        self.axes.set_xlabel('Capture Index' if mode == 'Raw sweep' else 'Step Index')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(-0.5, finite.shape[1] - 0.5)
+        self.axes.set_ylim(-0.5, finite.shape[0] - 0.5)
+        self.canvas.draw()
+
+
+class ZLUTGenerationDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Z-LUT Generation')
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.resize(900, 700)
+
+        self._running = False
+
+        layout = QVBoxLayout(self)
+
+        self.status_label = QLabel('Preparing Z-LUT generation...')
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        self.detail_label = QLabel('')
+        self.detail_label.setWordWrap(True)
+        layout.addWidget(self.detail_label)
+
+        self.progress_label = QLabel('0 / 0 steps')
+        layout.addWidget(self.progress_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
+        self.preview_widget = ZLUTSweepPreviewWidget(self)
+        layout.addWidget(self.preview_widget, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self._handle_cancel_clicked)
+        button_row.addWidget(self.cancel_button)
+        self.close_button = QPushButton('Close')
+        self.close_button.clicked.connect(self.close)
+        self.close_button.setEnabled(False)
+        button_row.addWidget(self.close_button)
+        layout.addLayout(button_row)
+
+        self._cancel_callback = None
+
+    def set_cancel_callback(self, callback) -> None:
+        self._cancel_callback = callback
+
+    def _handle_cancel_clicked(self) -> None:
+        if self._cancel_callback is not None:
+            self._cancel_callback()
+
+    def update_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        *,
+        running: bool = False,
+        can_cancel: bool = False,
+    ) -> None:
+        self._running = running
+        self.status_label.setText(status)
+        self.detail_label.setText(detail or '')
+        self.cancel_button.setEnabled(can_cancel)
+        self.close_button.setEnabled(not running)
+
+    def update_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        progress_total = max(total_steps, 1)
+        progress_value = min(max(current_step, 0), progress_total)
+        self.progress_bar.setRange(0, progress_total)
+        self.progress_bar.setValue(progress_value)
+
+        progress_text = f'{current_step} / {total_steps} steps'
+        if capture_capacity > 0:
+            progress_text += f' | {capture_count} / {capture_capacity} captures'
+        if motor_z_value is not None:
+            progress_text += f' | Z = {motor_z_value:.1f} nm'
+        self.progress_label.setText(progress_text)
+
+    def force_close(self) -> None:
+        self._running = False
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        if self._running:
+            event.ignore()
+            return
+        super().closeEvent(event)
 
 
 class ZLUTPanel(ControlPanelBase):

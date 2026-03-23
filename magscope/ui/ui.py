@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from magscope._logging import get_logger
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
-from magscope.datatypes import VideoBuffer
+from magscope.datatypes import VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
 from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
@@ -52,6 +52,7 @@ from magscope.ui.controls import (
     ResetPanel,
     TrackingOptionsPanel,
     XYLockPanel,
+    ZLUTGenerationDialog,
     ZLUTGenerationPanel,
     ZLUTPanel,
     ZLockPanel,
@@ -108,6 +109,9 @@ class UIManager(ManagerProcessBase):
         self._settings_persistence_warning_shown = False
         self._bead_roi_capacity = 10000
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
+        self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
+        self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
+        self._zlut_preview_last_poll: float = 0.0
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -244,6 +248,11 @@ class UIManager(ManagerProcessBase):
         for window in self.windows:
             window.close()
 
+        self._detach_zlut_sweep_dataset()
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.force_close()
+            self._zlut_generation_dialog = None
+
     def do_main_loop(self):
         # Because the UIManager is a special case with a GUI
         # the main loop is actually called by a timer, not the
@@ -254,6 +263,7 @@ class UIManager(ManagerProcessBase):
             self.update_video_buffer_status()
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
+            self._update_zlut_generation_dialog()
             self.receive_ipc()
 
     def _handle_timer_exception(self, exc: BaseException) -> None:
@@ -1299,7 +1309,23 @@ class UIManager(ManagerProcessBase):
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
+    def show_zlut_generation_dialog(self) -> None:
+        if not self.windows:
+            return
+        self._detach_zlut_sweep_dataset()
+        if self._zlut_generation_dialog is None:
+            dialog = ZLUTGenerationDialog(self.windows[0])
+            dialog.set_cancel_callback(self.cancel_zlut_generation)
+            dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
+            self._zlut_generation_dialog = dialog
+        self._zlut_generation_dialog.show()
+        self._zlut_generation_dialog.raise_()
+        self._zlut_generation_dialog.activateWindow()
+        self._zlut_generation_dialog.preview_widget.clear('Waiting for Z-LUT sweep data...')
+        self._zlut_preview_last_poll = 0.0
+
     def start_zlut_generation(self, *, start_nm: float, step_nm: float, stop_nm: float) -> None:
+        self.show_zlut_generation_dialog()
         self.send_ipc(
             StartZLUTGenerationCommand(
                 start_nm=float(start_nm),
@@ -1348,6 +1374,13 @@ class UIManager(ManagerProcessBase):
             running=running,
             can_cancel=can_cancel,
         )
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_state(
+                status,
+                detail,
+                running=running,
+                can_cancel=can_cancel,
+            )
 
     @register_ipc_command(UpdateZLUTGenerationProgressCommand)
     def update_zlut_generation_progress(
@@ -1366,6 +1399,94 @@ class UIManager(ManagerProcessBase):
             capture_count,
             capture_capacity,
             motor_z_value,
+        )
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_progress(
+                current_step,
+                total_steps,
+                capture_count,
+                capture_capacity,
+                motor_z_value,
+            )
+
+    def _handle_zlut_dialog_destroyed(self) -> None:
+        self._zlut_generation_dialog = None
+
+    def _detach_zlut_sweep_dataset(self) -> None:
+        if self._zlut_sweep_dataset is not None:
+            self._zlut_sweep_dataset.close()
+            self._zlut_sweep_dataset = None
+
+    def _update_zlut_generation_dialog(self) -> None:
+        if self._zlut_generation_dialog is None or not self._zlut_generation_dialog.isVisible():
+            return
+        now = time()
+        if now - self._zlut_preview_last_poll < 1.0:
+            return
+        self._zlut_preview_last_poll = now
+
+        if self._zlut_sweep_dataset is None:
+            try:
+                self._zlut_sweep_dataset = ZLUTSweepDataset.attach(locks=self.locks)
+            except FileNotFoundError:
+                self._zlut_generation_dialog.preview_widget.clear('Waiting for Z-LUT sweep data...')
+                return
+
+        try:
+            self._refresh_zlut_preview_from_dataset()
+        except FileNotFoundError:
+            self._detach_zlut_sweep_dataset()
+            self._zlut_generation_dialog.preview_widget.clear('Waiting for Z-LUT sweep data...')
+
+    def _refresh_zlut_preview_from_dataset(self) -> None:
+        if self._zlut_generation_dialog is None or self._zlut_sweep_dataset is None:
+            return
+
+        dataset = self._zlut_sweep_dataset
+        snapshot = dataset.peak()
+        count = snapshot['bead_ids'].shape[0]
+        motor_z_values = snapshot['motor_z_values']
+        finite_motor_z = motor_z_values[np.isfinite(motor_z_values)]
+        motor_z_min = float(np.min(finite_motor_z)) if finite_motor_z.size else None
+        motor_z_max = float(np.max(finite_motor_z)) if finite_motor_z.size else None
+
+        selected_bead_id = None
+        preview_image = None
+        mode = 'Raw sweep'
+        if count > 0:
+            bead_ids = snapshot['bead_ids']
+            selected_bead_id = int(np.min(bead_ids))
+            selected_rows = bead_ids == selected_bead_id
+            profiles = snapshot['profiles'][selected_rows]
+            step_indices = snapshot['step_indices'][selected_rows]
+            if profiles.size > 0:
+                if dataset.state == ZLUTSweepDataset.STATE_COMPLETE:
+                    mode = 'Averaged sweep'
+                    unique_steps = np.unique(step_indices)
+                    averaged_profiles = []
+                    for step_index in unique_steps:
+                        step_profiles = profiles[step_indices == step_index]
+                        if step_profiles.size == 0:
+                            continue
+                        averaged_profiles.append(np.nanmean(step_profiles, axis=0))
+                    if averaged_profiles:
+                        preview_image = np.asarray(averaged_profiles, dtype=np.float64).T
+                else:
+                    preview_image = np.asarray(profiles, dtype=np.float64).T
+
+        self._zlut_generation_dialog.preview_widget.update_preview(
+            state=dataset.state,
+            count=count,
+            capacity=dataset.get_capacity(),
+            n_steps=dataset.n_steps,
+            n_beads=dataset.n_beads,
+            profiles_per_bead=dataset.profiles_per_bead,
+            profile_length=dataset.profile_length,
+            preview_image=preview_image,
+            selected_bead_id=selected_bead_id,
+            mode=mode,
+            motor_z_min=motor_z_min,
+            motor_z_max=motor_z_max,
         )
 
 class LoadingWindow(QMainWindow):
