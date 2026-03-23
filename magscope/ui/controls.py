@@ -2110,13 +2110,33 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.layout().addWidget(self.stop_input)
 
         # Generate button
-        button = QPushButton('Generate')
-        button.clicked.connect(self.generate_callback)
-        self.layout().addWidget(button)
+        buttons_row = QHBoxLayout()
+        self.layout().addLayout(buttons_row)
 
-        note = QLabel('Temporary development behavior: Generate prints the measured profile length.')
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        self.generate_button = QPushButton('Generate')
+        self.generate_button.clicked.connect(self.generate_callback)
+        buttons_row.addWidget(self.generate_button)
+
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self.cancel_callback)
+        self.cancel_button.setEnabled(False)
+        buttons_row.addWidget(self.cancel_button)
+
+        self.status_label = QLabel('Idle')
+        self.status_label.setWordWrap(True)
+        self.layout().addWidget(self.status_label)
+
+        self.detail_label = QLabel('')
+        self.detail_label.setWordWrap(True)
+        self.layout().addWidget(self.detail_label)
+
+        self.progress_label = QLabel('0 / 0 steps')
+        self.layout().addWidget(self.progress_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.layout().addWidget(self.progress_bar)
 
     def generate_callback(self):
         # Start
@@ -2140,7 +2160,43 @@ class ZLUTGenerationPanel(ControlPanelBase):
         except ValueError:
             return
 
-        self.manager.request_profile_length()
+        self.manager.start_zlut_generation(start_nm=start_nm, step_nm=step_nm, stop_nm=stop_nm)
+
+    def cancel_callback(self):
+        self.manager.cancel_zlut_generation()
+
+    def update_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        *,
+        running: bool = False,
+        can_cancel: bool = False,
+    ) -> None:
+        self.status_label.setText(status)
+        self.detail_label.setText(detail or '')
+        self.generate_button.setEnabled(not running)
+        self.cancel_button.setEnabled(can_cancel)
+
+    def update_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        progress_total = max(total_steps, 1)
+        progress_value = min(max(current_step, 0), progress_total)
+        self.progress_bar.setRange(0, progress_total)
+        self.progress_bar.setValue(progress_value)
+
+        progress_text = f'{current_step} / {total_steps} steps'
+        if capture_capacity > 0:
+            progress_text += f' | {capture_count} / {capture_capacity} captures'
+        if motor_z_value is not None:
+            progress_text += f' | Z = {motor_z_value:.1f} nm'
+        self.progress_label.setText(progress_text)
 
 
 class ZLUTPanel(ControlPanelBase):

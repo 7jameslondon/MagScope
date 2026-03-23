@@ -14,13 +14,16 @@ import numpy as np
 import tifffile
 
 from magscope._logging import get_logger
-from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer
+from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (LoadZLUTCommand, ReportProfileLengthCommand,
-                                   RequestProfileLengthCommand, SetSettingsCommand,
+from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, DisarmZLUTSweepCaptureCommand,
+                                   LoadZLUTCommand, ReportProfileLengthCommand,
+                                   ReportZLUTProfileLengthCommand, RequestProfileLengthCommand,
+                                   RequestZLUTProfileLengthCommand, SetSettingsCommand,
                                    ShowMessageCommand, UnloadZLUTCommand,
                                    UpdateTrackingOptionsCommand, UpdateWaitingCommand,
-                                   UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand)
+                                   UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand,
+                                   ZLUTSweepCaptureCompleteCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.settings import MagScopeSettings
 from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
@@ -49,6 +52,11 @@ class VideoProcessorManager(ManagerProcessBase):
         self._profile_length_queue: QueueType | None = None
         self._pending_profile_length_request = False
         self._warning_queue: QueueType | None = None
+        self._zlut_capture_complete_queue: QueueType | None = None
+        self._zlut_capture_motor_z_value: float | None = None
+        self._zlut_capture_step_index: int | None = None
+        self._zlut_profile_length_queue: QueueType | None = None
+        self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
         self._waiting_for_acquisition: bool | None = None
 
@@ -75,6 +83,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tasks = Queue(maxsize=self._n_workers)
         self._profile_length_queue = Queue()
         self._warning_queue = Queue()
+        self._zlut_capture_complete_queue = Queue()
+        self._zlut_profile_length_queue = Queue()
 
         # Create the workers
         for _ in range(self._n_workers):
@@ -85,8 +95,10 @@ class VideoProcessorManager(ManagerProcessBase):
                                   gpu_lock=self._gpu_lock,
                                  profile_length_queue=self._profile_length_queue,
                                   warning_queue=self._warning_queue,
-                                  live_profile_enabled=self.shared_values.live_profile_enabled,
-                                  live_profile_bead=self.shared_values.live_profile_bead)
+                                  zlut_capture_complete_queue=self._zlut_capture_complete_queue,
+                                  zlut_profile_length_queue=self._zlut_profile_length_queue,
+                                   live_profile_enabled=self.shared_values.live_profile_enabled,
+                                   live_profile_bead=self.shared_values.live_profile_bead)
             self._workers.append(worker)
 
         # Start the workers
@@ -97,6 +109,8 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def do_main_loop(self):
         self._process_profile_length_reports()
+        self._process_zlut_profile_length_reports()
+        self._process_zlut_capture_reports()
         self._process_worker_warnings()
         if self._waiting_for_acquisition is not None:
             self._finish_waiting_when_ready()
@@ -221,6 +235,16 @@ class VideoProcessorManager(ManagerProcessBase):
                     break
         self._pending_profile_length_request = True
 
+    @register_ipc_command(RequestZLUTProfileLengthCommand)
+    def report_zlut_profile_length(self) -> None:
+        if self._zlut_profile_length_queue is not None:
+            while True:
+                try:
+                    self._zlut_profile_length_queue.get_nowait()
+                except Empty:
+                    break
+        self._pending_zlut_profile_length_request = True
+
     def _process_profile_length_reports(self) -> None:
         """Forward the first successful worker measurement back to the UI.
 
@@ -241,6 +265,48 @@ class VideoProcessorManager(ManagerProcessBase):
             self.send_ipc(ReportProfileLengthCommand(profile_length=int(profile_length)))
             break
 
+    def _process_zlut_profile_length_reports(self) -> None:
+        if self._zlut_profile_length_queue is None or not self._pending_zlut_profile_length_request:
+            return
+
+        while True:
+            try:
+                profile_length = self._zlut_profile_length_queue.get_nowait()
+            except Empty:
+                break
+
+            self._pending_zlut_profile_length_request = False
+            self.send_ipc(ReportZLUTProfileLengthCommand(profile_length=int(profile_length)))
+            break
+
+    @register_ipc_command(ArmZLUTSweepCaptureCommand)
+    def arm_zlut_sweep_capture(self, step_index: int, motor_z_value: float) -> None:
+        self._zlut_capture_step_index = int(step_index)
+        self._zlut_capture_motor_z_value = float(motor_z_value)
+
+    @register_ipc_command(DisarmZLUTSweepCaptureCommand)
+    def disarm_zlut_sweep_capture(self) -> None:
+        self._zlut_capture_step_index = None
+        self._zlut_capture_motor_z_value = None
+
+    def _process_zlut_capture_reports(self) -> None:
+        if self._zlut_capture_complete_queue is None:
+            return
+
+        while True:
+            try:
+                step_index, written_count, error = self._zlut_capture_complete_queue.get_nowait()
+            except Empty:
+                break
+
+            self.send_ipc(
+                ZLUTSweepCaptureCompleteCommand(
+                    step_index=int(step_index),
+                    written_count=int(written_count),
+                    error=error,
+                )
+            )
+
     def _add_task(self):
         bead_ids, bead_rois = self.get_cached_bead_rois()
         kwargs = {
@@ -252,13 +318,24 @@ class VideoProcessorManager(ManagerProcessBase):
             'magnification': self.settings['magnification'],
             'nm_per_px': self.camera_type.nm_per_px,
             'report_profile_length': self._pending_profile_length_request,
+            'report_zlut_profile_length': self._pending_zlut_profile_length_request,
             'save_profiles': self._save_profiles,
             'tracking_options': copy.deepcopy(self._tracking_options),
             'zlut': self._zlut
         }
+        capture_step_index = self._zlut_capture_step_index
+        capture_motor_z_value = self._zlut_capture_motor_z_value
+        if capture_step_index is not None and capture_motor_z_value is not None:
+            kwargs['zlut_capture'] = {
+                'step_index': int(capture_step_index),
+                'motor_z_value': float(capture_motor_z_value),
+            }
 
         try:
             self._tasks.put_nowait(kwargs)
+            if 'zlut_capture' in kwargs:
+                self._zlut_capture_step_index = None
+                self._zlut_capture_motor_z_value = None
             return True
         except Full:
             logger.warning('Skipping video processing task because worker queue is full')
@@ -302,6 +379,8 @@ class VideoWorker(Process):
                  gpu_lock: Lock,
                  profile_length_queue: QueueType | None,
                  warning_queue: QueueType | None,
+                 zlut_capture_complete_queue: QueueType | None,
+                 zlut_profile_length_queue: QueueType | None,
                  live_profile_enabled: ValueTypeUI8,
                  live_profile_bead: ValueTypeInt):
         super().__init__()
@@ -312,10 +391,13 @@ class VideoWorker(Process):
         self._busy_count: ValueTypeUI8 = busy_count
         self._profile_length_queue: QueueType | None = profile_length_queue
         self._warning_queue: QueueType | None = warning_queue
+        self._zlut_capture_complete_queue: QueueType | None = zlut_capture_complete_queue
+        self._zlut_profile_length_queue: QueueType | None = zlut_profile_length_queue
         self._live_profile_enabled = live_profile_enabled
         self._live_profile_bead = live_profile_bead
         self._video_buffer: VideoBuffer | None = None
         self._tracks_buffer: MatrixBuffer | None = None
+        self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
 
     def run(self):
         self._live_profile_buffer = LiveProfileBuffer(
@@ -344,6 +426,8 @@ class VideoWorker(Process):
                 logger.exception('Error in video processing: %s', e)
             with self._busy_count.get_lock():
                 self._busy_count.value -= 1
+        if self._zlut_sweep_dataset is not None:
+            self._zlut_sweep_dataset.close()
 
     def process(self, kwargs):
         acquisition_dir: str = kwargs['acquisition_dir']
@@ -356,7 +440,9 @@ class VideoWorker(Process):
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
         report_profile_length: bool = kwargs.get('report_profile_length', False)
+        report_zlut_profile_length: bool = kwargs.get('report_zlut_profile_length', False)
         tracking_options: dict = kwargs.get('tracking_options', {}) or {}
+        zlut_capture: dict | None = kwargs.get('zlut_capture')
 
         if bead_ids.size == 0 or bead_rois.shape[0] == 0:
             bead_ids = None
@@ -396,6 +482,57 @@ class VideoWorker(Process):
                 self._profile_length_queue.put_nowait(int(profiles.shape[0]))
             except Full:
                 logger.debug('Dropping profile length report because queue is full')
+
+        def _report_zlut_profile_length_if_requested(profiles: np.ndarray) -> None:
+            if not report_zlut_profile_length or self._zlut_profile_length_queue is None:
+                return
+            if not hasattr(profiles, 'shape') or len(profiles.shape) == 0:
+                return
+            try:
+                self._zlut_profile_length_queue.put_nowait(int(profiles.shape[0]))
+            except Full:
+                logger.debug('Dropping Z-LUT profile length report because queue is full')
+
+        def _capture_zlut_sweep_if_requested(
+            timestamps: np.ndarray,
+            bead_ids: np.ndarray,
+            profiles: np.ndarray,
+        ) -> None:
+            if zlut_capture is None or self._zlut_capture_complete_queue is None:
+                return
+            try:
+                if self._zlut_sweep_dataset is None:
+                    self._zlut_sweep_dataset = ZLUTSweepDataset.attach(locks=self._locks)
+                profile_rows = np.asarray(profiles, dtype=np.float64).T
+                bead_id_rows = np.asarray(bead_ids, dtype=np.uint32)
+                timestamp_rows = np.asarray(timestamps, dtype=np.float64)
+                batch_size = bead_id_rows.shape[0]
+                self._zlut_sweep_dataset.write(
+                    bead_ids=bead_id_rows,
+                    step_indices=np.full((batch_size,), zlut_capture['step_index'], dtype=np.uint32),
+                    timestamps=timestamp_rows,
+                    motor_z_values=np.full((batch_size,), zlut_capture['motor_z_value'], dtype=np.float64),
+                    valid_flags=np.ones((batch_size,), dtype=np.uint8),
+                    profiles=profile_rows,
+                )
+                self._zlut_capture_complete_queue.put_nowait(
+                    (zlut_capture['step_index'], batch_size, None)
+                )
+            except Full:
+                logger.debug('Dropping Z-LUT capture completion because queue is full')
+            except Exception as exc:
+                reason = str(exc).strip() or repr(exc)
+                logger.exception('Failed to capture Z-LUT sweep step: %s', reason)
+                try:
+                    self._zlut_capture_complete_queue.put_nowait(
+                        (zlut_capture['step_index'], 0, reason)
+                    )
+                except Full:
+                    logger.debug('Dropping Z-LUT capture error because queue is full')
+            finally:
+                if self._zlut_sweep_dataset is not None:
+                    self._zlut_sweep_dataset.close()
+                    self._zlut_sweep_dataset = None
 
         def save_video_full(first_timestamp, stack, timestamps_str,):
             filepath = os.path.join(acquisition_dir, f'Video {first_timestamp}.tiff')
@@ -478,6 +615,8 @@ class VideoWorker(Process):
             tracks = np.column_stack((t, x, y, z, b, roi_x, roi_y))
             _update_live_profile(t, b, profiles)
             _report_profile_length_if_requested(profiles)
+            _report_zlut_profile_length_if_requested(profiles)
+            _capture_zlut_sweep_if_requested(t, b, profiles)
             return tracks, profiles
 
         def process_mode_tracks():

@@ -14,7 +14,9 @@ from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
+    CancelZLUTGenerationCommand,
     RemoveBeadsFromPendingMovesCommand,
+    StartZLUTGenerationCommand,
     UpdateBeadRoisCommand,
 )
 from magscope.settings import MagScopeSettings
@@ -186,6 +188,23 @@ class FakeBeadSelectionPanel:
 class FakeZLutGenerationPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
+        self.state_calls = []
+        self.progress_calls = []
+
+    def update_state(self, status, detail=None, *, running=False, can_cancel=False) -> None:
+        self.state_calls.append((status, detail, running, can_cancel))
+
+    def update_progress(
+        self,
+        current_step,
+        total_steps,
+        capture_count,
+        capture_capacity,
+        motor_z_value=None,
+    ) -> None:
+        self.progress_calls.append(
+            (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
+        )
 
 
 class FakeControls:
@@ -1100,3 +1119,42 @@ def test_add_bead_rolls_back_next_id_label_on_roi_update_failure(ui_manager, mon
         ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
 
     assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0
+
+
+def test_start_zlut_generation_sends_command(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+
+    ui_manager.start_zlut_generation(start_nm=1.0, step_nm=2.0, stop_nm=3.0)
+
+    assert commands == [StartZLUTGenerationCommand(start_nm=1.0, step_nm=2.0, stop_nm=3.0)]
+
+
+def test_cancel_zlut_generation_sends_command(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+
+    ui_manager.cancel_zlut_generation()
+
+    assert commands == [CancelZLUTGenerationCommand()]
+
+
+def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
+    ui_manager.update_zlut_generation_state(
+        'Running',
+        detail='Collecting step 1',
+        running=True,
+        can_cancel=True,
+    )
+
+    assert ui_manager.controls.z_lut_generation_panel.state_calls == [
+        ('Running', 'Collecting step 1', True, True)
+    ]
+
+
+def test_update_zlut_generation_progress_forwards_to_panel(ui_manager):
+    ui_manager.update_zlut_generation_progress(1, 4, 8, 32, 12.5)
+
+    assert ui_manager.controls.z_lut_generation_panel.progress_calls == [
+        (1, 4, 8, 32, 12.5)
+    ]

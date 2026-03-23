@@ -1299,6 +1299,18 @@ class UIManager(ManagerProcessBase):
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
+    def start_zlut_generation(self, *, start_nm: float, step_nm: float, stop_nm: float) -> None:
+        self.send_ipc(
+            StartZLUTGenerationCommand(
+                start_nm=float(start_nm),
+                step_nm=float(step_nm),
+                stop_nm=float(stop_nm),
+            )
+        )
+
+    def cancel_zlut_generation(self) -> None:
+        self.send_ipc(CancelZLUTGenerationCommand())
+
     def request_profile_length(self) -> None:
         self.send_ipc(RequestProfileLengthCommand())
 
@@ -1319,6 +1331,42 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:
         print(f'Temporary development behavior: profile length = {profile_length}')
+
+    @register_ipc_command(UpdateZLUTGenerationStateCommand)
+    def update_zlut_generation_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        running: bool = False,
+        can_cancel: bool = False,
+    ) -> None:
+        if self.controls is None:
+            return
+        self.controls.z_lut_generation_panel.update_state(
+            status,
+            detail,
+            running=running,
+            can_cancel=can_cancel,
+        )
+
+    @register_ipc_command(UpdateZLUTGenerationProgressCommand)
+    def update_zlut_generation_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        if self.controls is None:
+            return
+        self.controls.z_lut_generation_panel.update_progress(
+            current_step,
+            total_steps,
+            capture_count,
+            capture_capacity,
+            motor_z_value,
+        )
 
 class LoadingWindow(QMainWindow):
 

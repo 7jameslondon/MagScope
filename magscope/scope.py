@@ -71,6 +71,7 @@ from magscope.processes import InterprocessValues, ManagerProcessBase, Singleton
 from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
 from magscope.videoprocessing import VideoProcessorManager
+from magscope.zlut_generation import ZLUTGenerationManager
 
 logger = get_logger("scope")
 
@@ -105,6 +106,7 @@ class MagScope(metaclass=SingletonMeta):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self.video_processor_manager = VideoProcessorManager()
+        self.zlut_generation_manager = ZLUTGenerationManager()
         self.ui_manager = UIManager()
         self.script_manager = ScriptManager()
 
@@ -114,7 +116,13 @@ class MagScope(metaclass=SingletonMeta):
         self.command_registry: CommandRegistry = CommandRegistry()
 
         self.locks: dict[str, LockType] = {}
-        self.lock_names: list[str] = ['BeadRoiBuffer', 'LiveProfileBuffer', 'TracksBuffer', 'VideoBuffer']
+        self.lock_names: list[str] = [
+            'BeadRoiBuffer',
+            'LiveProfileBuffer',
+            'TracksBuffer',
+            'VideoBuffer',
+            'ZLUTSweepDataset',
+        ]
         self.pipes: dict[str, Connection] = {}
         self.quitting_events: dict[str, EventType] = {}
         self.shared_values: InterprocessValues = InterprocessValues()
@@ -309,6 +317,7 @@ class MagScope(metaclass=SingletonMeta):
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,
+            self.zlut_generation_manager,
             self.ui_manager,
         ]
         proc_list.extend(self._hardware.values())

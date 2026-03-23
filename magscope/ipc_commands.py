@@ -193,6 +193,35 @@ class UnloadZLUTCommand(Command):
 
 
 @dataclass(frozen=True)
+class StartZLUTGenerationCommand(Command):
+    start_nm: float
+    step_nm: float
+    stop_nm: float
+
+
+@dataclass(frozen=True)
+class CancelZLUTGenerationCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationStateCommand(Command):
+    status: str
+    detail: str | None = None
+    running: bool = False
+    can_cancel: bool = False
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationProgressCommand(Command):
+    current_step: int
+    total_steps: int
+    capture_count: int
+    capture_capacity: int
+    motor_z_value: float | None = None
+
+
+@dataclass(frozen=True)
 class RequestProfileLengthCommand(Command):
     pass
 
@@ -200,6 +229,34 @@ class RequestProfileLengthCommand(Command):
 @dataclass(frozen=True)
 class ReportProfileLengthCommand(Command):
     profile_length: int | None = None
+
+
+@dataclass(frozen=True)
+class RequestZLUTProfileLengthCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ReportZLUTProfileLengthCommand(Command):
+    profile_length: int | None = None
+
+
+@dataclass(frozen=True)
+class ArmZLUTSweepCaptureCommand(Command):
+    step_index: int
+    motor_z_value: float
+
+
+@dataclass(frozen=True)
+class DisarmZLUTSweepCaptureCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ZLUTSweepCaptureCompleteCommand(Command):
+    step_index: int
+    written_count: int
+    error: str | None = None
 
 
 @dataclass(frozen=True)

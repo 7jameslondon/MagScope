@@ -168,6 +168,10 @@ def load_scope_with_stubs(monkeypatch):
             self.controls_to_add = []
             self.plots_to_add = []
 
+    class ZLUTGenerationManager(StubManagerProcessBase):
+        def __init__(self):
+            super().__init__(name="ZLUTGenerationManager")
+
     class ScriptManager(StubManagerProcessBase):
         def __init__(self):
             super().__init__(name="ScriptManager")
@@ -202,6 +206,7 @@ def load_scope_with_stubs(monkeypatch):
         },
         "magscope.scripting": {"ScriptManager": ScriptManager},
         "magscope.videoprocessing": {"VideoProcessorManager": VideoProcessorManager},
+        "magscope.zlut_generation": {"ZLUTGenerationManager": ZLUTGenerationManager},
     }
 
     for module_name, attributes in stub_modules.items():
@@ -372,5 +377,23 @@ def test_magscope_is_singleton(scope_module):
 
     with pytest.raises(TypeError):
         scope_module.MagScope()
+
+    scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_collect_processes_includes_zlut_generation_manager(scope_module):
+    scope = scope_module.MagScope()
+
+    scope._collect_processes()
+
+    assert list(scope.processes) == [
+        'ScriptManager',
+        'CameraManager',
+        'BeadLockManager',
+        'VideoProcessorManager',
+        'ZLUTGenerationManager',
+        'UIManager',
+    ]
+    assert 'ZLUTSweepDataset' in scope.lock_names
 
     scope_module.MagScope._reset_singleton_for_testing()
