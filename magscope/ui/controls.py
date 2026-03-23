@@ -2123,22 +2123,6 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.cancel_button.setEnabled(False)
         buttons_row.addWidget(self.cancel_button)
 
-        self.status_label = QLabel('Idle')
-        self.status_label.setWordWrap(True)
-        self.layout().addWidget(self.status_label)
-
-        self.detail_label = QLabel('')
-        self.detail_label.setWordWrap(True)
-        self.layout().addWidget(self.detail_label)
-
-        self.progress_label = QLabel('0 / 0 steps')
-        self.layout().addWidget(self.progress_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 1)
-        self.progress_bar.setValue(0)
-        self.layout().addWidget(self.progress_bar)
-
     def generate_callback(self):
         # Start
         start_text = self.start_input.lineedit.text()
@@ -2175,8 +2159,6 @@ class ZLUTGenerationPanel(ControlPanelBase):
         can_cancel: bool = False,
         phase: str = 'idle',
     ) -> None:
-        self.status_label.setText(status)
-        self.detail_label.setText(detail or '')
         self.generate_button.setEnabled(not running)
         self.cancel_button.setEnabled(can_cancel)
 
@@ -2188,17 +2170,7 @@ class ZLUTGenerationPanel(ControlPanelBase):
         capture_capacity: int,
         motor_z_value: float | None = None,
     ) -> None:
-        progress_total = max(total_steps, 1)
-        progress_value = min(max(current_step, 0), progress_total)
-        self.progress_bar.setRange(0, progress_total)
-        self.progress_bar.setValue(progress_value)
-
-        progress_text = f'{current_step} / {total_steps} steps'
-        if capture_capacity > 0:
-            progress_text += f' | {capture_count} / {capture_capacity} captures'
-        if motor_z_value is not None:
-            progress_text += f' | Z = {motor_z_value:.1f} nm'
-        self.progress_label.setText(progress_text)
+        _ = (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
 
 
 class ZLUTSweepPreviewWidget(QWidget):

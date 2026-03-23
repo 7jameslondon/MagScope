@@ -1449,13 +1449,6 @@ class UIManager(ManagerProcessBase):
     ) -> None:
         if self.controls is None:
             return
-        self.controls.z_lut_generation_panel.update_progress(
-            current_step,
-            total_steps,
-            capture_count,
-            capture_capacity,
-            motor_z_value,
-        )
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_progress(
                 current_step,

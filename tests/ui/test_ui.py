@@ -1237,14 +1237,6 @@ def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
     ]
 
 
-def test_update_zlut_generation_progress_forwards_to_panel(ui_manager):
-    ui_manager.update_zlut_generation_progress(1, 4, 8, 32, 12.5)
-
-    assert ui_manager.controls.z_lut_generation_panel.progress_calls == [
-        (1, 4, 8, 32, 12.5)
-    ]
-
-
 def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
     ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
 
