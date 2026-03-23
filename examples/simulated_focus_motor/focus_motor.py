@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from time import time
-from typing import TYPE_CHECKING, Final
+from typing import Final
 from warnings import warn
 
 import numpy as np
@@ -12,17 +12,13 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton
 
 import magscope
 from magscope.datatypes import MatrixBuffer
-from magscope.hardware import HardwareManagerBase
+from magscope.hardware import FocusMotorBase
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command, SetSimulatedFocusCommand
-
-if TYPE_CHECKING:
-    from magscope.camera import DummyCameraBeads
+from magscope.ipc_commands import Command, MoveFocusMotorAbsoluteCommand
 
 
 @dataclass(frozen=True)
-class MoveFocusMotorCommand(Command):
-    target: float | None = None
+class SetSimulatedFocusMotorSpeedCommand(Command):
     speed: float | None = None
 
 
@@ -33,82 +29,61 @@ class FocusMotorState:
     speed: float
 
 
-class SimulatedFocusMotor(HardwareManagerBase):
-    """Simulated focus/Z motor that publishes telemetry and adjusts camera focus."""
+class SimulatedFocusMotor(FocusMotorBase):
+    """Simulated focus/Z motor using the standard FocusMotorBase API."""
 
     position_min_max: Final[tuple[float, float]] = (-10000.0, 10000.0)
     speed_min_max: Final[tuple[float, float]] = (0.01, 1000.0)
 
     def __init__(self):
         super().__init__()
-        self.buffer_shape = (100000, 3)
         self.fetch_interval = 0.05
         self._state = FocusMotorState(position=0.0, target=0.0, speed=1.0)
         self._last_time = time()
-        self._last_written = 0.0
-        self._last_sent_focus: float | None = None
 
     def connect(self):
         self._is_connected = True
-        self._update_camera_focus(force=True)
+        self._last_time = time()
 
     def disconnect(self):
         self._is_connected = False
 
-    def fetch(self):
-        now = time()
-        moved = self._advance_motion(now)
+    def move_absolute(self, z: float) -> None:
+        self._state.target = float(np.clip(z, *self.position_min_max))
 
-        if moved:
-            self._update_camera_focus()
+    def get_current_z(self) -> float:
+        return self._state.position
 
-        if (now - self._last_written) >= self.fetch_interval or moved:
-            self._last_written = now
-            self._buffer.write(
-                np.array([[now, self._state.position, self._state.target]], dtype=float)
-            )
+    def get_is_moving(self) -> bool:
+        return not np.isclose(self._state.position, self._state.target)
 
-    @register_ipc_command(MoveFocusMotorCommand)
-    def move(self, target: float | None = None, speed: float | None = None):
-        if target is not None:
-            clipped_target = float(np.clip(target, *self.position_min_max))
-            self._state.target = clipped_target
+    def get_position_limits(self) -> tuple[float, float]:
+        return self.position_min_max
+
+    @register_ipc_command(SetSimulatedFocusMotorSpeedCommand)
+    def set_speed(self, speed: float | None = None):
         if speed is not None:
             clipped_speed = float(np.clip(speed, *self.speed_min_max))
             self._state.speed = clipped_speed
 
-    def _advance_motion(self, now: float) -> bool:
+    def _poll_hardware(self, now: float) -> None:
         dt = now - self._last_time
         self._last_time = now
 
         if dt <= 0:
-            return False
+            return
 
         delta = self._state.target - self._state.position
         if np.isclose(delta, 0.0):
-            return False
+            return
 
         step = np.sign(delta) * min(abs(delta), self._state.speed * dt)
         new_position = self._state.position + step
         new_position = float(np.clip(new_position, *self.position_min_max))
 
-        moved = not np.isclose(new_position, self._state.position)
         self._state.position = new_position
         if np.isclose(self._state.position, self._state.target):
             self._state.position = self._state.target
-        return moved
-
-    def _update_camera_focus(self, *, force: bool = False):
-        from magscope.camera import DummyCameraBeads
-
-        if self.camera_type is None or not issubclass(self.camera_type, DummyCameraBeads):
-            return
-
-        if force or self._last_sent_focus is None or not np.isclose(
-            self._state.position, self._last_sent_focus
-        ):
-            self._last_sent_focus = self._state.position
-            self.send_ipc(SetSimulatedFocusCommand(offset=self._state.position))
 
 
 FOCUS_MOTOR_BUFFER_NAME: Final[str] = SimulatedFocusMotor.__name__
@@ -156,11 +131,16 @@ class FocusMotorControls(magscope.ControlPanelBase):
         self._timer.start()
 
     def _update_labels(self) -> None:
-        # Get latest value from buffer
-        _, position, target = self._buffer.peak_sorted()[-1, :]
+        data = self._buffer.peak_sorted()
+        if data.size == 0:
+            return
+
+        _, position, target, is_moving_value = data[-1, :]
+        is_moving = bool(round(is_moving_value))
 
         # Update GUI
-        self.position_label.setText(f"Position: {position:.3f}")
+        moving_suffix = ' (moving)' if is_moving else ''
+        self.position_label.setText(f"Position: {position:.3f}{moving_suffix}")
         self.target_label.setText(f"Target: {target:.3f}")
 
     def _send_move_command(self) -> None:
@@ -179,7 +159,10 @@ class FocusMotorControls(magscope.ControlPanelBase):
             )
             return
 
-        self.manager.send_ipc(MoveFocusMotorCommand(target=target, speed=speed))
+        if speed is not None:
+            self.manager.send_ipc(SetSimulatedFocusMotorSpeedCommand(speed=speed))
+        if target is not None:
+            self.manager.send_ipc(MoveFocusMotorAbsoluteCommand(z=target))
 
     @staticmethod
     def _to_float(value: str) -> float | None:

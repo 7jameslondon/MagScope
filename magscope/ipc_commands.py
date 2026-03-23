@@ -82,6 +82,11 @@ class SetSimulatedFocusCommand(Command):
 
 
 @dataclass(frozen=True)
+class MoveFocusMotorAbsoluteCommand(Command):
+    z: float
+
+
+@dataclass(frozen=True)
 class UpdateVideoBufferPurgeCommand(Command):
     t: float
 
