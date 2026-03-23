@@ -1496,6 +1496,20 @@ class UIManager(ManagerProcessBase):
         dataset = self._zlut_sweep_dataset
         snapshot = dataset.peak()
         count = snapshot['bead_ids'].shape[0]
+        available_bead_ids: list[int] = []
+        if count > 0:
+            available_bead_ids = [int(bead_id) for bead_id in np.unique(snapshot['bead_ids'])]
+        if available_bead_ids != self._zlut_evaluation_bead_ids:
+            self._zlut_evaluation_bead_ids = available_bead_ids
+            if self._zlut_evaluation_selected_bead_id not in self._zlut_evaluation_bead_ids:
+                self._zlut_evaluation_selected_bead_id = (
+                    None if not self._zlut_evaluation_bead_ids else self._zlut_evaluation_bead_ids[0]
+                )
+            self._zlut_generation_dialog.update_evaluation(
+                active=self._zlut_generation_phase == 'evaluating',
+                bead_ids=self._zlut_evaluation_bead_ids,
+                selected_bead_id=self._zlut_evaluation_selected_bead_id,
+            )
         motor_z_values = snapshot['motor_z_values']
         finite_motor_z = motor_z_values[np.isfinite(motor_z_values)]
         motor_z_min = float(np.min(finite_motor_z)) if finite_motor_z.size else None

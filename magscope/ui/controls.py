@@ -2328,7 +2328,7 @@ class ZLUTGenerationDialog(QDialog):
         layout.addWidget(self.preview_widget, 1)
 
         evaluation_row = QHBoxLayout()
-        evaluation_row.addWidget(QLabel('Evaluation bead:'))
+        evaluation_row.addWidget(QLabel('Bead:'))
         self.bead_selector = QComboBox()
         self.bead_selector.currentIndexChanged.connect(self._handle_bead_selection_changed)
         self.bead_selector.setEnabled(False)
@@ -2398,7 +2398,7 @@ class ZLUTGenerationDialog(QDialog):
         self.cancel_button.setEnabled(can_cancel or self._evaluation_active)
         self.cancel_button.setText('Cancel' if running else 'Discard')
         self.save_button.setEnabled(self._evaluation_active and self._selected_bead_id is not None)
-        self.bead_selector.setEnabled(self._evaluation_active and self.bead_selector.count() > 0)
+        self.bead_selector.setEnabled(self.bead_selector.count() > 0)
         self.close_button.setEnabled(not running)
 
     def update_progress(
@@ -2437,7 +2437,7 @@ class ZLUTGenerationDialog(QDialog):
         else:
             self._selected_bead_id = None
         self.bead_selector.blockSignals(False)
-        self.bead_selector.setEnabled(active and self.bead_selector.count() > 0)
+        self.bead_selector.setEnabled(self.bead_selector.count() > 0)
         self.save_button.setEnabled(active and self._selected_bead_id is not None)
         self.cancel_button.setEnabled(self._running or active)
         self.cancel_button.setText('Cancel' if self._running else 'Discard')
