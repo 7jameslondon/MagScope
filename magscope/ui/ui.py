@@ -1569,12 +1569,20 @@ class UIManager(ManagerProcessBase):
                     if (
                         x_axis_min is not None
                         and x_axis_max is not None
-                        and expected_capture_count > 0
                         and preview_image.shape[1] > 0
                     ):
-                        growth_fraction = min(preview_image.shape[1] / expected_capture_count, 1.0)
-                        image_x_min = float(x_axis_min)
-                        image_x_max = float(x_axis_min + growth_fraction * (x_axis_max - x_axis_min))
+                        sorted_z_values = np.asarray(selected_motor_z_values[sorted_order], dtype=np.float64)
+                        finite_sorted_z = sorted_z_values[np.isfinite(sorted_z_values)]
+                        if finite_sorted_z.size > 0:
+                            if int(dataset.n_steps) > 1:
+                                step_width = float(x_axis_max - x_axis_min) / float(dataset.n_steps - 1)
+                            else:
+                                step_width = float(x_axis_max - x_axis_min)
+                            half_step = 0.5 * abs(step_width)
+                            image_x_min = float(max(x_axis_min, np.min(finite_sorted_z) - half_step))
+                            image_x_max = float(min(x_axis_max, np.max(finite_sorted_z) + half_step))
+                            if np.isclose(image_x_min, image_x_max):
+                                image_x_max = float(min(x_axis_max, image_x_min + max(abs(step_width), 1e-9)))
 
         self._zlut_generation_dialog.preview_widget.update_preview(
             state=dataset.state,
