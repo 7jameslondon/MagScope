@@ -115,6 +115,7 @@ class UIManager(ManagerProcessBase):
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
+        self._zlut_generation_z_axis_descending = False
         self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
         self._zlut_evaluation_bead_ids: list[int] = []
         self._zlut_evaluation_selected_bead_id: int | None = None
@@ -259,6 +260,7 @@ class UIManager(ManagerProcessBase):
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm = None
         self._zlut_generation_z_axis_max_nm = None
+        self._zlut_generation_z_axis_descending = False
         self._zlut_evaluation_bead_ids = []
         self._zlut_evaluation_selected_bead_id = None
         if self._zlut_generation_dialog is not None:
@@ -1405,12 +1407,14 @@ class UIManager(ManagerProcessBase):
         phase: str = 'idle',
         z_axis_min_nm: float | None = None,
         z_axis_max_nm: float | None = None,
+        z_axis_descending: bool = False,
     ) -> None:
         if self.controls is None:
             return
         self._zlut_generation_phase = phase
         self._zlut_generation_z_axis_min_nm = z_axis_min_nm
         self._zlut_generation_z_axis_max_nm = z_axis_max_nm
+        self._zlut_generation_z_axis_descending = bool(z_axis_descending)
         self.controls.z_lut_generation_panel.update_state(
             status,
             detail,
@@ -1564,25 +1568,44 @@ class UIManager(ManagerProcessBase):
                         image_x_min = x_axis_min
                         image_x_max = x_axis_max
                 else:
-                    sorted_order = np.argsort(selected_motor_z_values, kind='stable')
-                    preview_image = np.asarray(profiles[sorted_order], dtype=np.float64).T
+                    slot_indices = np.zeros((profiles.shape[0],), dtype=np.int64)
+                    per_step_capture_counts: dict[int, int] = {}
+                    profiles_per_bead = int(dataset.profiles_per_bead)
+                    for row_index, step_index in enumerate(step_indices):
+                        step_index_int = int(step_index)
+                        within_step_index = per_step_capture_counts.get(step_index_int, 0)
+                        per_step_capture_counts[step_index_int] = within_step_index + 1
+                        if self._zlut_generation_z_axis_descending:
+                            step_rank = int(dataset.n_steps) - 1 - step_index_int
+                        else:
+                            step_rank = step_index_int
+                        slot_indices[row_index] = step_rank * profiles_per_bead + within_step_index
+
+                    sorted_order = np.argsort(slot_indices, kind='stable')
+                    sorted_slot_indices = np.asarray(slot_indices[sorted_order], dtype=np.int64)
+                    sorted_profiles = np.asarray(profiles[sorted_order], dtype=np.float64)
                     if (
                         x_axis_min is not None
                         and x_axis_max is not None
-                        and preview_image.shape[1] > 0
+                        and sorted_profiles.shape[0] > 0
                     ):
-                        sorted_z_values = np.asarray(selected_motor_z_values[sorted_order], dtype=np.float64)
-                        finite_sorted_z = sorted_z_values[np.isfinite(sorted_z_values)]
-                        if finite_sorted_z.size > 0:
-                            if int(dataset.n_steps) > 1:
-                                step_width = float(x_axis_max - x_axis_min) / float(dataset.n_steps - 1)
-                            else:
-                                step_width = float(x_axis_max - x_axis_min)
-                            half_step = 0.5 * abs(step_width)
-                            image_x_min = float(max(x_axis_min, np.min(finite_sorted_z) - half_step))
-                            image_x_max = float(min(x_axis_max, np.max(finite_sorted_z) + half_step))
-                            if np.isclose(image_x_min, image_x_max):
-                                image_x_max = float(min(x_axis_max, image_x_min + max(abs(step_width), 1e-9)))
+                        total_slots = int(dataset.n_steps) * profiles_per_bead
+                        if total_slots > 0:
+                            slot_width = float(x_axis_max - x_axis_min) / float(total_slots)
+                            min_slot = int(np.min(sorted_slot_indices))
+                            max_slot = int(np.max(sorted_slot_indices))
+                            sparse_width = max_slot - min_slot + 1
+                            preview_image = np.full(
+                                (sorted_profiles.shape[1], sparse_width),
+                                np.nan,
+                                dtype=np.float64,
+                            )
+                            for profile_row, slot_index in zip(sorted_profiles, sorted_slot_indices, strict=False):
+                                preview_image[:, int(slot_index - min_slot)] = profile_row
+                            image_x_min = float(x_axis_min + min_slot * slot_width)
+                            image_x_max = float(x_axis_min + (max_slot + 1) * slot_width)
+                    elif sorted_profiles.shape[0] > 0:
+                        preview_image = sorted_profiles.T
 
         self._zlut_generation_dialog.preview_widget.update_preview(
             state=dataset.state,

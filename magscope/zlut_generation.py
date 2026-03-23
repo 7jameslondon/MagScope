@@ -471,9 +471,11 @@ class ZLUTGenerationManager(ManagerProcessBase):
     ) -> None:
         z_axis_min_nm = None
         z_axis_max_nm = None
+        z_axis_descending = False
         if self._requested_range is not None:
             z_axis_min_nm = float(min(self._requested_range[0], self._requested_range[2]))
             z_axis_max_nm = float(max(self._requested_range[0], self._requested_range[2]))
+            z_axis_descending = bool(self._requested_range[2] < self._requested_range[0])
         self.send_ipc(
             UpdateZLUTGenerationStateCommand(
                 status=status,
@@ -483,6 +485,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 phase=phase,
                 z_axis_min_nm=z_axis_min_nm,
                 z_axis_max_nm=z_axis_max_nm,
+                z_axis_descending=z_axis_descending,
             )
         )
 

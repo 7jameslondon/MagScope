@@ -204,6 +204,7 @@ class FakeZLutGenerationPanel:
         phase='idle',
         z_axis_min_nm=None,
         z_axis_max_nm=None,
+        z_axis_descending=False,
     ) -> None:
         self.state_calls.append((status, detail, running, can_cancel))
 
@@ -266,6 +267,7 @@ class FakeZLutGenerationDialog:
         phase='idle',
         z_axis_min_nm=None,
         z_axis_max_nm=None,
+        z_axis_descending=False,
     ) -> None:
         self.state_calls.append((status, detail, running, can_cancel))
 
@@ -1252,6 +1254,7 @@ def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
         phase='capturing',
         z_axis_min_nm=10.0,
         z_axis_max_nm=30.0,
+        z_axis_descending=True,
     )
 
     assert ui_manager.controls.z_lut_generation_panel.state_calls == [
@@ -1259,6 +1262,7 @@ def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
     ]
     assert ui_manager._zlut_generation_z_axis_min_nm == 10.0
     assert ui_manager._zlut_generation_z_axis_max_nm == 30.0
+    assert ui_manager._zlut_generation_z_axis_descending is True
 
 
 def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
@@ -1272,6 +1276,7 @@ def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
         phase='capturing',
         z_axis_min_nm=10.0,
         z_axis_max_nm=30.0,
+        z_axis_descending=True,
     )
 
     assert ui_manager._zlut_generation_dialog.state_calls == [
@@ -1554,6 +1559,7 @@ def test_live_preview_sorts_descending_z_positions_low_to_high(ui_manager, monke
     ui_manager._zlut_generation_phase = 'capturing'
     ui_manager._zlut_generation_z_axis_min_nm = 10.0
     ui_manager._zlut_generation_z_axis_max_nm = 30.0
+    ui_manager._zlut_generation_z_axis_descending = True
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1607,6 +1613,7 @@ def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
     ui_manager._zlut_generation_phase = 'capturing'
     ui_manager._zlut_generation_z_axis_min_nm = 10.0
     ui_manager._zlut_generation_z_axis_max_nm = 40.0
+    ui_manager._zlut_generation_z_axis_descending = False
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1619,7 +1626,12 @@ def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
     assert preview_call['x_axis_min'] == 10.0
     assert preview_call['x_axis_max'] == 40.0
     assert preview_call['image_x_min'] == 10.0
-    assert preview_call['image_x_max'] == 25.0
+    assert preview_call['image_x_max'] == 20.0
+    np.testing.assert_allclose(
+        preview_call['preview_image'],
+        np.asarray([[1.0, np.nan, np.nan, 3.0], [2.0, np.nan, np.nan, 4.0]], dtype=np.float64),
+        equal_nan=True,
+    )
 
 
 def test_live_preview_descending_partial_capture_aligns_right(ui_manager, monkeypatch):
@@ -1660,6 +1672,7 @@ def test_live_preview_descending_partial_capture_aligns_right(ui_manager, monkey
     ui_manager._zlut_generation_phase = 'capturing'
     ui_manager._zlut_generation_z_axis_min_nm = 10.0
     ui_manager._zlut_generation_z_axis_max_nm = 30.0
+    ui_manager._zlut_generation_z_axis_descending = True
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1673,7 +1686,7 @@ def test_live_preview_descending_partial_capture_aligns_right(ui_manager, monkey
     )
     assert preview_call['x_axis_min'] == 10.0
     assert preview_call['x_axis_max'] == 30.0
-    assert preview_call['image_x_min'] == 15.0
+    assert preview_call['image_x_min'] == pytest.approx(16.6666666667)
     assert preview_call['image_x_max'] == 30.0
 
 
