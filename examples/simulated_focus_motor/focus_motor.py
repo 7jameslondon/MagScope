@@ -242,7 +242,8 @@ class FocusMotorPlot(magscope.TimeSeriesPlotBase):
 
 
 if __name__ == "__main__":
-    scope = magscope.MagScope()
+    scope = magscope.MagScope(verbose=True)
+    scope.ui_manager.n_windows = 1
 
     scope.add_hardware(SimulatedFocusMotor())
     scope.add_control(FocusMotorControls, column=0)
