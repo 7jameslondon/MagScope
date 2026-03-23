@@ -1299,9 +1299,11 @@ def test_start_zlut_generation_sends_command(ui_manager):
     commands = []
     ui_manager.send_ipc = commands.append
 
-    ui_manager.start_zlut_generation(start_nm=1.0, step_nm=2.0, stop_nm=3.0)
+    ui_manager.start_zlut_generation(start_nm=1.0, step_nm=2.0, stop_nm=3.0, profiles_per_bead=4)
 
-    assert commands == [StartZLUTGenerationCommand(start_nm=1.0, step_nm=2.0, stop_nm=3.0)]
+    assert commands == [
+        StartZLUTGenerationCommand(start_nm=1.0, step_nm=2.0, stop_nm=3.0, profiles_per_bead=4)
+    ]
 
 
 def test_cancel_zlut_generation_sends_command(ui_manager):

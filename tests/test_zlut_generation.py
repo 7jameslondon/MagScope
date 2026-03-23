@@ -110,3 +110,59 @@ def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     np.testing.assert_allclose(saved[0][1], np.asarray([[1.0, 2.0], [3.0, 4.0]]))
     assert isinstance(manager._sent_commands[0], LoadZLUTCommand)
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
+
+
+def test_prepare_session_uses_requested_profiles_per_bead():
+    manager = make_manager()
+    manager._cleanup_runtime_state = lambda destroy_dataset: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._focus_motor_name = 'focus'
+    manager._focus_buffer = object()
+    manager.video_buffer = type('VideoBuffer', (), {'n_images': 40})()
+    manager._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.float64)
+    manager._acquisition_on = False
+
+    manager._prepare_session(0.0, 5.0, 10.0, 7)
+
+    assert manager._profiles_per_bead == 7
+
+
+def test_handle_capture_complete_waits_until_requested_profiles_per_bead():
+    manager = make_manager()
+    sent_commands = []
+    state_updates = []
+    manager.send_ipc = sent_commands.append
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._active = True
+    manager._phase = 'capturing'
+    manager._current_step_index = 1
+    manager._profiles_per_bead = 5
+    manager._current_step_profiles_written = 3
+    manager._steps = np.asarray([0.0, 10.0, 20.0], dtype=np.float64)
+
+    manager.handle_capture_complete(step_index=1, written_count=4, written_profiles_per_bead=2)
+
+    assert manager._step_capture_complete is True
+    assert manager._current_step_profiles_written == 5
+    assert sent_commands == []
+
+
+def test_handle_capture_complete_rearms_until_requested_profiles_per_bead_reached():
+    manager = make_manager()
+    sent_commands = []
+    state_updates = []
+    manager.send_ipc = sent_commands.append
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._active = True
+    manager._phase = 'capturing'
+    manager._current_step_index = 0
+    manager._profiles_per_bead = 5
+    manager._current_step_profiles_written = 2
+    manager._steps = np.asarray([12.5], dtype=np.float64)
+
+    manager.handle_capture_complete(step_index=0, written_count=2, written_profiles_per_bead=1)
+
+    assert manager._step_capture_complete is False
+    assert manager._current_step_profiles_written == 3
+    assert sent_commands[0].remaining_profiles_per_bead == 2

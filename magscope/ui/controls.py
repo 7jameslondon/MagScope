@@ -2111,6 +2111,11 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.stop_input = LabeledLineEdit(label_text='Stop (nm):')
         self.layout().addWidget(self.stop_input)
 
+        # Measurements per step
+        self.measurements_input = LabeledLineEdit(label_text='Measurements per step:')
+        self.measurements_input.lineedit.setText(str(self.manager.settings['video buffer n images']))
+        self.layout().addWidget(self.measurements_input)
+
         # Generate button
         buttons_row = QHBoxLayout()
         self.layout().addLayout(buttons_row)
@@ -2146,7 +2151,20 @@ class ZLUTGenerationPanel(ControlPanelBase):
         except ValueError:
             return
 
-        self.manager.start_zlut_generation(start_nm=start_nm, step_nm=step_nm, stop_nm=stop_nm)
+        measurements_text = self.measurements_input.lineedit.text()
+        try:
+            profiles_per_bead = int(measurements_text)
+        except ValueError:
+            return
+        if profiles_per_bead <= 0:
+            return
+
+        self.manager.start_zlut_generation(
+            start_nm=start_nm,
+            step_nm=step_nm,
+            stop_nm=stop_nm,
+            profiles_per_bead=profiles_per_bead,
+        )
 
     def cancel_callback(self):
         self.manager.cancel_zlut_generation()

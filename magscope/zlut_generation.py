@@ -55,6 +55,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._previous_acquisition_on = False
         self._profile_length: int | None = None
         self._profiles_per_bead = 0
+        self._current_step_profiles_written = 0
         self._requested_range: tuple[float, float, float] | None = None
         self._selected_bead_id: int | None = None
         self._step_capture_complete = False
@@ -89,7 +90,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         super().quit()
 
     @register_ipc_command(StartZLUTGenerationCommand)
-    def start_generation(self, start_nm: float, step_nm: float, stop_nm: float):
+    def start_generation(self, start_nm: float, step_nm: float, stop_nm: float, profiles_per_bead: int):
         if self._active or self._phase == 'evaluating':
             self._send_state(
                 'Generation already running.',
@@ -103,7 +104,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._refresh_bead_roi_cache()
 
         try:
-            self._prepare_session(start_nm, step_nm, stop_nm)
+            self._prepare_session(start_nm, step_nm, stop_nm, profiles_per_bead)
         except Exception as exc:
             reason = str(exc).strip() or repr(exc)
             logger.warning('Could not start Z-LUT generation: %s', reason)
@@ -153,7 +154,13 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._issue_move_for_current_step()
 
     @register_ipc_command(ZLUTSweepCaptureCompleteCommand)
-    def handle_capture_complete(self, step_index: int, written_count: int, error: str | None = None):
+    def handle_capture_complete(
+        self,
+        step_index: int,
+        written_count: int,
+        written_profiles_per_bead: int,
+        error: str | None = None,
+    ):
         if not self._active or self._phase != 'capturing':
             return
         if step_index != self._current_step_index:
@@ -164,7 +171,28 @@ class ZLUTGenerationManager(ManagerProcessBase):
         if written_count <= 0:
             self._fail_session('Sweep capture completed without any profiles being written.')
             return
-        self._step_capture_complete = True
+        self._current_step_profiles_written += int(written_profiles_per_bead)
+        if self._current_step_profiles_written >= self._profiles_per_bead:
+            self._step_capture_complete = True
+            return
+
+        self.send_ipc(
+            ArmZLUTSweepCaptureCommand(
+                step_index=self._current_step_index,
+                motor_z_value=float(self._steps[self._current_step_index]),
+                remaining_profiles_per_bead=self._profiles_per_bead - self._current_step_profiles_written,
+            )
+        )
+        self._send_state(
+            f'Capturing step {self._current_step_index + 1} of {self._steps.size}.',
+            detail=(
+                f'Collected {self._current_step_profiles_written} / {self._profiles_per_bead} '
+                'profiles per bead.'
+            ),
+            running=True,
+            can_cancel=True,
+            phase='capturing',
+        )
 
     @register_ipc_command(SelectGeneratedZLUTBeadCommand)
     def select_generated_bead(self, bead_id: int):
@@ -223,7 +251,13 @@ class ZLUTGenerationManager(ManagerProcessBase):
         )
         self._cleanup_runtime_state(destroy_dataset=True)
 
-    def _prepare_session(self, start_nm: float, step_nm: float, stop_nm: float) -> None:
+    def _prepare_session(
+        self,
+        start_nm: float,
+        step_nm: float,
+        stop_nm: float,
+        profiles_per_bead: int,
+    ) -> None:
         self._cleanup_runtime_state(destroy_dataset=True)
         self._focus_motor_name = self._focus_motor_name or self._discover_focus_motor_name()
         if self._focus_motor_name is None:
@@ -236,6 +270,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
             raise RuntimeError('At least one bead ROI must be selected before generating a Z-LUT.')
 
         steps = self._build_steps(start_nm, step_nm, stop_nm)
+        if int(profiles_per_bead) <= 0:
+            raise ValueError('Measurements per step must be a positive integer.')
         self._active = True
         self._cancel_requested = False
         self._current_step_index = 0
@@ -245,7 +281,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._phase = 'waiting_profile_length'
         self._previous_acquisition_on = bool(self._acquisition_on)
         self._profile_length = None
-        self._profiles_per_bead = int(self.video_buffer.n_images)
+        self._profiles_per_bead = int(profiles_per_bead)
+        self._current_step_profiles_written = 0
         self._requested_range = (float(start_nm), float(step_nm), float(stop_nm))
         self._selected_bead_id = None
         self._step_capture_complete = False
@@ -276,6 +313,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         target_z = float(self._steps[self._current_step_index])
         self._phase = 'moving'
         self._step_capture_complete = False
+        self._current_step_profiles_written = 0
         self.send_ipc(DisarmZLUTSweepCaptureCommand())
         self.send_ipc(SetAcquisitionOnCommand(False))
         self.send_ipc(MoveFocusMotorAbsoluteCommand(z=target_z))
@@ -305,6 +343,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
             ArmZLUTSweepCaptureCommand(
                 step_index=self._current_step_index,
                 motor_z_value=float(current_z),
+                remaining_profiles_per_bead=self._profiles_per_bead,
             )
         )
         self._send_state(
@@ -397,6 +436,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._phase = 'idle'
         self._profile_length = None
         self._profiles_per_bead = 0
+        self._current_step_profiles_written = 0
         self._requested_range = None
         self._selected_bead_id = None
         self._step_capture_complete = False

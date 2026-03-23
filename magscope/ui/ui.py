@@ -1342,13 +1342,21 @@ class UIManager(ManagerProcessBase):
         self._zlut_generation_phase = 'waiting_profile_length'
         self._zlut_preview_last_poll = 0.0
 
-    def start_zlut_generation(self, *, start_nm: float, step_nm: float, stop_nm: float) -> None:
+    def start_zlut_generation(
+        self,
+        *,
+        start_nm: float,
+        step_nm: float,
+        stop_nm: float,
+        profiles_per_bead: int,
+    ) -> None:
         self.show_zlut_generation_dialog()
         self.send_ipc(
             StartZLUTGenerationCommand(
                 start_nm=float(start_nm),
                 step_nm=float(step_nm),
                 stop_nm=float(stop_nm),
+                profiles_per_bead=int(profiles_per_bead),
             )
         )
 

@@ -197,6 +197,7 @@ class StartZLUTGenerationCommand(Command):
     start_nm: float
     step_nm: float
     stop_nm: float
+    profiles_per_bead: int
 
 
 @dataclass(frozen=True)
@@ -272,6 +273,7 @@ class ReportZLUTProfileLengthCommand(Command):
 class ArmZLUTSweepCaptureCommand(Command):
     step_index: int
     motor_z_value: float
+    remaining_profiles_per_bead: int
 
 
 @dataclass(frozen=True)
@@ -283,6 +285,7 @@ class DisarmZLUTSweepCaptureCommand(Command):
 class ZLUTSweepCaptureCompleteCommand(Command):
     step_index: int
     written_count: int
+    written_profiles_per_bead: int
     error: str | None = None
 
 

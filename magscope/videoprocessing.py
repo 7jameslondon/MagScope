@@ -54,6 +54,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._warning_queue: QueueType | None = None
         self._zlut_capture_complete_queue: QueueType | None = None
         self._zlut_capture_motor_z_value: float | None = None
+        self._zlut_capture_remaining_profiles_per_bead: int | None = None
         self._zlut_capture_step_index: int | None = None
         self._zlut_profile_length_queue: QueueType | None = None
         self._pending_zlut_profile_length_request = False
@@ -280,14 +281,21 @@ class VideoProcessorManager(ManagerProcessBase):
             break
 
     @register_ipc_command(ArmZLUTSweepCaptureCommand)
-    def arm_zlut_sweep_capture(self, step_index: int, motor_z_value: float) -> None:
+    def arm_zlut_sweep_capture(
+        self,
+        step_index: int,
+        motor_z_value: float,
+        remaining_profiles_per_bead: int,
+    ) -> None:
         self._zlut_capture_step_index = int(step_index)
         self._zlut_capture_motor_z_value = float(motor_z_value)
+        self._zlut_capture_remaining_profiles_per_bead = int(remaining_profiles_per_bead)
 
     @register_ipc_command(DisarmZLUTSweepCaptureCommand)
     def disarm_zlut_sweep_capture(self) -> None:
         self._zlut_capture_step_index = None
         self._zlut_capture_motor_z_value = None
+        self._zlut_capture_remaining_profiles_per_bead = None
 
     def _process_zlut_capture_reports(self) -> None:
         if self._zlut_capture_complete_queue is None:
@@ -295,7 +303,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
         while True:
             try:
-                step_index, written_count, error = self._zlut_capture_complete_queue.get_nowait()
+                step_index, written_count, written_profiles_per_bead, error = self._zlut_capture_complete_queue.get_nowait()
             except Empty:
                 break
 
@@ -303,6 +311,7 @@ class VideoProcessorManager(ManagerProcessBase):
                 ZLUTSweepCaptureCompleteCommand(
                     step_index=int(step_index),
                     written_count=int(written_count),
+                    written_profiles_per_bead=int(written_profiles_per_bead),
                     error=error,
                 )
             )
@@ -325,10 +334,16 @@ class VideoProcessorManager(ManagerProcessBase):
         }
         capture_step_index = self._zlut_capture_step_index
         capture_motor_z_value = self._zlut_capture_motor_z_value
-        if capture_step_index is not None and capture_motor_z_value is not None:
+        capture_remaining_profiles_per_bead = self._zlut_capture_remaining_profiles_per_bead
+        if (
+            capture_step_index is not None
+            and capture_motor_z_value is not None
+            and capture_remaining_profiles_per_bead is not None
+        ):
             kwargs['zlut_capture'] = {
                 'step_index': int(capture_step_index),
                 'motor_z_value': float(capture_motor_z_value),
+                'remaining_profiles_per_bead': int(capture_remaining_profiles_per_bead),
             }
 
         try:
@@ -336,7 +351,8 @@ class VideoProcessorManager(ManagerProcessBase):
             if 'zlut_capture' in kwargs:
                 self._zlut_capture_step_index = None
                 self._zlut_capture_motor_z_value = None
-            return True
+                self._zlut_capture_remaining_profiles_per_bead = None
+                return True
         except Full:
             logger.warning('Skipping video processing task because worker queue is full')
             return False
@@ -503,10 +519,24 @@ class VideoWorker(Process):
             try:
                 if self._zlut_sweep_dataset is None:
                     self._zlut_sweep_dataset = ZLUTSweepDataset.attach(locks=self._locks)
-                profile_rows = np.asarray(profiles, dtype=np.float64).T
-                bead_id_rows = np.asarray(bead_ids, dtype=np.uint32)
-                timestamp_rows = np.asarray(timestamps, dtype=np.float64)
-                batch_size = bead_id_rows.shape[0]
+                unique_bead_ids = np.unique(bead_ids)
+                n_beads = int(unique_bead_ids.shape[0])
+                if n_beads <= 0:
+                    self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, None))
+                    return
+                available_profiles_per_bead = int(np.asarray(timestamps).shape[0] / n_beads)
+                written_profiles_per_bead = min(
+                    available_profiles_per_bead,
+                    int(zlut_capture['remaining_profiles_per_bead']),
+                )
+                batch_size = written_profiles_per_bead * n_beads
+                if batch_size <= 0:
+                    self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, None))
+                    return
+
+                profile_rows = np.asarray(profiles, dtype=np.float64).T[:batch_size, :]
+                bead_id_rows = np.asarray(bead_ids, dtype=np.uint32)[:batch_size]
+                timestamp_rows = np.asarray(timestamps, dtype=np.float64)[:batch_size]
                 self._zlut_sweep_dataset.write(
                     bead_ids=bead_id_rows,
                     step_indices=np.full((batch_size,), zlut_capture['step_index'], dtype=np.uint32),
@@ -515,18 +545,19 @@ class VideoWorker(Process):
                     valid_flags=np.ones((batch_size,), dtype=np.uint8),
                     profiles=profile_rows,
                 )
-                self._zlut_capture_complete_queue.put_nowait(
-                    (zlut_capture['step_index'], batch_size, None)
-                )
+                self._zlut_capture_complete_queue.put_nowait((
+                    zlut_capture['step_index'],
+                    batch_size,
+                    written_profiles_per_bead,
+                    None,
+                ))
             except Full:
                 logger.debug('Dropping Z-LUT capture completion because queue is full')
             except Exception as exc:
                 reason = str(exc).strip() or repr(exc)
                 logger.exception('Failed to capture Z-LUT sweep step: %s', reason)
                 try:
-                    self._zlut_capture_complete_queue.put_nowait(
-                        (zlut_capture['step_index'], 0, reason)
-                    )
+                    self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, reason))
                 except Full:
                     logger.debug('Dropping Z-LUT capture error because queue is full')
             finally:
