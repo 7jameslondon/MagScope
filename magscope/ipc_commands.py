@@ -210,6 +210,7 @@ class UpdateZLUTGenerationStateCommand(Command):
     detail: str | None = None
     running: bool = False
     can_cancel: bool = False
+    phase: str = 'idle'
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,29 @@ class UpdateZLUTGenerationProgressCommand(Command):
     capture_count: int
     capture_capacity: int
     motor_z_value: float | None = None
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationEvaluationCommand(Command):
+    active: bool
+    bead_ids: list[int]
+    selected_bead_id: int | None = None
+
+
+@dataclass(frozen=True)
+class SelectGeneratedZLUTBeadCommand(Command):
+    bead_id: int
+
+
+@dataclass(frozen=True)
+class SaveGeneratedZLUTCommand(Command):
+    filepath: str
+    bead_id: int
+
+
+@dataclass(frozen=True)
+class CancelGeneratedZLUTEvaluationCommand(Command):
+    pass
 
 
 @dataclass(frozen=True)

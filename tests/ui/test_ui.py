@@ -14,8 +14,11 @@ from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
 
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
+    CancelGeneratedZLUTEvaluationCommand,
     CancelZLUTGenerationCommand,
     RemoveBeadsFromPendingMovesCommand,
+    SaveGeneratedZLUTCommand,
+    SelectGeneratedZLUTBeadCommand,
     StartZLUTGenerationCommand,
     UpdateBeadRoisCommand,
 )
@@ -191,7 +194,7 @@ class FakeZLutGenerationPanel:
         self.state_calls = []
         self.progress_calls = []
 
-    def update_state(self, status, detail=None, *, running=False, can_cancel=False) -> None:
+    def update_state(self, status, detail=None, *, running=False, can_cancel=False, phase='idle') -> None:
         self.state_calls.append((status, detail, running, can_cancel))
 
     def update_progress(
@@ -223,6 +226,7 @@ class FakeZLutGenerationDialog:
     def __init__(self):
         self.state_calls = []
         self.progress_calls = []
+        self.evaluation_calls = []
         self.preview_widget = FakeZLutPreviewWidget()
         self.visible = True
         self.show_calls = 0
@@ -242,7 +246,7 @@ class FakeZLutGenerationDialog:
     def isVisible(self) -> bool:
         return self.visible
 
-    def update_state(self, status, detail=None, *, running=False, can_cancel=False) -> None:
+    def update_state(self, status, detail=None, *, running=False, can_cancel=False, phase='idle') -> None:
         self.state_calls.append((status, detail, running, can_cancel))
 
     def update_progress(
@@ -256,6 +260,9 @@ class FakeZLutGenerationDialog:
         self.progress_calls.append(
             (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
         )
+
+    def update_evaluation(self, *, active, bead_ids, selected_bead_id=None) -> None:
+        self.evaluation_calls.append((active, bead_ids, selected_bead_id))
 
     def close(self) -> None:
         self.visible = False
@@ -1196,12 +1203,33 @@ def test_cancel_zlut_generation_sends_command(ui_manager):
     assert commands == [CancelZLUTGenerationCommand()]
 
 
+def test_select_generated_zlut_bead_sends_command(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+
+    ui_manager.select_generated_zlut_bead(7)
+
+    assert commands == [SelectGeneratedZLUTBeadCommand(bead_id=7)]
+
+
+def test_save_generated_zlut_sends_command(ui_manager, monkeypatch):
+    commands = []
+    ui_manager.send_ipc = commands.append
+    ui_manager.windows = [QMainWindow()]
+    monkeypatch.setattr('magscope.ui.ui.QFileDialog.getSaveFileName', lambda *args, **kwargs: ('C:/tmp/test.txt', ''))
+
+    ui_manager.save_generated_zlut(5)
+
+    assert commands == [SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5)]
+
+
 def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
     ui_manager.update_zlut_generation_state(
         'Running',
         detail='Collecting step 1',
         running=True,
         can_cancel=True,
+        phase='capturing',
     )
 
     assert ui_manager.controls.z_lut_generation_panel.state_calls == [
@@ -1225,6 +1253,7 @@ def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
         detail='Collecting step 1',
         running=True,
         can_cancel=True,
+        phase='capturing',
     )
 
     assert ui_manager._zlut_generation_dialog.state_calls == [
@@ -1242,6 +1271,27 @@ def test_update_zlut_generation_progress_forwards_to_dialog(ui_manager):
     ]
 
 
+def test_update_zlut_generation_evaluation_forwards_to_dialog(ui_manager):
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+
+    ui_manager.update_zlut_generation_evaluation(True, [3, 5], selected_bead_id=5)
+
+    assert ui_manager._zlut_evaluation_bead_ids == [3, 5]
+    assert ui_manager._zlut_evaluation_selected_bead_id == 5
+    assert ui_manager._zlut_generation_dialog.evaluation_calls == [
+        (True, [3, 5], 5)
+    ]
+
+
+def test_cancel_generation_still_sends_cancel_during_evaluation(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+
+    ui_manager.cancel_zlut_generation()
+
+    assert commands == [CancelZLUTGenerationCommand()]
+
+
 def test_update_zlut_generation_dialog_clears_preview_when_dataset_missing(ui_manager, monkeypatch):
     from magscope.ui import ui as ui_module
 
@@ -1251,6 +1301,7 @@ def test_update_zlut_generation_dialog_clears_preview_when_dataset_missing(ui_ma
             raise FileNotFoundError('missing')
 
     ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_generation_phase = 'capturing'
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', MissingDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1303,6 +1354,8 @@ def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkey
             pass
 
     ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_generation_phase = 'evaluating'
+    ui_manager._zlut_evaluation_bead_ids = [5, 7]
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)

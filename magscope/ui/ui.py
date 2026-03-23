@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from math import floor, ceil
+import os
 import sys
 from time import time
 import traceback
@@ -11,6 +12,7 @@ from PyQt6.QtCore import QPoint, QRectF, QSettings, Qt, QThread, QTimer
 from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -110,7 +112,10 @@ class UIManager(ManagerProcessBase):
         self._bead_roi_capacity = 10000
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
         self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
+        self._zlut_generation_phase = 'idle'
         self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
+        self._zlut_evaluation_bead_ids: list[int] = []
+        self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
 
     def setup(self):
@@ -249,6 +254,9 @@ class UIManager(ManagerProcessBase):
             window.close()
 
         self._detach_zlut_sweep_dataset()
+        self._zlut_generation_phase = 'idle'
+        self._zlut_evaluation_bead_ids = []
+        self._zlut_evaluation_selected_bead_id = None
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.force_close()
             self._zlut_generation_dialog = None
@@ -1316,12 +1324,15 @@ class UIManager(ManagerProcessBase):
         if self._zlut_generation_dialog is None:
             dialog = ZLUTGenerationDialog(self.windows[0])
             dialog.set_cancel_callback(self.cancel_zlut_generation)
+            dialog.set_save_callback(self.save_generated_zlut)
+            dialog.set_select_bead_callback(self.select_generated_zlut_bead)
             dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
             self._zlut_generation_dialog = dialog
         self._zlut_generation_dialog.show()
         self._zlut_generation_dialog.raise_()
         self._zlut_generation_dialog.activateWindow()
         self._zlut_generation_dialog.preview_widget.clear('Waiting for Z-LUT sweep data...')
+        self._zlut_generation_phase = 'waiting_profile_length'
         self._zlut_preview_last_poll = 0.0
 
     def start_zlut_generation(self, *, start_nm: float, step_nm: float, stop_nm: float) -> None:
@@ -1336,6 +1347,28 @@ class UIManager(ManagerProcessBase):
 
     def cancel_zlut_generation(self) -> None:
         self.send_ipc(CancelZLUTGenerationCommand())
+
+    def select_generated_zlut_bead(self, bead_id: int) -> None:
+        self._zlut_evaluation_selected_bead_id = int(bead_id)
+        self.send_ipc(SelectGeneratedZLUTBeadCommand(bead_id=int(bead_id)))
+        self._zlut_preview_last_poll = 0.0
+
+    def save_generated_zlut(self, bead_id: int) -> None:
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value('last zlut directory', os.path.expanduser('~'), type=str)
+        default_path = os.path.join(last_value, f'generated_zlut_bead_{int(bead_id)}.txt')
+        filepath, _ = QFileDialog.getSaveFileName(
+            self.windows[0] if self.windows else None,
+            'Save and Load Generated Z-LUT',
+            default_path,
+            'Text Files (*.txt)',
+        )
+        if not filepath:
+            return
+
+        directory = os.path.dirname(filepath) or last_value
+        settings.setValue('last zlut directory', directory)
+        self.send_ipc(SaveGeneratedZLUTCommand(filepath=filepath, bead_id=int(bead_id)))
 
     def request_profile_length(self) -> None:
         self.send_ipc(RequestProfileLengthCommand())
@@ -1365,14 +1398,17 @@ class UIManager(ManagerProcessBase):
         detail: str | None = None,
         running: bool = False,
         can_cancel: bool = False,
+        phase: str = 'idle',
     ) -> None:
         if self.controls is None:
             return
+        self._zlut_generation_phase = phase
         self.controls.z_lut_generation_panel.update_state(
             status,
             detail,
             running=running,
             can_cancel=can_cancel,
+            phase=phase,
         )
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_state(
@@ -1380,7 +1416,27 @@ class UIManager(ManagerProcessBase):
                 detail,
                 running=running,
                 can_cancel=can_cancel,
+                phase=phase,
             )
+
+    @register_ipc_command(UpdateZLUTGenerationEvaluationCommand)
+    def update_zlut_generation_evaluation(
+        self,
+        active: bool,
+        bead_ids: list[int],
+        selected_bead_id: int | None = None,
+    ) -> None:
+        self._zlut_evaluation_bead_ids = [int(bead_id) for bead_id in bead_ids]
+        self._zlut_evaluation_selected_bead_id = None if selected_bead_id is None else int(selected_bead_id)
+        if not active:
+            self._detach_zlut_sweep_dataset()
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_evaluation(
+                active=active,
+                bead_ids=self._zlut_evaluation_bead_ids,
+                selected_bead_id=self._zlut_evaluation_selected_bead_id,
+            )
+        self._zlut_preview_last_poll = 0.0
 
     @register_ipc_command(UpdateZLUTGenerationProgressCommand)
     def update_zlut_generation_progress(
@@ -1420,6 +1476,8 @@ class UIManager(ManagerProcessBase):
     def _update_zlut_generation_dialog(self) -> None:
         if self._zlut_generation_dialog is None or not self._zlut_generation_dialog.isVisible():
             return
+        if self._zlut_generation_phase in {'idle', 'complete'} and not self._zlut_evaluation_bead_ids:
+            return
         now = time()
         if now - self._zlut_preview_last_poll < 1.0:
             return
@@ -1455,7 +1513,10 @@ class UIManager(ManagerProcessBase):
         mode = 'Raw sweep'
         if count > 0:
             bead_ids = snapshot['bead_ids']
-            selected_bead_id = int(np.min(bead_ids))
+            if self._zlut_evaluation_selected_bead_id is not None and self._zlut_evaluation_selected_bead_id in bead_ids:
+                selected_bead_id = int(self._zlut_evaluation_selected_bead_id)
+            else:
+                selected_bead_id = int(np.min(bead_ids))
             selected_rows = bead_ids == selected_bead_id
             profiles = snapshot['profiles'][selected_rows]
             step_indices = snapshot['step_indices'][selected_rows]
