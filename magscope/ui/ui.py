@@ -1330,6 +1330,7 @@ class UIManager(ManagerProcessBase):
         if self._zlut_generation_dialog is None:
             dialog = ZLUTGenerationDialog(self.windows[0])
             dialog.set_cancel_callback(self.cancel_zlut_generation)
+            dialog.set_close_callback(self.discard_generated_zlut_evaluation)
             dialog.set_save_callback(self.save_generated_zlut)
             dialog.set_select_bead_callback(self.select_generated_zlut_bead)
             dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
@@ -1353,6 +1354,9 @@ class UIManager(ManagerProcessBase):
 
     def cancel_zlut_generation(self) -> None:
         self.send_ipc(CancelZLUTGenerationCommand())
+
+    def discard_generated_zlut_evaluation(self) -> None:
+        self.send_ipc(CancelGeneratedZLUTEvaluationCommand())
 
     def select_generated_zlut_bead(self, bead_id: int) -> None:
         self._zlut_evaluation_selected_bead_id = int(bead_id)

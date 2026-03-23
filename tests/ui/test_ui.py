@@ -23,7 +23,7 @@ from magscope.ipc_commands import (
     UpdateBeadRoisCommand,
 )
 from magscope.settings import MagScopeSettings
-from magscope.ui.controls import ZLUTSweepPreviewWidget
+from magscope.ui.controls import ZLUTGenerationDialog, ZLUTSweepPreviewWidget
 from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
@@ -417,6 +417,61 @@ def test_zlut_preview_widget_marks_non_finite_values_red(qtbot):
     assert bool(rendered.mask[0, 1])
     bad_color = widget._image.cmap.get_bad()
     assert bad_color[:3] == pytest.approx((1.0, 0.0, 0.0))
+
+
+def test_zlut_generation_dialog_close_discards_during_evaluation(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    discard_calls = []
+    dialog.set_close_callback(lambda: discard_calls.append('discard'))
+    dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
+
+    dialog.close()
+
+    assert discard_calls == ['discard']
+
+
+def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
+
+    assert not dialog.cancel_button.isVisible()
+
+
+def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    cancel_calls = []
+    dialog.set_cancel_callback(lambda: cancel_calls.append('cancel'))
+    dialog.show()
+    dialog.update_state('Capturing', running=True, can_cancel=True, phase='capturing')
+
+    dialog.cancel_button.click()
+
+    assert cancel_calls == ['cancel']
+    assert dialog.isVisible()
+
+    dialog.update_state('Canceled', running=False, can_cancel=False, phase='idle')
+
+    assert not dialog.isVisible()
+
+
+def test_zlut_generation_dialog_cancel_does_not_close_on_failure_state(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_cancel_callback(lambda: None)
+    dialog.show()
+    dialog.update_state('Capturing', running=True, can_cancel=True, phase='capturing')
+
+    dialog.cancel_button.click()
+    dialog.update_state('Failed', running=False, can_cancel=False, phase='failed')
+
+    assert dialog.isVisible()
 
 
 @pytest.mark.parametrize('n_windows', [1, 2, 3])
@@ -1255,6 +1310,15 @@ def test_cancel_zlut_generation_sends_command(ui_manager):
     ui_manager.cancel_zlut_generation()
 
     assert commands == [CancelZLUTGenerationCommand()]
+
+
+def test_discard_generated_zlut_evaluation_sends_command(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+
+    ui_manager.discard_generated_zlut_evaluation()
+
+    assert commands == [CancelGeneratedZLUTEvaluationCommand()]
 
 
 def test_select_generated_zlut_bead_sends_command(ui_manager):
