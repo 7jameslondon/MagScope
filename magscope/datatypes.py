@@ -829,6 +829,357 @@ class LiveProfileBuffer:
     def peak_unsorted(self) -> np.ndarray:
         return self._buffer.peak_unsorted()
 
+
+class ZLUTSweepDataset:
+    """Temporary shared-memory dataset used for Z-LUT sweep capture.
+
+    The dataset stores one row per captured profile with aligned metadata arrays
+    for bead id, step index, timestamp, motor Z, validity, and the full radial
+    profile. Unlike :class:`VideoBuffer` and :class:`MatrixBuffer`, this object
+    never wraps and never overwrites old entries. It is intended to be created
+    and destroyed at runtime by the workflow owner, while peer processes attach
+    to the fixed shared-memory names on demand.
+    """
+
+    NAME = 'ZLUTSweepDataset'
+    STATE_ABSENT = 0
+    STATE_CREATING = 1
+    STATE_READY = 2
+    STATE_CAPTURING = 3
+    STATE_COMPLETE = 4
+    STATE_DETACHING = 5
+    STATE_FAILED = 6
+    STATE_DESTROYED = 7
+
+    _INFO_FIELDS = {
+        'schema_version': 0,
+        'state': 1,
+        'capacity': 2,
+        'profile_length': 3,
+        'n_steps': 4,
+        'n_beads': 5,
+        'profiles_per_bead': 6,
+        'count': 7,
+    }
+    _INFO_SIZE = 8 * len(_INFO_FIELDS)
+    _SCHEMA_VERSION = 1
+    _UINT64_DTYPE = np.dtype(np.uint64)
+    _BEAD_ID_DTYPE = np.dtype(np.uint32)
+    _STEP_INDEX_DTYPE = np.dtype(np.uint32)
+    _TIMESTAMP_DTYPE = np.dtype(np.float64)
+    _MOTOR_Z_DTYPE = np.dtype(np.float64)
+    _VALID_DTYPE = np.dtype(np.uint8)
+    _PROFILE_DTYPE = np.dtype(np.float64)
+    _SEGMENT_SUFFIXES = {
+        'info': ' Info',
+        'bead_ids': ' BeadIds',
+        'step_indices': ' StepIndices',
+        'timestamps': ' Timestamps',
+        'motor_z': ' MotorZ',
+        'valid': ' Valid',
+        'profiles': ' Profiles',
+    }
+
+    def __init__(
+        self,
+        *,
+        create: bool,
+        locks: dict[str, Lock],
+        capacity: int | None = None,
+        profile_length: int | None = None,
+        n_steps: int | None = None,
+        n_beads: int | None = None,
+        profiles_per_bead: int | None = None,
+        name: str = NAME,
+    ):
+        self.name = name
+        self.lock: Lock = locks[self.name]
+        self._owns_shared_memory = create
+        self._closed = False
+
+        self._shm_info = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['info'],
+            size=self._INFO_SIZE,
+        )
+
+        if create:
+            required = {
+                'capacity': capacity,
+                'profile_length': profile_length,
+                'n_steps': n_steps,
+                'n_beads': n_beads,
+                'profiles_per_bead': profiles_per_bead,
+            }
+            missing = [field for field, value in required.items() if value is None]
+            if missing:
+                raise ValueError(
+                    f"Missing required ZLUTSweepDataset creation parameters: {', '.join(missing)}"
+                )
+            if capacity <= 0:
+                raise ValueError('capacity must be positive')
+            if profile_length <= 0:
+                raise ValueError('profile_length must be positive')
+            if n_steps <= 0:
+                raise ValueError('n_steps must be positive')
+            if n_beads <= 0:
+                raise ValueError('n_beads must be positive')
+            if profiles_per_bead <= 0:
+                raise ValueError('profiles_per_bead must be positive')
+
+            self.capacity = int(capacity)
+            self.profile_length = int(profile_length)
+            self.n_steps = int(n_steps)
+            self.n_beads = int(n_beads)
+            self.profiles_per_bead = int(profiles_per_bead)
+            self._write_info('schema_version', self._SCHEMA_VERSION)
+            self._write_info('state', self.STATE_CREATING)
+            self._write_info('capacity', self.capacity)
+            self._write_info('profile_length', self.profile_length)
+            self._write_info('n_steps', self.n_steps)
+            self._write_info('n_beads', self.n_beads)
+            self._write_info('profiles_per_bead', self.profiles_per_bead)
+            self._write_info('count', 0)
+        else:
+            self._validate_schema_version()
+            self.capacity = self._read_info('capacity')
+            self.profile_length = self._read_info('profile_length')
+            self.n_steps = self._read_info('n_steps')
+            self.n_beads = self._read_info('n_beads')
+            self.profiles_per_bead = self._read_info('profiles_per_bead')
+            if capacity is not None and int(capacity) != self.capacity:
+                raise ValueError('capacity does not match existing ZLUTSweepDataset')
+            if profile_length is not None and int(profile_length) != self.profile_length:
+                raise ValueError('profile_length does not match existing ZLUTSweepDataset')
+
+        self._shm_bead_ids = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['bead_ids'],
+            size=self.capacity * self._BEAD_ID_DTYPE.itemsize,
+        )
+        self._shm_step_indices = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['step_indices'],
+            size=self.capacity * self._STEP_INDEX_DTYPE.itemsize,
+        )
+        self._shm_timestamps = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['timestamps'],
+            size=self.capacity * self._TIMESTAMP_DTYPE.itemsize,
+        )
+        self._shm_motor_z = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['motor_z'],
+            size=self.capacity * self._MOTOR_Z_DTYPE.itemsize,
+        )
+        self._shm_valid = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['valid'],
+            size=self.capacity * self._VALID_DTYPE.itemsize,
+        )
+        self._shm_profiles = SharedMemory(
+            create=create,
+            name=self.name + self._SEGMENT_SUFFIXES['profiles'],
+            size=self.capacity * self.profile_length * self._PROFILE_DTYPE.itemsize,
+        )
+
+        self._bead_ids = np.ndarray(
+            (self.capacity,), dtype=self._BEAD_ID_DTYPE, buffer=self._shm_bead_ids.buf
+        )
+        self._step_indices = np.ndarray(
+            (self.capacity,), dtype=self._STEP_INDEX_DTYPE, buffer=self._shm_step_indices.buf
+        )
+        self._timestamps = np.ndarray(
+            (self.capacity,), dtype=self._TIMESTAMP_DTYPE, buffer=self._shm_timestamps.buf
+        )
+        self._motor_z = np.ndarray(
+            (self.capacity,), dtype=self._MOTOR_Z_DTYPE, buffer=self._shm_motor_z.buf
+        )
+        self._valid = np.ndarray(
+            (self.capacity,), dtype=self._VALID_DTYPE, buffer=self._shm_valid.buf
+        )
+        self._profiles = np.ndarray(
+            (self.capacity, self.profile_length),
+            dtype=self._PROFILE_DTYPE,
+            buffer=self._shm_profiles.buf,
+        )
+
+        if create:
+            self._bead_ids.fill(0)
+            self._step_indices.fill(0)
+            self._timestamps.fill(np.nan)
+            self._motor_z.fill(np.nan)
+            self._valid.fill(0)
+            self._profiles.fill(np.nan)
+            self.set_state(self.STATE_READY)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        locks: dict[str, Lock],
+        capacity: int,
+        profile_length: int,
+        n_steps: int,
+        n_beads: int,
+        profiles_per_bead: int,
+        name: str = NAME,
+    ) -> 'ZLUTSweepDataset':
+        return cls(
+            create=True,
+            locks=locks,
+            capacity=capacity,
+            profile_length=profile_length,
+            n_steps=n_steps,
+            n_beads=n_beads,
+            profiles_per_bead=profiles_per_bead,
+            name=name,
+        )
+
+    @classmethod
+    def attach(cls, *, locks: dict[str, Lock], name: str = NAME) -> 'ZLUTSweepDataset':
+        return cls(create=False, locks=locks, name=name)
+
+    def __del__(self):
+        self.close()
+
+    @property
+    def state(self) -> int:
+        return self._read_info('state')
+
+    def set_state(self, value: int) -> None:
+        with self.lock:
+            self._write_info('state', int(value))
+
+    def write(
+        self,
+        *,
+        bead_ids: np.ndarray,
+        step_indices: np.ndarray,
+        timestamps: np.ndarray,
+        motor_z_values: np.ndarray,
+        valid_flags: np.ndarray,
+        profiles: np.ndarray,
+    ) -> None:
+        if self._closed:
+            raise RuntimeError('Cannot write to a closed ZLUTSweepDataset')
+
+        bead_ids_array = np.asarray(bead_ids, dtype=self._BEAD_ID_DTYPE)
+        step_indices_array = np.asarray(step_indices, dtype=self._STEP_INDEX_DTYPE)
+        timestamps_array = np.asarray(timestamps, dtype=self._TIMESTAMP_DTYPE)
+        motor_z_array = np.asarray(motor_z_values, dtype=self._MOTOR_Z_DTYPE)
+        valid_array = np.asarray(valid_flags, dtype=self._VALID_DTYPE)
+        profiles_array = np.asarray(profiles, dtype=self._PROFILE_DTYPE)
+
+        batch_size = bead_ids_array.shape[0]
+        expected_shapes = {
+            'step_indices': step_indices_array.shape,
+            'timestamps': timestamps_array.shape,
+            'motor_z_values': motor_z_array.shape,
+            'valid_flags': valid_array.shape,
+        }
+        for field_name, shape in expected_shapes.items():
+            if shape != (batch_size,):
+                raise ValueError(f'{field_name} must have shape ({batch_size},)')
+        if profiles_array.shape != (batch_size, self.profile_length):
+            raise ValueError(
+                f'profiles must have shape ({batch_size}, {self.profile_length})'
+            )
+
+        with self.lock:
+            count = self._read_info('count')
+            end = count + batch_size
+            if end > self.capacity:
+                raise BufferOverflow('ZLUTSweepDataset capacity exceeded')
+            self._bead_ids[count:end] = bead_ids_array
+            self._step_indices[count:end] = step_indices_array
+            self._timestamps[count:end] = timestamps_array
+            self._motor_z[count:end] = motor_z_array
+            self._valid[count:end] = valid_array
+            self._profiles[count:end, :] = profiles_array
+            self._write_info('count', end)
+
+    def peak(self) -> dict[str, np.ndarray]:
+        if self._closed:
+            raise RuntimeError('Cannot read from a closed ZLUTSweepDataset')
+
+        with self.lock:
+            count = self._read_info('count')
+            return {
+                'bead_ids': self._bead_ids[:count].copy(),
+                'step_indices': self._step_indices[:count].copy(),
+                'timestamps': self._timestamps[:count].copy(),
+                'motor_z_values': self._motor_z[:count].copy(),
+                'valid_flags': self._valid[:count].copy(),
+                'profiles': self._profiles[:count, :].copy(),
+            }
+
+    def get_count(self) -> int:
+        if self._closed:
+            raise RuntimeError('Cannot read from a closed ZLUTSweepDataset')
+        with self.lock:
+            return self._read_info('count')
+
+    def get_capacity(self) -> int:
+        return self.capacity
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for attr in (
+            '_shm_profiles',
+            '_shm_valid',
+            '_shm_motor_z',
+            '_shm_timestamps',
+            '_shm_step_indices',
+            '_shm_bead_ids',
+            '_shm_info',
+        ):
+            shm = getattr(self, attr, None)
+            if shm is not None:
+                shm.close()
+        self._closed = True
+
+    def destroy(self) -> None:
+        if not self._owns_shared_memory:
+            raise RuntimeError('Only the creating process may destroy a ZLUTSweepDataset')
+        self.set_state(self.STATE_DESTROYED)
+        for attr in (
+            '_shm_profiles',
+            '_shm_valid',
+            '_shm_motor_z',
+            '_shm_timestamps',
+            '_shm_step_indices',
+            '_shm_bead_ids',
+            '_shm_info',
+        ):
+            shm = getattr(self, attr, None)
+            if shm is not None:
+                try:
+                    shm.unlink()
+                except FileNotFoundError:
+                    pass
+        self.close()
+
+    def _validate_schema_version(self) -> None:
+        schema_version = self._read_info('schema_version')
+        if schema_version != self._SCHEMA_VERSION:
+            raise ValueError(
+                f'Unsupported ZLUTSweepDataset schema version: {schema_version}'
+            )
+
+    def _read_info(self, field: str) -> int:
+        field_index = self._INFO_FIELDS[field]
+        start = field_index * 8
+        end = start + 8
+        return int.from_bytes(self._shm_info.buf[start:end], byteorder='big')
+
+    def _write_info(self, field: str, value: int) -> None:
+        field_index = self._INFO_FIELDS[field]
+        start = field_index * 8
+        end = start + 8
+        self._shm_info.buf[start:end] = int(value).to_bytes(8, byteorder='big')
+
 class BufferUnderflow(Exception):
     """Raised when attempting to read from a buffer that contains no data."""
 
