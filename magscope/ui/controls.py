@@ -2216,6 +2216,7 @@ class ZLUTSweepPreviewWidget(QWidget):
     def clear(self, message: str = 'Waiting for Z-LUT sweep data...') -> None:
         self.summary_label.setText(message)
         self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+        self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
         self._image.set_clim(0.0, 1.0)
         self.axes.set_title('No sweep preview available')
         self.axes.set_xlabel('Capture Index')
@@ -2257,6 +2258,7 @@ class ZLUTSweepPreviewWidget(QWidget):
 
         if preview_image is None or preview_image.size == 0:
             self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
             self._image.set_clim(0.0, 1.0)
             self.axes.set_title('No sweep preview available')
             self.axes.set_xlim(-0.5, 0.5)
@@ -2268,6 +2270,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         finite_mask = np.isfinite(finite)
         if not np.any(finite_mask):
             self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
             self._image.set_clim(0.0, 1.0)
             self.axes.set_title('No finite sweep data available')
             self.axes.set_xlim(-0.5, 0.5)
@@ -2281,6 +2284,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         if np.isclose(vmin, vmax):
             vmax = vmin + 1.0
         self._image.set_data(finite)
+        self._image.set_extent((-0.5, finite.shape[1] - 0.5, -0.5, finite.shape[0] - 0.5))
         self._image.set_clim(vmin, vmax)
         self.axes.set_title(f'{mode} preview')
         self.axes.set_xlabel('Capture Index' if mode == 'Raw sweep' else 'Step Index')
