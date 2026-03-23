@@ -274,6 +274,7 @@ class ArmZLUTSweepCaptureCommand(Command):
     step_index: int
     motor_z_value: float
     remaining_profiles_per_bead: int
+    earliest_timestamp: float
 
 
 @dataclass(frozen=True)

@@ -55,6 +55,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._previous_acquisition_on = False
         self._profile_length: int | None = None
         self._profiles_per_bead = 0
+        self._current_step_capture_earliest_timestamp = 0.0
         self._current_step_profiles_written = 0
         self._requested_range: tuple[float, float, float] | None = None
         self._selected_bead_id: int | None = None
@@ -169,7 +170,21 @@ class ZLUTGenerationManager(ManagerProcessBase):
             self._fail_session(error)
             return
         if written_count <= 0:
-            self._fail_session('Sweep capture completed without any profiles being written.')
+            self.send_ipc(
+                ArmZLUTSweepCaptureCommand(
+                    step_index=self._current_step_index,
+                    motor_z_value=float(self._steps[self._current_step_index]),
+                    remaining_profiles_per_bead=self._profiles_per_bead - self._current_step_profiles_written,
+                    earliest_timestamp=self._current_step_capture_earliest_timestamp,
+                )
+            )
+            self._send_state(
+                f'Waiting for a fresh settled frame at step {self._current_step_index + 1} of {self._steps.size}.',
+                detail='Skipping frames captured before the focus motor fully settled.',
+                running=True,
+                can_cancel=True,
+                phase='capturing',
+            )
             return
         self._current_step_profiles_written += int(written_profiles_per_bead)
         if self._current_step_profiles_written >= self._profiles_per_bead:
@@ -181,6 +196,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 step_index=self._current_step_index,
                 motor_z_value=float(self._steps[self._current_step_index]),
                 remaining_profiles_per_bead=self._profiles_per_bead - self._current_step_profiles_written,
+                earliest_timestamp=self._current_step_capture_earliest_timestamp,
             )
         )
         self._send_state(
@@ -314,6 +330,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._phase = 'moving'
         self._step_capture_complete = False
         self._current_step_profiles_written = 0
+        self._current_step_capture_earliest_timestamp = 0.0
         self.send_ipc(DisarmZLUTSweepCaptureCommand())
         self.send_ipc(SetAcquisitionOnCommand(False))
         self.send_ipc(MoveFocusMotorAbsoluteCommand(z=target_z))
@@ -338,12 +355,14 @@ class ZLUTGenerationManager(ManagerProcessBase):
 
         self._phase = 'capturing'
         self._step_capture_complete = False
+        self._current_step_capture_earliest_timestamp = time()
         self.send_ipc(SetAcquisitionOnCommand(True))
         self.send_ipc(
             ArmZLUTSweepCaptureCommand(
                 step_index=self._current_step_index,
                 motor_z_value=float(current_z),
                 remaining_profiles_per_bead=self._profiles_per_bead,
+                earliest_timestamp=self._current_step_capture_earliest_timestamp,
             )
         )
         self._send_state(
@@ -436,6 +455,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._phase = 'idle'
         self._profile_length = None
         self._profiles_per_bead = 0
+        self._current_step_capture_earliest_timestamp = 0.0
         self._current_step_profiles_written = 0
         self._requested_range = None
         self._selected_bead_id = None

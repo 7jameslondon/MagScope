@@ -53,6 +53,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._pending_profile_length_request = False
         self._warning_queue: QueueType | None = None
         self._zlut_capture_complete_queue: QueueType | None = None
+        self._zlut_capture_earliest_timestamp: float | None = None
         self._zlut_capture_motor_z_value: float | None = None
         self._zlut_capture_remaining_profiles_per_bead: int | None = None
         self._zlut_capture_step_index: int | None = None
@@ -286,16 +287,19 @@ class VideoProcessorManager(ManagerProcessBase):
         step_index: int,
         motor_z_value: float,
         remaining_profiles_per_bead: int,
+        earliest_timestamp: float,
     ) -> None:
         self._zlut_capture_step_index = int(step_index)
         self._zlut_capture_motor_z_value = float(motor_z_value)
         self._zlut_capture_remaining_profiles_per_bead = int(remaining_profiles_per_bead)
+        self._zlut_capture_earliest_timestamp = float(earliest_timestamp)
 
     @register_ipc_command(DisarmZLUTSweepCaptureCommand)
     def disarm_zlut_sweep_capture(self) -> None:
         self._zlut_capture_step_index = None
         self._zlut_capture_motor_z_value = None
         self._zlut_capture_remaining_profiles_per_bead = None
+        self._zlut_capture_earliest_timestamp = None
 
     def _process_zlut_capture_reports(self) -> None:
         if self._zlut_capture_complete_queue is None:
@@ -333,15 +337,18 @@ class VideoProcessorManager(ManagerProcessBase):
             'zlut': self._zlut
         }
         capture_step_index = self._zlut_capture_step_index
+        capture_earliest_timestamp = self._zlut_capture_earliest_timestamp
         capture_motor_z_value = self._zlut_capture_motor_z_value
         capture_remaining_profiles_per_bead = self._zlut_capture_remaining_profiles_per_bead
         if (
             capture_step_index is not None
+            and capture_earliest_timestamp is not None
             and capture_motor_z_value is not None
             and capture_remaining_profiles_per_bead is not None
         ):
             kwargs['zlut_capture'] = {
                 'step_index': int(capture_step_index),
+                'earliest_timestamp': float(capture_earliest_timestamp),
                 'motor_z_value': float(capture_motor_z_value),
                 'remaining_profiles_per_bead': int(capture_remaining_profiles_per_bead),
             }
@@ -350,6 +357,7 @@ class VideoProcessorManager(ManagerProcessBase):
             self._tasks.put_nowait(kwargs)
             if 'zlut_capture' in kwargs:
                 self._zlut_capture_step_index = None
+                self._zlut_capture_earliest_timestamp = None
                 self._zlut_capture_motor_z_value = None
                 self._zlut_capture_remaining_profiles_per_bead = None
                 return True
@@ -524,6 +532,14 @@ class VideoWorker(Process):
                 if n_beads <= 0:
                     self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, None))
                     return
+                timestamp_rows = np.asarray(timestamps, dtype=np.float64)
+                finite_timestamps = timestamp_rows[np.isfinite(timestamp_rows)]
+                if finite_timestamps.size == 0:
+                    self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, None))
+                    return
+                if float(np.min(finite_timestamps)) <= float(zlut_capture['earliest_timestamp']):
+                    self._zlut_capture_complete_queue.put_nowait((zlut_capture['step_index'], 0, 0, None))
+                    return
                 available_profiles_per_bead = int(np.asarray(timestamps).shape[0] / n_beads)
                 written_profiles_per_bead = min(
                     available_profiles_per_bead,
@@ -536,7 +552,7 @@ class VideoWorker(Process):
 
                 profile_rows = np.asarray(profiles, dtype=np.float64).T[:batch_size, :]
                 bead_id_rows = np.asarray(bead_ids, dtype=np.uint32)[:batch_size]
-                timestamp_rows = np.asarray(timestamps, dtype=np.float64)[:batch_size]
+                timestamp_rows = timestamp_rows[:batch_size]
                 self._zlut_sweep_dataset.write(
                     bead_ids=bead_id_rows,
                     step_indices=np.full((batch_size,), zlut_capture['step_index'], dtype=np.uint32),

@@ -158,6 +158,7 @@ def test_handle_capture_complete_rearms_until_requested_profiles_per_bead_reache
     manager._phase = 'capturing'
     manager._current_step_index = 0
     manager._profiles_per_bead = 5
+    manager._current_step_capture_earliest_timestamp = 123.0
     manager._current_step_profiles_written = 2
     manager._steps = np.asarray([12.5], dtype=np.float64)
 
@@ -166,3 +167,27 @@ def test_handle_capture_complete_rearms_until_requested_profiles_per_bead_reache
     assert manager._step_capture_complete is False
     assert manager._current_step_profiles_written == 3
     assert sent_commands[0].remaining_profiles_per_bead == 2
+    assert sent_commands[0].earliest_timestamp == 123.0
+
+
+def test_handle_capture_complete_rearms_when_stale_stack_is_skipped():
+    manager = make_manager()
+    sent_commands = []
+    state_updates = []
+    manager.send_ipc = sent_commands.append
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._active = True
+    manager._phase = 'capturing'
+    manager._current_step_index = 0
+    manager._profiles_per_bead = 4
+    manager._current_step_capture_earliest_timestamp = 321.0
+    manager._current_step_profiles_written = 1
+    manager._steps = np.asarray([7.5], dtype=np.float64)
+
+    manager.handle_capture_complete(step_index=0, written_count=0, written_profiles_per_bead=0)
+
+    assert manager._step_capture_complete is False
+    assert manager._current_step_profiles_written == 1
+    assert sent_commands[0].remaining_profiles_per_bead == 3
+    assert sent_commands[0].earliest_timestamp == 321.0
+    assert state_updates[-1][1]['phase'] == 'capturing'
