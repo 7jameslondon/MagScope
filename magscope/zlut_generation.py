@@ -639,7 +639,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         if np.isclose(step, 0.0):
             raise ValueError('Step size must be non-zero.')
         if np.isclose(start, stop):
-            return np.asarray([start], dtype=np.float64)
+            raise ValueError('Z-LUT generation requires at least two z positions.')
 
         delta = stop - start
         if np.sign(delta) != np.sign(step):

@@ -174,6 +174,38 @@ def test_start_generation_fails_fast_for_non_tracking_acquisition_mode():
     ]
 
 
+def test_start_generation_rejects_single_position_sweep():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._refresh_bead_roi_cache = lambda: None
+    manager._cleanup_runtime_state = lambda destroy_dataset: None
+    manager._acquisition_mode = AcquisitionMode.TRACK
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._focus_motor_name = 'focus'
+    manager._focus_buffer = object()
+    manager.video_buffer = object()
+    manager._bead_roi_ids = np.asarray([1], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[0, 10, 0, 10]], dtype=np.float64)
+    manager._acquisition_on = False
+
+    manager.start_generation(5.0, 1.0, 5.0, 3)
+
+    assert any(isinstance(command, ShowErrorCommand) for command in manager._sent_commands)
+    error_command = next(command for command in manager._sent_commands if isinstance(command, ShowErrorCommand))
+    assert error_command.text == 'Could not start Z-LUT generation'
+    assert error_command.details == 'Z-LUT generation requires at least two z positions.'
+    assert state_updates == [
+        (
+            ('Generation failed to start.',),
+            {
+                'detail': 'Z-LUT generation requires at least two z positions.',
+                'phase': 'idle',
+            },
+        )
+    ]
+
+
 def test_handle_capture_complete_waits_until_requested_profiles_per_bead():
     manager = make_manager()
     sent_commands = []

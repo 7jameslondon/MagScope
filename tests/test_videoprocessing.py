@@ -67,6 +67,7 @@ sys.modules["magscope.videoprocessing"] = videoprocessing
 videoprocessing_spec.loader.exec_module(videoprocessing)
 
 VideoProcessorManager = videoprocessing.VideoProcessorManager
+VideoWorker = videoprocessing.VideoWorker
 
 
 class DummyQueue:
@@ -121,3 +122,31 @@ def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
     assert manager._zlut_capture_earliest_timestamp is None
     assert manager._zlut_capture_motor_z_value is None
     assert manager._zlut_capture_remaining_profiles_per_bead is None
+
+
+def test_worker_reports_zlut_capture_failure_to_manager():
+    queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=queue,
+        locks={},
+        video_flag=None,
+        busy_count=None,
+        gpu_lock=None,
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=queue,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=None,
+        live_profile_bead=None,
+    )
+
+    worker._report_zlut_capture_task_failure(
+        {
+            'zlut_capture': {
+                'step_index': 4,
+            }
+        },
+        RuntimeError('capture failed'),
+    )
+
+    assert queue.items == [(4, 0, 0, 'capture failed')]

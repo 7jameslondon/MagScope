@@ -448,10 +448,26 @@ class VideoWorker(Process):
                 self.process(task)
             except Exception as e:
                 logger.exception('Error in video processing: %s', e)
+                self._report_zlut_capture_task_failure(task, e)
             with self._busy_count.get_lock():
                 self._busy_count.value -= 1
         if self._zlut_sweep_dataset is not None:
             self._zlut_sweep_dataset.close()
+
+    def _report_zlut_capture_task_failure(self, task: dict | None, exc: Exception) -> None:
+        if self._zlut_capture_complete_queue is None or not isinstance(task, dict):
+            return
+        zlut_capture = task.get('zlut_capture')
+        if not isinstance(zlut_capture, dict):
+            return
+        step_index = zlut_capture.get('step_index')
+        if step_index is None:
+            return
+        reason = str(exc).strip() or repr(exc)
+        try:
+            self._zlut_capture_complete_queue.put_nowait((int(step_index), 0, 0, reason))
+        except Full:
+            logger.debug('Dropping Z-LUT capture task failure because queue is full')
 
     def process(self, kwargs):
         acquisition_dir: str = kwargs['acquisition_dir']
