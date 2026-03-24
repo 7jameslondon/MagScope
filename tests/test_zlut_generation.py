@@ -231,10 +231,49 @@ def test_start_generation_requests_focus_motor_limits_before_preparing_session()
             {
                 'detail': 'Checking that the requested Z-LUT sweep stays within the focus motor range.',
                 'running': True,
-                'can_cancel': False,
+                'can_cancel': True,
                 'phase': 'waiting_focus_limits',
             },
         )
+    ]
+
+
+def test_cancel_generation_while_waiting_for_focus_limits_resets_state():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._refresh_bead_roi_cache = lambda: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._cleanup_runtime_state = lambda destroy_dataset: state_updates.append(
+        (('cleanup',), {'destroy_dataset': destroy_dataset})
+    )
+
+    manager.start_generation(0.0, 5.0, 10.0, 7)
+    manager.cancel_generation()
+
+    assert isinstance(manager._sent_commands[0], RequestFocusMotorLimitsCommand)
+    assert state_updates == [
+        (
+            ('Waiting for focus motor limits.',),
+            {
+                'detail': 'Checking that the requested Z-LUT sweep stays within the focus motor range.',
+                'running': True,
+                'can_cancel': True,
+                'phase': 'waiting_focus_limits',
+            },
+        ),
+        (
+            ('Z-LUT generation canceled.',),
+            {
+                'running': False,
+                'can_cancel': False,
+                'phase': 'idle',
+            },
+        ),
+        (
+            ('cleanup',),
+            {'destroy_dataset': True},
+        ),
     ]
 
 

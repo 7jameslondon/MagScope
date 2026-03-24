@@ -180,6 +180,9 @@ def load_scope_with_stubs(monkeypatch):
     class HardwareManagerBase(StubManagerProcessBase):
         pass
 
+    class FocusMotorBase(HardwareManagerBase):
+        pass
+
     class InterprocessValues:
         pass
 
@@ -197,7 +200,10 @@ def load_scope_with_stubs(monkeypatch):
             "TimeSeriesPlotBase": type("TimeSeriesPlotBase", (), {}),
             "UIManager": UIManager,
         },
-        "magscope.hardware": {"HardwareManagerBase": HardwareManagerBase},
+        "magscope.hardware": {
+            "FocusMotorBase": FocusMotorBase,
+            "HardwareManagerBase": HardwareManagerBase,
+        },
         "magscope.processes": {
             "InterprocessValues": InterprocessValues,
             "ManagerProcessBase": StubManagerProcessBase,
@@ -397,3 +403,24 @@ def test_collect_processes_includes_zlut_generation_manager(scope_module):
     assert 'ZLUTSweepDataset' in scope.lock_names
 
     scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_add_hardware_rejects_multiple_focus_motors(scope_module):
+    scope = make_scope(scope_module)
+    FocusMotorBase = scope_module.FocusMotorBase
+
+    class PrimaryFocusMotor(FocusMotorBase):
+        pass
+
+    class SecondaryFocusMotor(FocusMotorBase):
+        pass
+
+    primary = PrimaryFocusMotor()
+    primary.name = 'PrimaryFocusMotor'
+    secondary = SecondaryFocusMotor()
+    secondary.name = 'SecondaryFocusMotor'
+
+    scope.add_hardware(primary)
+
+    with pytest.raises(ValueError, match='supports only one FocusMotorBase'):
+        scope.add_hardware(secondary)

@@ -56,7 +56,7 @@ from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import BeadRoiBuffer, LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
-from magscope.hardware import HardwareManagerBase
+from magscope.hardware import FocusMotorBase, HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
     command_kwargs,
@@ -212,6 +212,13 @@ class MagScope(metaclass=SingletonMeta):
 
     def add_hardware(self, hardware: HardwareManagerBase):
         """Register a hardware manager so its process launches with MagScope."""
+        if isinstance(hardware, FocusMotorBase):
+            for existing in self._hardware.values():
+                if isinstance(existing, FocusMotorBase):
+                    raise ValueError(
+                        'MagScope supports only one FocusMotorBase hardware manager. '
+                        f'Already registered: {existing.name}; refusing to add {hardware.name}.'
+                    )
         self._hardware[hardware.name] = hardware
         self.command_registry.register_manager(hardware)
 

@@ -137,7 +137,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 'Waiting for focus motor limits.',
                 detail='Checking that the requested Z-LUT sweep stays within the focus motor range.',
                 running=True,
-                can_cancel=False,
+                can_cancel=True,
                 phase='waiting_focus_limits',
             )
             self.send_ipc(RequestFocusMotorLimitsCommand())
@@ -149,6 +149,10 @@ class ZLUTGenerationManager(ManagerProcessBase):
     def cancel_generation(self):
         if self._phase == 'evaluating':
             self.cancel_evaluation()
+            return
+        if self._phase == 'waiting_focus_limits':
+            self._send_state('Z-LUT generation canceled.', running=False, can_cancel=False, phase='idle')
+            self._cleanup_runtime_state(destroy_dataset=True)
             return
         if not self._active:
             return
