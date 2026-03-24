@@ -282,6 +282,11 @@ class ReportZLUTProfileLengthCommand(Command):
 
 
 @dataclass(frozen=True)
+class ClearPendingZLUTProfileLengthCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
 class ArmZLUTSweepCaptureCommand(Command):
     step_index: int
     motor_z_value: float

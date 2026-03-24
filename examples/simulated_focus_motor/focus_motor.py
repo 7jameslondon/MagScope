@@ -139,12 +139,12 @@ class FocusMotorControls(magscope.ControlPanelBase):
         if not np.any(finite_rows):
             return
 
-        _, position, target, is_moving_value = data[finite_rows][-1, :]
-        is_moving = bool(round(is_moving_value))
+        _, position, target, is_at_target_value = data[finite_rows][-1, :]
+        is_at_target = bool(round(is_at_target_value))
 
         # Update GUI
-        moving_suffix = ' (moving)' if is_moving else ''
-        self.position_label.setText(f"Position: {position:.3f}{moving_suffix}")
+        status_suffix = ' (at target)' if is_at_target else ' (moving)'
+        self.position_label.setText(f"Position: {position:.3f}{status_suffix}")
         self.target_label.setText(f"Target: {target:.3f}")
 
     def _send_move_command(self) -> None:

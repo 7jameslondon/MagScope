@@ -149,6 +149,19 @@ def test_add_task_uses_frozen_rois_for_pending_zlut_profile_length(manager):
     )
 
 
+def test_clear_pending_zlut_profile_length_request_resets_frozen_rois(manager):
+    manager._pending_zlut_profile_length_request = True
+    manager._zlut_frozen_bead_ids = np.asarray([7, 8], dtype=np.uint32)
+    manager._zlut_frozen_bead_rois = np.asarray([[1, 2, 3, 4], [11, 12, 13, 14]], dtype=np.uint32)
+
+    manager.clear_pending_zlut_profile_length_request()
+
+    assert manager._pending_zlut_profile_length_request is False
+    assert manager._zlut_frozen_bead_ids.size == 0
+    assert manager._zlut_frozen_bead_rois.shape == (0, 4)
+    assert manager._should_use_frozen_zlut_rois() is False
+
+
 def test_worker_reports_zlut_capture_failure_to_manager():
     queue = DummyQueue()
     worker = VideoWorker(

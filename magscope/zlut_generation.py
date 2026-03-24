@@ -14,6 +14,7 @@ from magscope.ipc_commands import (
     ArmZLUTSweepCaptureCommand,
     CancelGeneratedZLUTEvaluationCommand,
     CancelZLUTGenerationCommand,
+    ClearPendingZLUTProfileLengthCommand,
     DisarmZLUTSweepCaptureCommand,
     LoadZLUTCommand,
     MoveFocusMotorAbsoluteCommand,
@@ -414,9 +415,9 @@ class ZLUTGenerationManager(ManagerProcessBase):
         focus_state = self._latest_focus_state()
         if focus_state is None:
             return
-        current_z, target_z, is_moving = focus_state
+        current_z, target_z, is_at_target = focus_state
         requested_z = float(self._steps[self._current_step_index])
-        if is_moving:
+        if not is_at_target:
             return
         if not np.isclose(target_z, requested_z):
             return
@@ -492,6 +493,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         )
 
     def _cancel_session(self) -> None:
+        self._clear_pending_profile_length_request()
         self.send_ipc(DisarmZLUTSweepCaptureCommand())
         self.send_ipc(SetAcquisitionOnCommand(self._previous_acquisition_on))
         self._send_state('Z-LUT generation canceled.', running=False, can_cancel=False, phase='idle')
@@ -500,6 +502,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
     def _fail_session(self, reason: str) -> None:
         logger.warning('Z-LUT generation failed: %s', reason)
         self.send_ipc(ShowErrorCommand(text='Z-LUT generation failed', details=reason))
+        self._clear_pending_profile_length_request()
         self.send_ipc(DisarmZLUTSweepCaptureCommand())
         self.send_ipc(SetAcquisitionOnCommand(self._previous_acquisition_on))
         self._send_state('Z-LUT generation failed.', detail=reason, running=False, can_cancel=False, phase='idle')
@@ -520,6 +523,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         reason = str(exc).strip() or repr(exc)
         logger.warning('Could not start Z-LUT generation: %s', reason)
         self.send_ipc(ShowErrorCommand(text='Could not start Z-LUT generation', details=reason))
+        self._clear_pending_profile_length_request()
         self._send_state('Generation failed to start.', detail=reason, phase='idle')
         self._cleanup_runtime_state(destroy_dataset=True)
 
@@ -566,9 +570,12 @@ class ZLUTGenerationManager(ManagerProcessBase):
         finite_rows = np.isfinite(data[:, 0])
         if not np.any(finite_rows):
             return None
-        timestamp, current_z, target_z, is_moving = data[finite_rows][-1, :]
+        timestamp, current_z, target_z, is_at_target = data[finite_rows][-1, :]
         _ = timestamp
-        return float(current_z), float(target_z), bool(round(is_moving))
+        return float(current_z), float(target_z), bool(round(is_at_target))
+
+    def _clear_pending_profile_length_request(self) -> None:
+        self.send_ipc(ClearPendingZLUTProfileLengthCommand())
 
     def _bead_id_payload(self) -> tuple[int, ...]:
         return tuple(int(bead_id) for bead_id in self._session_bead_roi_ids)

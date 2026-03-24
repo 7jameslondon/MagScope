@@ -450,7 +450,7 @@ def test_focus_motor_base_setup_writes_initial_state(monkeypatch):
     assert motor._is_connected is True
     assert isinstance(motor._buffer, FakeHardwareBuffer)
     assert len(motor._buffer.rows) == 1
-    np.testing.assert_allclose(motor._buffer.rows[0][0, 1:], [1.5, 1.5, 0.0])
+    np.testing.assert_allclose(motor._buffer.rows[0][0, 1:], [1.5, 1.5, 1.0])
 
 
 def test_focus_motor_base_clips_move_and_records_polled_state(monkeypatch):
@@ -465,13 +465,14 @@ def test_focus_motor_base_clips_move_and_records_polled_state(monkeypatch):
 
     assert motor.get_target_z() == pytest.approx(10.0)
     assert motor.target == pytest.approx(10.0)
-    assert motor.is_in_position() is False
+    assert motor.is_at_target() is False
+    np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [1.5, 10.0, 0.0])
 
     motor.fetch()
 
-    assert motor.is_in_position() is True
+    assert motor.is_at_target() is True
     assert len(motor._buffer.rows) >= 3
-    np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [10.0, 10.0, 0.0])
+    np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [10.0, 10.0, 1.0])
 
 
 def test_focus_motor_base_reports_position_limits():

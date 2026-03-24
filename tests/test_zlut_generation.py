@@ -1,6 +1,8 @@
 import numpy as np
 
 from magscope.ipc_commands import (
+    ArmZLUTSweepCaptureCommand,
+    ClearPendingZLUTProfileLengthCommand,
     LoadZLUTCommand,
     RequestFocusMotorLimitsCommand,
     RequestZLUTProfileLengthCommand,
@@ -403,6 +405,75 @@ def test_report_focus_motor_limits_continues_startup_when_in_range():
             'phase': 'waiting_profile_length',
         },
     )
+
+
+def test_advance_when_in_position_waits_for_at_target_flag():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._phase = 'moving'
+    manager._current_step_index = 0
+    manager._profiles_per_bead = 3
+    manager._steps = np.asarray([12.5], dtype=np.float64)
+    manager._session_bead_roi_ids = np.asarray([4], dtype=np.uint32)
+    manager._session_bead_roi_values = np.asarray([[1, 2, 3, 4]], dtype=np.uint32)
+    manager._latest_focus_state = lambda: (7.5, 12.5, False)
+
+    manager._advance_when_in_position()
+
+    assert manager._phase == 'moving'
+    assert manager._sent_commands == []
+    assert state_updates == []
+
+
+def test_advance_when_in_position_arms_capture_once_at_target():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._phase = 'moving'
+    manager._current_step_index = 0
+    manager._profiles_per_bead = 3
+    manager._steps = np.asarray([12.5], dtype=np.float64)
+    manager._session_bead_roi_ids = np.asarray([4], dtype=np.uint32)
+    manager._session_bead_roi_values = np.asarray([[1, 2, 3, 4]], dtype=np.uint32)
+    manager._latest_focus_state = lambda: (7.5, 12.5, True)
+
+    manager._advance_when_in_position()
+
+    assert manager._phase == 'capturing'
+    assert isinstance(manager._sent_commands[0], SetAcquisitionOnCommand)
+    assert manager._sent_commands[0].value is True
+    assert isinstance(manager._sent_commands[1], ArmZLUTSweepCaptureCommand)
+    assert manager._sent_commands[1].motor_z_value == 7.5
+    assert state_updates[-1][1]['phase'] == 'capturing'
+
+
+def test_cancel_session_clears_pending_zlut_profile_length_request():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._previous_acquisition_on = True
+    manager._cleanup_runtime_state = lambda destroy_dataset: state_updates.append(
+        (('cleanup',), {'destroy_dataset': destroy_dataset})
+    )
+
+    manager._cancel_session()
+
+    assert isinstance(manager._sent_commands[0], ClearPendingZLUTProfileLengthCommand)
+    assert state_updates[-1] == (("cleanup",), {'destroy_dataset': True})
+
+
+def test_fail_session_clears_pending_zlut_profile_length_request():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._cleanup_runtime_state = lambda destroy_dataset: state_updates.append(
+        (('cleanup',), {'destroy_dataset': destroy_dataset})
+    )
+
+    manager._fail_session('boom')
+
+    assert isinstance(manager._sent_commands[1], ClearPendingZLUTProfileLengthCommand)
 
 
 def test_report_focus_motor_limits_ignores_out_of_phase_reports():

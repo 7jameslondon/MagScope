@@ -22,11 +22,11 @@ from magscope.datatypes import (
     ZLUTSweepDataset,
 )
 from magscope.ipc import Delivery, register_ipc_command
-from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, DisarmZLUTSweepCaptureCommand,
-                                   LoadZLUTCommand, ReportProfileLengthCommand,
-                                   ReportZLUTProfileLengthCommand, RequestProfileLengthCommand,
-                                   RequestZLUTProfileLengthCommand, SetSettingsCommand,
-                                   ShowMessageCommand, UnloadZLUTCommand,
+from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, ClearPendingZLUTProfileLengthCommand,
+                                   DisarmZLUTSweepCaptureCommand, LoadZLUTCommand,
+                                   ReportProfileLengthCommand, ReportZLUTProfileLengthCommand,
+                                   RequestProfileLengthCommand, RequestZLUTProfileLengthCommand,
+                                   SetSettingsCommand, ShowMessageCommand, UnloadZLUTCommand,
                                    UpdateTrackingOptionsCommand, UpdateWaitingCommand,
                                    UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand,
                                    ZLUTSweepCaptureCompleteCommand)
@@ -293,6 +293,18 @@ class VideoProcessorManager(ManagerProcessBase):
             self._pending_zlut_profile_length_request = False
             self.send_ipc(ReportZLUTProfileLengthCommand(profile_length=int(profile_length)))
             break
+
+    @register_ipc_command(ClearPendingZLUTProfileLengthCommand)
+    def clear_pending_zlut_profile_length_request(self) -> None:
+        self._pending_zlut_profile_length_request = False
+        self._zlut_frozen_bead_ids = np.zeros((0,), dtype=np.uint32)
+        self._zlut_frozen_bead_rois = np.zeros((0, 4), dtype=np.uint32)
+        if self._zlut_profile_length_queue is not None:
+            while True:
+                try:
+                    self._zlut_profile_length_queue.get_nowait()
+                except Empty:
+                    break
 
     @register_ipc_command(ArmZLUTSweepCaptureCommand)
     def arm_zlut_sweep_capture(

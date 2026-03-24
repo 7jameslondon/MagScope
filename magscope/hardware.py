@@ -62,9 +62,11 @@ class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
     Subclasses provide the device-specific motion primitives while this base
     class standardizes polling, telemetry buffering, and the optional bridge to
     the simulated camera. The hardware matrix buffer stores rows as
-    ``[timestamp, current_z, target_z, is_moving]`` where ``is_moving`` is
-    encoded as ``0.0`` or ``1.0``.
+    ``[timestamp, current_z, target_z, is_at_target]`` where ``is_at_target``
+    is encoded as ``0.0`` or ``1.0``.
     """
+
+    at_target_tolerance = 1e-6
 
     def __init__(self):
         super().__init__()
@@ -89,15 +91,15 @@ class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
         now = time()
         self._poll_hardware(now)
         current_z = float(self.get_current_z())
-        is_moving = bool(self.get_is_moving())
-        state = (current_z, self._target_z, is_moving)
+        is_at_target = bool(self.is_at_target())
+        state = (current_z, self._target_z, is_at_target)
         moved = self._last_state is None or not np.allclose(state[:2], self._last_state[:2])
-        motion_changed = self._last_state is None or is_moving != self._last_state[2]
+        target_state_changed = self._last_state is None or is_at_target != self._last_state[2]
 
         if moved:
             self._update_simulated_camera_focus(current_z)
 
-        if motion_changed or moved or (now - self._last_written) >= self.fetch_interval:
+        if target_state_changed or moved or (now - self._last_written) >= self.fetch_interval:
             self._write_state(now, current_z)
 
     @register_ipc_command(MoveFocusMotorAbsoluteCommand)
@@ -121,26 +123,28 @@ class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
     def get_target_z(self) -> float:
         return self._target_z
 
-    def is_in_position(self, tolerance: float = 1e-6) -> bool:
+    def is_at_target(self, tolerance: float | None = None) -> bool:
+        if tolerance is None:
+            tolerance = self.at_target_tolerance
         return (
             not self.get_is_moving()
-            and abs(float(self.get_current_z()) - self._target_z) <= tolerance
+            and abs(float(self.get_current_z()) - self._target_z) <= float(tolerance)
         )
 
     def _write_state(self, timestamp: float, current_z: float, *, force: bool = False) -> None:
         if self._buffer is None:
             raise RuntimeError(f'{self.name} has no hardware buffer')
 
-        is_moving = bool(self.get_is_moving())
+        is_at_target = bool(self.is_at_target())
         row = np.array(
-            [[timestamp, current_z, self._target_z, float(is_moving)]],
+            [[timestamp, current_z, self._target_z, float(is_at_target)]],
             dtype=float,
         )
         if force or not np.isclose(current_z, self._target_z):
             self._update_simulated_camera_focus(current_z, force=force)
         self._buffer.write(row)
         self._last_written = timestamp
-        self._last_state = (current_z, self._target_z, is_moving)
+        self._last_state = (current_z, self._target_z, is_at_target)
 
     def _poll_hardware(self, now: float) -> None:
         """Allow subclasses to advance device state before telemetry is sampled."""
