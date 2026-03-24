@@ -121,6 +121,22 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
 
+    @staticmethod
+    def _zlut_requested_sweep_edges(
+        z_axis_min_nm: float | None,
+        z_axis_max_nm: float | None,
+        n_steps: int,
+    ) -> tuple[float | None, float | None]:
+        if z_axis_min_nm is None or z_axis_max_nm is None or int(n_steps) <= 0:
+            return None, None
+
+        if int(n_steps) == 1:
+            return float(z_axis_min_nm), float(z_axis_max_nm)
+
+        step_spacing = float(z_axis_max_nm - z_axis_min_nm) / float(int(n_steps) - 1)
+        half_step = 0.5 * step_spacing
+        return float(z_axis_min_nm - half_step), float(z_axis_max_nm + half_step)
+
     def setup(self):
         self.qt_app = QApplication.instance()
         if not self.qt_app:
@@ -1543,8 +1559,11 @@ class UIManager(ManagerProcessBase):
         preview_image = None
         mode = 'Raw sweep'
         expected_capture_count = int(dataset.n_steps) * int(dataset.profiles_per_bead)
-        x_axis_min = self._zlut_generation_z_axis_min_nm
-        x_axis_max = self._zlut_generation_z_axis_max_nm
+        x_axis_min, x_axis_max = self._zlut_requested_sweep_edges(
+            self._zlut_generation_z_axis_min_nm,
+            self._zlut_generation_z_axis_max_nm,
+            int(dataset.n_steps),
+        )
         image_x_min = None
         image_x_max = None
         if count > 0:
@@ -1575,8 +1594,6 @@ class UIManager(ManagerProcessBase):
                         averaged_z_positions_array = np.asarray(averaged_z_positions, dtype=np.float64)
                         order = np.argsort(averaged_z_positions_array)
                         preview_image = averaged_profiles_array[order].T
-                        x_axis_min = float(np.min(averaged_z_positions_array))
-                        x_axis_max = float(np.max(averaged_z_positions_array))
                         image_x_min = x_axis_min
                         image_x_max = x_axis_max
                 else:

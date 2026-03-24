@@ -1547,6 +1547,8 @@ def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkey
     ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
     ui_manager._zlut_generation_phase = 'evaluating'
     ui_manager._zlut_evaluation_bead_ids = [5, 7]
+    ui_manager._zlut_generation_z_axis_min_nm = 10.0
+    ui_manager._zlut_generation_z_axis_max_nm = 20.0
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1560,10 +1562,10 @@ def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkey
     assert preview_call['selected_bead_id'] == 5
     assert preview_call['mode'] == 'Averaged sweep'
     assert preview_call['x_axis_label'] == 'Z Position (nm)'
-    assert preview_call['x_axis_min'] == 10.0
-    assert preview_call['x_axis_max'] == 20.0
-    assert preview_call['image_x_min'] == 10.0
-    assert preview_call['image_x_max'] == 20.0
+    assert preview_call['x_axis_min'] == 5.0
+    assert preview_call['x_axis_max'] == 25.0
+    assert preview_call['image_x_min'] == 5.0
+    assert preview_call['image_x_max'] == 25.0
     np.testing.assert_allclose(
         preview_call['preview_image'],
         np.asarray([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]], dtype=np.float64),
@@ -1739,8 +1741,10 @@ def test_live_preview_sorts_descending_z_positions_low_to_high(ui_manager, monke
         preview_call['preview_image'],
         np.asarray([[5.0, 3.0, 1.0], [6.0, 4.0, 2.0]], dtype=np.float64),
     )
-    assert preview_call['image_x_min'] == 10.0
-    assert preview_call['image_x_max'] == 30.0
+    assert preview_call['x_axis_min'] == 5.0
+    assert preview_call['x_axis_max'] == 35.0
+    assert preview_call['image_x_min'] == 5.0
+    assert preview_call['image_x_max'] == 35.0
 
 
 def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
@@ -1791,10 +1795,10 @@ def test_live_preview_passes_expected_capture_count(ui_manager, monkeypatch):
     preview_call = ui_manager._zlut_generation_dialog.preview_widget.preview_calls[-1]
     assert preview_call['mode'] == 'Raw sweep'
     assert preview_call['expected_capture_count'] == 12
-    assert preview_call['x_axis_min'] == 10.0
-    assert preview_call['x_axis_max'] == 40.0
-    assert preview_call['image_x_min'] == 10.0
-    assert preview_call['image_x_max'] == 20.0
+    assert preview_call['x_axis_min'] == 5.0
+    assert preview_call['x_axis_max'] == 45.0
+    assert preview_call['image_x_min'] == 5.0
+    assert preview_call['image_x_max'] == pytest.approx(18.3333333333)
     np.testing.assert_allclose(
         preview_call['preview_image'],
         np.asarray([[1.0, np.nan, np.nan, 3.0], [2.0, np.nan, np.nan, 4.0]], dtype=np.float64),
@@ -1852,10 +1856,10 @@ def test_live_preview_descending_partial_capture_aligns_right(ui_manager, monkey
         preview_call['preview_image'],
         np.asarray([[3.0, 1.0], [4.0, 2.0]], dtype=np.float64),
     )
-    assert preview_call['x_axis_min'] == 10.0
-    assert preview_call['x_axis_max'] == 30.0
-    assert preview_call['image_x_min'] == pytest.approx(16.6666666667)
-    assert preview_call['image_x_max'] == 30.0
+    assert preview_call['x_axis_min'] == 5.0
+    assert preview_call['x_axis_max'] == 35.0
+    assert preview_call['image_x_min'] == 15.0
+    assert preview_call['image_x_max'] == 35.0
 
 
 def test_evaluation_preview_sorts_descending_z_positions_low_to_high(ui_manager, monkeypatch):
@@ -1895,6 +1899,8 @@ def test_evaluation_preview_sorts_descending_z_positions_low_to_high(ui_manager,
     ui_manager._zlut_generation_phase = 'evaluating'
     ui_manager._zlut_evaluation_bead_ids = [5]
     ui_manager._zlut_evaluation_selected_bead_id = 5
+    ui_manager._zlut_generation_z_axis_min_nm = 10.0
+    ui_manager._zlut_generation_z_axis_max_nm = 20.0
     ui_manager.locks = {}
     monkeypatch.setattr(ui_module, 'ZLUTSweepDataset', FakeDataset)
     monkeypatch.setattr(ui_module, 'time', lambda: 10.0)
@@ -1902,10 +1908,10 @@ def test_evaluation_preview_sorts_descending_z_positions_low_to_high(ui_manager,
     ui_manager._update_zlut_generation_dialog()
 
     preview_call = ui_manager._zlut_generation_dialog.preview_widget.preview_calls[-1]
-    assert preview_call['x_axis_min'] == 10.0
-    assert preview_call['x_axis_max'] == 20.0
-    assert preview_call['image_x_min'] == 10.0
-    assert preview_call['image_x_max'] == 20.0
+    assert preview_call['x_axis_min'] == 5.0
+    assert preview_call['x_axis_max'] == 25.0
+    assert preview_call['image_x_min'] == 5.0
+    assert preview_call['image_x_max'] == 25.0
     np.testing.assert_allclose(
         preview_call['preview_image'],
         np.asarray([[3.0, 1.0], [4.0, 2.0]], dtype=np.float64),
