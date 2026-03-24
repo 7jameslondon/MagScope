@@ -602,7 +602,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 step_mask = bead_step_indices == step_index
                 if not np.any(step_mask):
                     raise RuntimeError(
-                        f'Bead {int(bead_id)} is missing captured data for step {int(step_index)}.'
+                        f'Data is corrupt. Please try again.'
                     )
                 step_profiles = bead_profiles[step_mask]
                 step_motor_z = bead_motor_z[step_mask]
