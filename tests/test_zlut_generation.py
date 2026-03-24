@@ -134,6 +134,33 @@ def test_prepare_session_uses_requested_profiles_per_bead():
     manager._prepare_session(0.0, 5.0, 10.0, 7)
 
     assert manager._profiles_per_bead == 7
+    np.testing.assert_array_equal(manager._session_bead_roi_ids, np.asarray([1, 2], dtype=np.uint32))
+    np.testing.assert_array_equal(
+        manager._session_bead_roi_values,
+        np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32),
+    )
+
+
+def test_prepare_session_freezes_bead_roi_snapshot():
+    manager = make_manager()
+    manager._cleanup_runtime_state = lambda destroy_dataset: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._focus_motor_name = 'focus'
+    manager._focus_buffer = object()
+    manager.video_buffer = type('VideoBuffer', (), {'n_images': 40})()
+    manager._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32)
+    manager._acquisition_on = False
+
+    manager._prepare_session(0.0, 5.0, 10.0, 7)
+    manager._bead_roi_ids[0] = 99
+    manager._bead_roi_values[0, 0] = 99
+
+    np.testing.assert_array_equal(manager._session_bead_roi_ids, np.asarray([1, 2], dtype=np.uint32))
+    np.testing.assert_array_equal(
+        manager._session_bead_roi_values,
+        np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32),
+    )
 
 
 def test_prepare_session_requires_tracking_acquisition_mode():
@@ -317,7 +344,11 @@ def test_report_focus_motor_limits_continues_startup_when_in_range():
     manager._send_progress = lambda **kwargs: None
     manager._refresh_bead_roi_cache = lambda: None
     manager._discover_focus_motor_name = lambda: 'focus'
-    manager._prepare_session = lambda *args: prepared.append(args)
+    manager._prepare_session = lambda *args: (
+        prepared.append(args),
+        setattr(manager, '_session_bead_roi_ids', np.asarray([4], dtype=np.uint32)),
+        setattr(manager, '_session_bead_roi_values', np.asarray([[1, 2, 3, 4]], dtype=np.uint32)),
+    )
 
     manager.start_generation(0.0, 5.0, 10.0, 7)
     manager.report_focus_motor_limits(0.0, 10.0)
@@ -327,6 +358,8 @@ def test_report_focus_motor_limits_continues_startup_when_in_range():
     assert isinstance(manager._sent_commands[-2], SetAcquisitionOnCommand)
     assert manager._sent_commands[-2].value is True
     assert isinstance(manager._sent_commands[-1], RequestZLUTProfileLengthCommand)
+    assert manager._sent_commands[-1].bead_ids == (4,)
+    assert manager._sent_commands[-1].bead_rois == ((1, 2, 3, 4),)
     assert state_updates[-1] == (
         ('Waiting for a processed frame to measure profile length.',),
         {
@@ -381,6 +414,8 @@ def test_handle_capture_complete_rearms_until_requested_profiles_per_bead_reache
     manager._profiles_per_bead = 5
     manager._current_step_capture_earliest_timestamp = 123.0
     manager._current_step_profiles_written = 2
+    manager._session_bead_roi_ids = np.asarray([4], dtype=np.uint32)
+    manager._session_bead_roi_values = np.asarray([[1, 2, 3, 4]], dtype=np.uint32)
     manager._steps = np.asarray([12.5], dtype=np.float64)
 
     manager.handle_capture_complete(step_index=0, written_count=2, written_profiles_per_bead=1)
@@ -389,6 +424,8 @@ def test_handle_capture_complete_rearms_until_requested_profiles_per_bead_reache
     assert manager._current_step_profiles_written == 3
     assert sent_commands[0].remaining_profiles_per_bead == 2
     assert sent_commands[0].earliest_timestamp == 123.0
+    assert sent_commands[0].bead_ids == (4,)
+    assert sent_commands[0].bead_rois == ((1, 2, 3, 4),)
 
 
 def test_handle_capture_complete_rearms_when_stale_stack_is_skipped():
@@ -403,6 +440,8 @@ def test_handle_capture_complete_rearms_when_stale_stack_is_skipped():
     manager._profiles_per_bead = 4
     manager._current_step_capture_earliest_timestamp = 321.0
     manager._current_step_profiles_written = 1
+    manager._session_bead_roi_ids = np.asarray([8], dtype=np.uint32)
+    manager._session_bead_roi_values = np.asarray([[5, 6, 7, 8]], dtype=np.uint32)
     manager._steps = np.asarray([7.5], dtype=np.float64)
 
     manager.handle_capture_complete(step_index=0, written_count=0, written_profiles_per_bead=0)
@@ -411,4 +450,6 @@ def test_handle_capture_complete_rearms_when_stale_stack_is_skipped():
     assert manager._current_step_profiles_written == 1
     assert sent_commands[0].remaining_profiles_per_bead == 3
     assert sent_commands[0].earliest_timestamp == 321.0
+    assert sent_commands[0].bead_ids == (8,)
+    assert sent_commands[0].bead_rois == ((5, 6, 7, 8),)
     assert state_updates[-1][1]['phase'] == 'capturing'

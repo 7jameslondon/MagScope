@@ -14,7 +14,13 @@ import numpy as np
 import tifffile
 
 from magscope._logging import get_logger
-from magscope.datatypes import LiveProfileBuffer, MatrixBuffer, VideoBuffer, ZLUTSweepDataset
+from magscope.datatypes import (
+    DatasetNotReadyError,
+    LiveProfileBuffer,
+    MatrixBuffer,
+    VideoBuffer,
+    ZLUTSweepDataset,
+)
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, DisarmZLUTSweepCaptureCommand,
                                    LoadZLUTCommand, ReportProfileLengthCommand,
@@ -57,6 +63,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_capture_motor_z_value: float | None = None
         self._zlut_capture_remaining_profiles_per_bead: int | None = None
         self._zlut_capture_step_index: int | None = None
+        self._zlut_frozen_bead_ids = np.zeros((0,), dtype=np.uint32)
+        self._zlut_frozen_bead_rois = np.zeros((0, 4), dtype=np.uint32)
         self._zlut_profile_length_queue: QueueType | None = None
         self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
@@ -238,13 +246,18 @@ class VideoProcessorManager(ManagerProcessBase):
         self._pending_profile_length_request = True
 
     @register_ipc_command(RequestZLUTProfileLengthCommand)
-    def report_zlut_profile_length(self) -> None:
+    def report_zlut_profile_length(
+        self,
+        bead_ids: tuple[int, ...] = (),
+        bead_rois: tuple[tuple[int, int, int, int], ...] = (),
+    ) -> None:
         if self._zlut_profile_length_queue is not None:
             while True:
                 try:
                     self._zlut_profile_length_queue.get_nowait()
                 except Empty:
                     break
+        self._set_zlut_frozen_rois(bead_ids=bead_ids, bead_rois=bead_rois)
         self._pending_zlut_profile_length_request = True
 
     def _process_profile_length_reports(self) -> None:
@@ -288,11 +301,14 @@ class VideoProcessorManager(ManagerProcessBase):
         motor_z_value: float,
         remaining_profiles_per_bead: int,
         earliest_timestamp: float,
+        bead_ids: tuple[int, ...] = (),
+        bead_rois: tuple[tuple[int, int, int, int], ...] = (),
     ) -> None:
         self._zlut_capture_step_index = int(step_index)
         self._zlut_capture_motor_z_value = float(motor_z_value)
         self._zlut_capture_remaining_profiles_per_bead = int(remaining_profiles_per_bead)
         self._zlut_capture_earliest_timestamp = float(earliest_timestamp)
+        self._set_zlut_frozen_rois(bead_ids=bead_ids, bead_rois=bead_rois)
 
     @register_ipc_command(DisarmZLUTSweepCaptureCommand)
     def disarm_zlut_sweep_capture(self) -> None:
@@ -300,6 +316,8 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_capture_motor_z_value = None
         self._zlut_capture_remaining_profiles_per_bead = None
         self._zlut_capture_earliest_timestamp = None
+        self._zlut_frozen_bead_ids = np.zeros((0,), dtype=np.uint32)
+        self._zlut_frozen_bead_rois = np.zeros((0, 4), dtype=np.uint32)
 
     def _process_zlut_capture_reports(self) -> None:
         if self._zlut_capture_complete_queue is None:
@@ -322,6 +340,9 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def _add_task(self):
         bead_ids, bead_rois = self.get_cached_bead_rois()
+        if self._should_use_frozen_zlut_rois():
+            bead_ids = self._zlut_frozen_bead_ids
+            bead_rois = self._zlut_frozen_bead_rois
         kwargs = {
             'acquisition_dir': self._acquisition_dir,
             'acquisition_dir_on': self._acquisition_dir_on,
@@ -364,6 +385,20 @@ class VideoProcessorManager(ManagerProcessBase):
         except Full:
             logger.warning('Skipping video processing task because worker queue is full')
             return False
+
+    def _set_zlut_frozen_rois(
+        self,
+        *,
+        bead_ids: tuple[int, ...],
+        bead_rois: tuple[tuple[int, int, int, int], ...],
+    ) -> None:
+        self._zlut_frozen_bead_ids = np.asarray(bead_ids, dtype=np.uint32)
+        self._zlut_frozen_bead_rois = np.asarray(bead_rois, dtype=np.uint32).reshape((-1, 4))
+
+    def _should_use_frozen_zlut_rois(self) -> bool:
+        if self._zlut_frozen_bead_ids.size == 0 or self._zlut_frozen_bead_rois.shape[0] == 0:
+            return False
+        return self._pending_zlut_profile_length_request or self._zlut_capture_step_index is not None
 
     def _process_worker_warnings(self) -> None:
         if self._warning_queue is None:
@@ -583,6 +618,8 @@ class VideoWorker(Process):
                     written_profiles_per_bead,
                     None,
                 ))
+            except DatasetNotReadyError:
+                return
             except Full:
                 logger.debug('Dropping Z-LUT capture completion because queue is full')
             except Exception as exc:

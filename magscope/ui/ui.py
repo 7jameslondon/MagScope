@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from magscope._logging import get_logger
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
-from magscope.datatypes import VideoBuffer, ZLUTSweepDataset
+from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
 from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
@@ -1519,7 +1519,7 @@ class UIManager(ManagerProcessBase):
         if self._zlut_sweep_dataset is None:
             try:
                 self._zlut_sweep_dataset = ZLUTSweepDataset.attach(locks=self.locks)
-            except FileNotFoundError:
+            except (DatasetNotReadyError, FileNotFoundError):
                 self._zlut_generation_dialog.preview_widget.clear('Waiting for Z-LUT sweep data...')
                 return
 

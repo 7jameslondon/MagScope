@@ -14,6 +14,7 @@ SPEC.loader.exec_module(datatypes)  # type: ignore[union-attr]
 BufferOverflow = datatypes.BufferOverflow
 BufferUnderflow = datatypes.BufferUnderflow
 BeadRoiBuffer = datatypes.BeadRoiBuffer
+DatasetNotReadyError = datatypes.DatasetNotReadyError
 MatrixBuffer = datatypes.MatrixBuffer
 VideoBuffer = datatypes.VideoBuffer
 ZLUTSweepDataset = datatypes.ZLUTSweepDataset
@@ -442,7 +443,7 @@ class TestZLUTSweepDataset(ZLUTSweepDatasetTestCase):
         self.dataset.destroy()
         self.dataset = None
 
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(DatasetNotReadyError):
             ZLUTSweepDataset.attach(locks=self.locks)
 
 

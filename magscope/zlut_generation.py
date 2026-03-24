@@ -69,6 +69,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._current_step_profiles_written = 0
         self._requested_range: tuple[float, float, float] | None = None
         self._selected_bead_id: int | None = None
+        self._session_bead_roi_ids = np.zeros((0,), dtype=np.uint32)
+        self._session_bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
         self._step_capture_complete = False
         self._steps = np.zeros((0,), dtype=np.float64)
 
@@ -201,7 +203,12 @@ class ZLUTGenerationManager(ManagerProcessBase):
         )
         self._send_progress(force=True)
         self.send_ipc(SetAcquisitionOnCommand(True))
-        self.send_ipc(RequestZLUTProfileLengthCommand())
+        self.send_ipc(
+            RequestZLUTProfileLengthCommand(
+                bead_ids=self._bead_id_payload(),
+                bead_rois=self._bead_roi_payload(),
+            )
+        )
 
     @register_ipc_command(ZLUTSweepCaptureCompleteCommand)
     def handle_capture_complete(
@@ -225,6 +232,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
                     motor_z_value=float(self._steps[self._current_step_index]),
                     remaining_profiles_per_bead=self._profiles_per_bead - self._current_step_profiles_written,
                     earliest_timestamp=self._current_step_capture_earliest_timestamp,
+                    bead_ids=self._bead_id_payload(),
+                    bead_rois=self._bead_roi_payload(),
                 )
             )
             self._send_state(
@@ -246,6 +255,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 motor_z_value=float(self._steps[self._current_step_index]),
                 remaining_profiles_per_bead=self._profiles_per_bead - self._current_step_profiles_written,
                 earliest_timestamp=self._current_step_capture_earliest_timestamp,
+                bead_ids=self._bead_id_payload(),
+                bead_rois=self._bead_roi_payload(),
             )
         )
         self._send_state(
@@ -338,6 +349,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
             raise RuntimeError('Video buffer is not available.')
         if self._bead_roi_ids.size == 0 or self._bead_roi_values.shape[0] == 0:
             raise RuntimeError('At least one bead ROI must be selected before generating a Z-LUT.')
+        self._session_bead_roi_ids = np.asarray(self._bead_roi_ids, dtype=np.uint32).copy()
+        self._session_bead_roi_values = np.asarray(self._bead_roi_values, dtype=np.uint32).copy()
 
         steps = self._build_steps(start_nm, step_nm, stop_nm)
         if int(profiles_per_bead) <= 0:
@@ -363,7 +376,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         if self._profile_length is None:
             raise RuntimeError('Profile length must be known before creating the dataset.')
         n_steps = int(self._steps.size)
-        n_beads = int(self._bead_roi_ids.size)
+        n_beads = int(self._session_bead_roi_ids.size)
         capacity = n_steps * n_beads * self._profiles_per_bead
         self._reset_dataset(destroy=True)
         self._dataset = ZLUTSweepDataset.create(
@@ -417,6 +430,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 motor_z_value=float(current_z),
                 remaining_profiles_per_bead=self._profiles_per_bead,
                 earliest_timestamp=self._current_step_capture_earliest_timestamp,
+                bead_ids=self._bead_id_payload(),
+                bead_rois=self._bead_roi_payload(),
             )
         )
         self._send_state(
@@ -520,6 +535,8 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._current_step_capture_earliest_timestamp = 0.0
         self._current_step_profiles_written = 0
         self._requested_range = None
+        self._session_bead_roi_ids = np.zeros((0,), dtype=np.uint32)
+        self._session_bead_roi_values = np.zeros((0, 4), dtype=np.uint32)
         self._selected_bead_id = None
         self._step_capture_complete = False
         self._steps = np.zeros((0,), dtype=np.float64)
@@ -551,6 +568,12 @@ class ZLUTGenerationManager(ManagerProcessBase):
         timestamp, current_z, target_z, is_moving = data[finite_rows][-1, :]
         _ = timestamp
         return float(current_z), float(target_z), bool(round(is_moving))
+
+    def _bead_id_payload(self) -> tuple[int, ...]:
+        return tuple(int(bead_id) for bead_id in self._session_bead_roi_ids)
+
+    def _bead_roi_payload(self) -> tuple[tuple[int, int, int, int], ...]:
+        return tuple(tuple(int(value) for value in roi) for roi in self._session_bead_roi_values)
 
     def _maybe_send_progress(self) -> None:
         self._send_progress(force=False)

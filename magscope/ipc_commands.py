@@ -272,7 +272,8 @@ class ReportProfileLengthCommand(Command):
 
 @dataclass(frozen=True)
 class RequestZLUTProfileLengthCommand(Command):
-    pass
+    bead_ids: tuple[int, ...] = ()
+    bead_rois: tuple[tuple[int, int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,8 @@ class ArmZLUTSweepCaptureCommand(Command):
     motor_z_value: float
     remaining_profiles_per_bead: int
     earliest_timestamp: float
+    bead_ids: tuple[int, ...] = ()
+    bead_rois: tuple[tuple[int, int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)

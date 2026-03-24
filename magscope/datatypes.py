@@ -941,6 +941,7 @@ class ZLUTSweepDataset:
             self._write_info('profiles_per_bead', self.profiles_per_bead)
             self._write_info('count', 0)
         else:
+            self._validate_attach_ready_state()
             self._validate_schema_version()
             self.capacity = self._read_info('capacity')
             self.profile_length = self._read_info('profile_length')
@@ -1038,7 +1039,10 @@ class ZLUTSweepDataset:
 
     @classmethod
     def attach(cls, *, locks: dict[str, Lock], name: str = NAME) -> 'ZLUTSweepDataset':
-        return cls(create=False, locks=locks, name=name)
+        try:
+            return cls(create=False, locks=locks, name=name)
+        except FileNotFoundError as exc:
+            raise DatasetNotReadyError('ZLUTSweepDataset shared memory is not available yet.') from exc
 
     def __del__(self):
         self.close()
@@ -1163,9 +1167,23 @@ class ZLUTSweepDataset:
 
     def _validate_schema_version(self) -> None:
         schema_version = self._read_info('schema_version')
+        if schema_version == 0:
+            raise DatasetNotReadyError('ZLUTSweepDataset schema metadata is not initialized yet.')
         if schema_version != self._SCHEMA_VERSION:
             raise ValueError(
                 f'Unsupported ZLUTSweepDataset schema version: {schema_version}'
+            )
+
+    def _validate_attach_ready_state(self) -> None:
+        state = self._read_info('state')
+        if state in {
+            self.STATE_ABSENT,
+            self.STATE_CREATING,
+            self.STATE_DETACHING,
+            self.STATE_DESTROYED,
+        }:
+            raise DatasetNotReadyError(
+                f'ZLUTSweepDataset is not attachable while in state {state}.'
             )
 
     def _read_info(self, field: str) -> int:
@@ -1186,6 +1204,10 @@ class BufferUnderflow(Exception):
 
 class BufferOverflow(Exception):
     """Raised when attempting to write to a buffer that has no free slots."""
+
+
+class DatasetNotReadyError(Exception):
+    """Raised when a shared-memory dataset exists but is not attachable yet."""
 
 bit_to_dtype = {
     8:  np.uint8,

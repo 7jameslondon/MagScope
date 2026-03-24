@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +109,8 @@ def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
     manager._zlut_capture_earliest_timestamp = 12.5
     manager._zlut_capture_motor_z_value = 33.0
     manager._zlut_capture_remaining_profiles_per_bead = 7
+    manager._zlut_frozen_bead_ids = np.asarray([9, 10], dtype=np.uint32)
+    manager._zlut_frozen_bead_rois = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=np.uint32)
 
     result = manager._add_task()
 
@@ -118,10 +121,32 @@ def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
         'motor_z_value': 33.0,
         'remaining_profiles_per_bead': 7,
     }
+    np.testing.assert_array_equal(manager._tasks.items[0]['bead_ids'], np.asarray([9, 10], dtype=np.uint32))
+    np.testing.assert_array_equal(
+        manager._tasks.items[0]['bead_rois'],
+        np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]], dtype=np.uint32),
+    )
     assert manager._zlut_capture_step_index is None
     assert manager._zlut_capture_earliest_timestamp is None
     assert manager._zlut_capture_motor_z_value is None
     assert manager._zlut_capture_remaining_profiles_per_bead is None
+
+
+def test_add_task_uses_frozen_rois_for_pending_zlut_profile_length(manager):
+    manager._bead_roi_ids = np.asarray([1], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[10, 20, 30, 40]], dtype=np.uint32)
+    manager._pending_zlut_profile_length_request = True
+    manager._zlut_frozen_bead_ids = np.asarray([7, 8], dtype=np.uint32)
+    manager._zlut_frozen_bead_rois = np.asarray([[1, 2, 3, 4], [11, 12, 13, 14]], dtype=np.uint32)
+
+    result = manager._add_task()
+
+    assert result is True
+    np.testing.assert_array_equal(manager._tasks.items[0]['bead_ids'], np.asarray([7, 8], dtype=np.uint32))
+    np.testing.assert_array_equal(
+        manager._tasks.items[0]['bead_rois'],
+        np.asarray([[1, 2, 3, 4], [11, 12, 13, 14]], dtype=np.uint32),
+    )
 
 
 def test_worker_reports_zlut_capture_failure_to_manager():
