@@ -475,6 +475,75 @@ def test_zlut_generation_dialog_cancel_does_not_close_on_failure_state(qtbot):
     assert dialog.isVisible()
 
 
+class FakeMessageBox:
+    class Icon:
+        Information = 'information'
+        Critical = 'critical'
+        Warning = 'warning'
+
+    class StandardButton:
+        Ok = 'ok'
+
+    instances = []
+
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.icon = None
+        self.window_title = None
+        self.text = None
+        self.informative_text = None
+        self.detailed_text = None
+        self.buttons = None
+        self.shown = False
+        type(self).instances.append(self)
+
+    def setIcon(self, icon):
+        self.icon = icon
+
+    def setWindowTitle(self, title: str):
+        self.window_title = title
+
+    def setText(self, text: str):
+        self.text = text
+
+    def setInformativeText(self, text: str):
+        self.informative_text = text
+
+    def setDetailedText(self, text: str):
+        self.detailed_text = text
+
+    def setStandardButtons(self, buttons):
+        self.buttons = buttons
+
+    def show(self):
+        self.shown = True
+
+
+@pytest.mark.parametrize(
+    ('method_name', 'icon'),
+    [
+        ('print', FakeMessageBox.Icon.Information),
+        ('show_error', FakeMessageBox.Icon.Critical),
+        ('show_warning', FakeMessageBox.Icon.Warning),
+    ],
+)
+def test_dialog_helpers_show_details_inline(ui_manager, monkeypatch, method_name, icon):
+    FakeMessageBox.instances.clear()
+    ui_manager.windows = [object()]
+    monkeypatch.setattr('magscope.ui.ui.QMessageBox', FakeMessageBox)
+
+    getattr(ui_manager, method_name)('Summary', 'Full details')
+
+    assert len(FakeMessageBox.instances) == 1
+    message_box = FakeMessageBox.instances[0]
+    assert message_box.icon == icon
+    assert message_box.text == 'Summary'
+    assert message_box.informative_text == 'Full details'
+    assert message_box.detailed_text is None
+    assert message_box.buttons == FakeMessageBox.StandardButton.Ok
+    assert message_box.shown is True
+
+
 @pytest.mark.parametrize('n_windows', [1, 2, 3])
 def test_create_central_widgets_attaches_expected_children(qtbot, n_windows):
     clear_ui_manager_singleton()

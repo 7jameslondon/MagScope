@@ -1210,7 +1210,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.info('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.info('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1224,7 +1224,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.error('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.error('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1237,7 +1237,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.warning('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.warning('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
