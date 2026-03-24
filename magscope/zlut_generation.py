@@ -17,7 +17,9 @@ from magscope.ipc_commands import (
     DisarmZLUTSweepCaptureCommand,
     LoadZLUTCommand,
     MoveFocusMotorAbsoluteCommand,
+    ReportFocusMotorLimitsCommand,
     ReportZLUTProfileLengthCommand,
+    RequestFocusMotorLimitsCommand,
     RequestZLUTProfileLengthCommand,
     SaveGeneratedZLUTCommand,
     SelectGeneratedZLUTBeadCommand,
@@ -62,6 +64,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._previous_acquisition_on = False
         self._profile_length: int | None = None
         self._profiles_per_bead = 0
+        self._pending_start_request: tuple[float, float, float, int] | None = None
         self._current_step_capture_earliest_timestamp = 0.0
         self._current_step_profiles_written = 0
         self._requested_range: tuple[float, float, float] | None = None
@@ -99,7 +102,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
 
     @register_ipc_command(StartZLUTGenerationCommand)
     def start_generation(self, start_nm: float, step_nm: float, stop_nm: float, profiles_per_bead: int):
-        if self._active or self._phase == 'evaluating':
+        if self._active or self._phase in {'evaluating', 'waiting_focus_limits'}:
             self._send_state(
                 'Generation already running.',
                 detail='Cancel the current sweep before starting another one.',
@@ -112,25 +115,35 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._refresh_bead_roi_cache()
 
         try:
-            self._prepare_session(start_nm, step_nm, stop_nm, profiles_per_bead)
+            if self._acquisition_mode not in self._TRACKING_ACQUISITION_MODES:
+                raise RuntimeError(
+                    'Z-LUT generation requires a tracking acquisition mode. '
+                    'Switch to track, track & video (cropped), or track & video (full).'
+                )
+            self._build_steps(start_nm, step_nm, stop_nm)
+            if int(profiles_per_bead) <= 0:
+                raise ValueError('Measurements per step must be a positive integer.')
+            self._focus_motor_name = self._focus_motor_name or self._discover_focus_motor_name()
+            if self._focus_motor_name is None:
+                raise RuntimeError('No FocusMotorBase hardware is registered.')
+            self._pending_start_request = (
+                float(start_nm),
+                float(step_nm),
+                float(stop_nm),
+                int(profiles_per_bead),
+            )
+            self._phase = 'waiting_focus_limits'
+            self._send_state(
+                'Waiting for focus motor limits.',
+                detail='Checking that the requested Z-LUT sweep stays within the focus motor range.',
+                running=True,
+                can_cancel=False,
+                phase='waiting_focus_limits',
+            )
+            self.send_ipc(RequestFocusMotorLimitsCommand())
         except Exception as exc:
-            reason = str(exc).strip() or repr(exc)
-            logger.warning('Could not start Z-LUT generation: %s', reason)
-            self.send_ipc(ShowErrorCommand(text='Could not start Z-LUT generation', details=reason))
-            self._send_state('Generation failed to start.', detail=reason, phase='idle')
-            self._cleanup_runtime_state(destroy_dataset=True)
+            self._fail_startup(exc)
             return
-
-        self._send_state(
-            'Waiting for a processed frame to measure profile length.',
-            detail='Z-LUT generation is preparing shared memory and capture settings.',
-            running=True,
-            can_cancel=True,
-            phase='waiting_profile_length',
-        )
-        self._send_progress(force=True)
-        self.send_ipc(SetAcquisitionOnCommand(True))
-        self.send_ipc(RequestZLUTProfileLengthCommand())
 
     @register_ipc_command(CancelZLUTGenerationCommand)
     def cancel_generation(self):
@@ -160,6 +173,31 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._current_step_index = 0
         self._step_capture_complete = False
         self._issue_move_for_current_step()
+
+    @register_ipc_command(ReportFocusMotorLimitsCommand)
+    def report_focus_motor_limits(self, z_min: float, z_max: float) -> None:
+        if self._phase != 'waiting_focus_limits' or self._pending_start_request is None:
+            return
+
+        try:
+            start_nm, step_nm, stop_nm, profiles_per_bead = self._pending_start_request
+            self._validate_sweep_limits(start_nm, stop_nm, z_min, z_max)
+            self._prepare_session(start_nm, step_nm, stop_nm, profiles_per_bead)
+        except Exception as exc:
+            self._fail_startup(exc)
+            return
+
+        self._pending_start_request = None
+        self._send_state(
+            'Waiting for a processed frame to measure profile length.',
+            detail='Z-LUT generation is preparing shared memory and capture settings.',
+            running=True,
+            can_cancel=True,
+            phase='waiting_profile_length',
+        )
+        self._send_progress(force=True)
+        self.send_ipc(SetAcquisitionOnCommand(True))
+        self.send_ipc(RequestZLUTProfileLengthCommand())
 
     @register_ipc_command(ZLUTSweepCaptureCompleteCommand)
     def handle_capture_complete(
@@ -458,6 +496,13 @@ class ZLUTGenerationManager(ManagerProcessBase):
             phase='evaluating',
         )
 
+    def _fail_startup(self, exc: Exception) -> None:
+        reason = str(exc).strip() or repr(exc)
+        logger.warning('Could not start Z-LUT generation: %s', reason)
+        self.send_ipc(ShowErrorCommand(text='Could not start Z-LUT generation', details=reason))
+        self._send_state('Generation failed to start.', detail=reason, phase='idle')
+        self._cleanup_runtime_state(destroy_dataset=True)
+
     def _cleanup_runtime_state(self, *, destroy_dataset: bool) -> None:
         self._active = False
         self._cancel_requested = False
@@ -467,6 +512,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._phase = 'idle'
         self._profile_length = None
         self._profiles_per_bead = 0
+        self._pending_start_request = None
         self._current_step_capture_earliest_timestamp = 0.0
         self._current_step_profiles_written = 0
         self._requested_range = None
@@ -630,6 +676,19 @@ class ZLUTGenerationManager(ManagerProcessBase):
         if len(focus_motor_names) == 1:
             return focus_motor_names[0]
         return None
+
+    @staticmethod
+    def _validate_sweep_limits(start_nm: float, stop_nm: float, z_min: float, z_max: float) -> None:
+        lower_limit = float(min(z_min, z_max))
+        upper_limit = float(max(z_min, z_max))
+        requested_min = float(min(start_nm, stop_nm))
+        requested_max = float(max(start_nm, stop_nm))
+        if requested_min < lower_limit or requested_max > upper_limit:
+            raise ValueError(
+                'Requested sweep range '
+                f'[{requested_min:.3f}, {requested_max:.3f}] nm exceeds focus motor limits '
+                f'[{lower_limit:.3f}, {upper_limit:.3f}] nm.'
+            )
 
     @staticmethod
     def _build_steps(start_nm: float, step_nm: float, stop_nm: float) -> np.ndarray:

@@ -93,7 +93,12 @@ sys.modules["magscope.hardware"] = hardware
 hardware_spec.loader.exec_module(hardware)
 import magscope.ipc_commands as ipc_commands
 from magscope.ipc import CommandRegistry, Delivery, UnknownCommandError
-from magscope.ipc_commands import LogExceptionCommand, QuitCommand, SetAcquisitionOnCommand
+from magscope.ipc_commands import (
+    LogExceptionCommand,
+    QuitCommand,
+    ReportFocusMotorLimitsCommand,
+    SetAcquisitionOnCommand,
+)
 
 
 class FakeEvent:
@@ -467,3 +472,13 @@ def test_focus_motor_base_clips_move_and_records_polled_state(monkeypatch):
     assert motor.is_in_position() is True
     assert len(motor._buffer.rows) >= 3
     np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [10.0, 10.0, 0.0])
+
+
+def test_focus_motor_base_reports_position_limits():
+    motor = DummyFocusMotor()
+    sent_commands = []
+    motor.send_ipc = sent_commands.append
+
+    motor.report_focus_motor_limits()
+
+    assert sent_commands == [ReportFocusMotorLimitsCommand(z_min=0.0, z_max=10.0)]

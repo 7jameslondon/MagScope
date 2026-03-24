@@ -87,6 +87,17 @@ class MoveFocusMotorAbsoluteCommand(Command):
 
 
 @dataclass(frozen=True)
+class RequestFocusMotorLimitsCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ReportFocusMotorLimitsCommand(Command):
+    z_min: float
+    z_max: float
+
+
+@dataclass(frozen=True)
 class UpdateVideoBufferPurgeCommand(Command):
     t: float
 

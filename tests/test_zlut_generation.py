@@ -1,6 +1,13 @@
 import numpy as np
 
-from magscope.ipc_commands import LoadZLUTCommand, ShowErrorCommand, UpdateZLUTGenerationEvaluationCommand
+from magscope.ipc_commands import (
+    LoadZLUTCommand,
+    RequestFocusMotorLimitsCommand,
+    RequestZLUTProfileLengthCommand,
+    SetAcquisitionOnCommand,
+    ShowErrorCommand,
+    UpdateZLUTGenerationEvaluationCommand,
+)
 from magscope.utils import AcquisitionMode
 from magscope.zlut_generation import ZLUTGenerationManager
 
@@ -204,6 +211,103 @@ def test_start_generation_rejects_single_position_sweep():
             },
         )
     ]
+
+
+def test_start_generation_requests_focus_motor_limits_before_preparing_session():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._refresh_bead_roi_cache = lambda: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+
+    manager.start_generation(0.0, 5.0, 10.0, 7)
+
+    assert manager._phase == 'waiting_focus_limits'
+    assert manager._pending_start_request == (0.0, 5.0, 10.0, 7)
+    assert isinstance(manager._sent_commands[0], RequestFocusMotorLimitsCommand)
+    assert state_updates == [
+        (
+            ('Waiting for focus motor limits.',),
+            {
+                'detail': 'Checking that the requested Z-LUT sweep stays within the focus motor range.',
+                'running': True,
+                'can_cancel': False,
+                'phase': 'waiting_focus_limits',
+            },
+        )
+    ]
+
+
+def test_report_focus_motor_limits_rejects_out_of_range_sweep():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._refresh_bead_roi_cache = lambda: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._acquisition_mode = AcquisitionMode.TRACK
+
+    manager.start_generation(-5.0, 5.0, 10.0, 7)
+    manager.report_focus_motor_limits(0.0, 10.0)
+
+    assert any(isinstance(command, ShowErrorCommand) for command in manager._sent_commands)
+    error_command = next(command for command in manager._sent_commands if isinstance(command, ShowErrorCommand))
+    assert error_command.text == 'Could not start Z-LUT generation'
+    assert error_command.details == (
+        'Requested sweep range [-5.000, 10.000] nm exceeds focus motor limits '
+        '[0.000, 10.000] nm.'
+    )
+    assert manager._phase == 'idle'
+    assert manager._pending_start_request is None
+    assert state_updates[-1] == (
+        ('Generation failed to start.',),
+        {
+            'detail': (
+                'Requested sweep range [-5.000, 10.000] nm exceeds focus motor limits '
+                '[0.000, 10.000] nm.'
+            ),
+            'phase': 'idle',
+        },
+    )
+
+
+def test_report_focus_motor_limits_continues_startup_when_in_range():
+    manager = make_manager()
+    state_updates = []
+    prepared = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._send_progress = lambda **kwargs: None
+    manager._refresh_bead_roi_cache = lambda: None
+    manager._discover_focus_motor_name = lambda: 'focus'
+    manager._prepare_session = lambda *args: prepared.append(args)
+
+    manager.start_generation(0.0, 5.0, 10.0, 7)
+    manager.report_focus_motor_limits(0.0, 10.0)
+
+    assert prepared == [(0.0, 5.0, 10.0, 7)]
+    assert manager._pending_start_request is None
+    assert isinstance(manager._sent_commands[-2], SetAcquisitionOnCommand)
+    assert manager._sent_commands[-2].value is True
+    assert isinstance(manager._sent_commands[-1], RequestZLUTProfileLengthCommand)
+    assert state_updates[-1] == (
+        ('Waiting for a processed frame to measure profile length.',),
+        {
+            'detail': 'Z-LUT generation is preparing shared memory and capture settings.',
+            'running': True,
+            'can_cancel': True,
+            'phase': 'waiting_profile_length',
+        },
+    )
+
+
+def test_report_focus_motor_limits_ignores_out_of_phase_reports():
+    manager = make_manager()
+    manager._phase = 'idle'
+    manager._pending_start_request = (0.0, 5.0, 10.0, 7)
+
+    manager.report_focus_motor_limits(0.0, 10.0)
+
+    assert manager._pending_start_request == (0.0, 5.0, 10.0, 7)
+    assert manager._sent_commands == []
 
 
 def test_handle_capture_complete_waits_until_requested_profiles_per_bead():

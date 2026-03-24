@@ -6,7 +6,12 @@ import numpy as np
 
 from magscope.datatypes import MatrixBuffer
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import MoveFocusMotorAbsoluteCommand, SetSimulatedFocusCommand
+from magscope.ipc_commands import (
+    MoveFocusMotorAbsoluteCommand,
+    ReportFocusMotorLimitsCommand,
+    RequestFocusMotorLimitsCommand,
+    SetSimulatedFocusCommand,
+)
 from magscope.processes import ManagerProcessBase, SingletonABCMeta
 
 
@@ -107,6 +112,11 @@ class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
         self._target_z = clipped_z
         self.move_absolute(clipped_z)
         self._write_state(time(), float(self.get_current_z()), force=True)
+
+    @register_ipc_command(RequestFocusMotorLimitsCommand)
+    def report_focus_motor_limits(self) -> None:
+        z_min, z_max = self.get_position_limits()
+        self.send_ipc(ReportFocusMotorLimitsCommand(z_min=float(z_min), z_max=float(z_max)))
 
     def get_target_z(self) -> float:
         return self._target_z
