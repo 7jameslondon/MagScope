@@ -362,7 +362,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         requested_z = float(self._steps[self._current_step_index])
         if is_moving:
             return
-        if not np.isclose(target_z, requested_z) or not np.isclose(current_z, requested_z):
+        if not np.isclose(target_z, requested_z):
             return
 
         self._phase = 'capturing'
