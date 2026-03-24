@@ -105,11 +105,12 @@ class ZLUTGenerationManager(ManagerProcessBase):
     @register_ipc_command(StartZLUTGenerationCommand)
     def start_generation(self, start_nm: float, step_nm: float, stop_nm: float, profiles_per_bead: int):
         if self._active or self._phase in {'evaluating', 'waiting_focus_limits'}:
+            startup_running = self._active or self._phase == 'waiting_focus_limits'
             self._send_state(
                 'Generation already running.',
                 detail='Cancel the current sweep before starting another one.',
-                running=self._active,
-                can_cancel=self._active,
+                running=startup_running,
+                can_cancel=startup_running,
                 phase=self._phase,
             )
             return
