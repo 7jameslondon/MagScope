@@ -1,6 +1,7 @@
 import numpy as np
 
-from magscope.ipc_commands import LoadZLUTCommand, UpdateZLUTGenerationEvaluationCommand
+from magscope.ipc_commands import LoadZLUTCommand, ShowErrorCommand, UpdateZLUTGenerationEvaluationCommand
+from magscope.utils import AcquisitionMode
 from magscope.zlut_generation import ZLUTGenerationManager
 
 
@@ -126,6 +127,51 @@ def test_prepare_session_uses_requested_profiles_per_bead():
     manager._prepare_session(0.0, 5.0, 10.0, 7)
 
     assert manager._profiles_per_bead == 7
+
+
+def test_prepare_session_requires_tracking_acquisition_mode():
+    manager = make_manager()
+    manager._cleanup_runtime_state = lambda destroy_dataset: None
+    manager._acquisition_mode = AcquisitionMode.FULL_VIDEO
+
+    try:
+        manager._prepare_session(0.0, 5.0, 10.0, 7)
+    except RuntimeError as exc:
+        assert str(exc) == (
+            'Z-LUT generation requires a tracking acquisition mode. '
+            'Switch to track, track & video (cropped), or track & video (full).'
+        )
+    else:
+        raise AssertionError('Expected RuntimeError for non-tracking acquisition mode')
+
+
+def test_start_generation_fails_fast_for_non_tracking_acquisition_mode():
+    manager = make_manager()
+    state_updates = []
+    manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
+    manager._acquisition_mode = AcquisitionMode.CROP_VIDEO
+
+    manager.start_generation(0.0, 5.0, 10.0, 7)
+
+    assert any(isinstance(command, ShowErrorCommand) for command in manager._sent_commands)
+    error_command = next(command for command in manager._sent_commands if isinstance(command, ShowErrorCommand))
+    assert error_command.text == 'Could not start Z-LUT generation'
+    assert error_command.details == (
+        'Z-LUT generation requires a tracking acquisition mode. '
+        'Switch to track, track & video (cropped), or track & video (full).'
+    )
+    assert state_updates == [
+        (
+            ('Generation failed to start.',),
+            {
+                'detail': (
+                    'Z-LUT generation requires a tracking acquisition mode. '
+                    'Switch to track, track & video (cropped), or track & video (full).'
+                ),
+                'phase': 'idle',
+            },
+        )
+    ]
 
 
 def test_handle_capture_complete_waits_until_requested_profiles_per_bead():

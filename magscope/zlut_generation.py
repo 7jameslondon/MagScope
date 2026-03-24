@@ -30,6 +30,7 @@ from magscope.ipc_commands import (
     ZLUTSweepCaptureCompleteCommand,
 )
 from magscope.processes import ManagerProcessBase
+from magscope.utils import AcquisitionMode
 
 logger = get_logger('zlut_generation')
 
@@ -41,6 +42,12 @@ class GeneratedZLUTResult:
 
 
 class ZLUTGenerationManager(ManagerProcessBase):
+    _TRACKING_ACQUISITION_MODES = {
+        AcquisitionMode.TRACK,
+        AcquisitionMode.TRACK_AND_CROP_VIDEO,
+        AcquisitionMode.TRACK_AND_FULL_VIDEO,
+    }
+
     def __init__(self):
         super().__init__()
         self._active = False
@@ -275,6 +282,11 @@ class ZLUTGenerationManager(ManagerProcessBase):
         profiles_per_bead: int,
     ) -> None:
         self._cleanup_runtime_state(destroy_dataset=True)
+        if self._acquisition_mode not in self._TRACKING_ACQUISITION_MODES:
+            raise RuntimeError(
+                'Z-LUT generation requires a tracking acquisition mode. '
+                'Switch to track, track & video (cropped), or track & video (full).'
+            )
         self._focus_motor_name = self._focus_motor_name or self._discover_focus_motor_name()
         if self._focus_motor_name is None:
             raise RuntimeError('No FocusMotorBase hardware is registered.')
