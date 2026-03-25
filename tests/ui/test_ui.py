@@ -388,7 +388,7 @@ def test_loading_window_defaults(qtbot):
     assert window.windowFlags() & expected_flags == expected_flags
 
 
-def test_zlut_preview_widget_marks_non_finite_values_red(qtbot):
+def test_zlut_preview_widget_masks_non_finite_values_without_red_override(qtbot):
     widget = ZLUTSweepPreviewWidget()
     qtbot.addWidget(widget)
 
@@ -415,8 +415,7 @@ def test_zlut_preview_widget_marks_non_finite_values_red(qtbot):
     rendered = widget._image.get_array()
     assert np.ma.isMaskedArray(rendered)
     assert bool(rendered.mask[0, 1])
-    bad_color = widget._image.cmap.get_bad()
-    assert bad_color[:3] == pytest.approx((1.0, 0.0, 0.0))
+    assert widget._image.cmap is widget._preview_cmap
 
 
 def test_zlut_generation_dialog_close_discards_during_evaluation(qtbot):

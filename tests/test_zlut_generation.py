@@ -99,6 +99,30 @@ def test_build_generated_zluts_preserves_descending_step_order():
     )
 
 
+def test_build_generated_zluts_converts_non_finite_averages_to_nan():
+    manager = make_manager()
+    manager._dataset = FakeDataset(
+        snapshot={
+            'bead_ids': np.asarray([4, 4], dtype=np.uint32),
+            'step_indices': np.asarray([0, 1], dtype=np.uint32),
+            'timestamps': np.asarray([1.0, 2.0], dtype=np.float64),
+            'motor_z_values': np.asarray([100.0, 50.0], dtype=np.float64),
+            'valid_flags': np.ones((2,), dtype=np.uint8),
+            'profiles': np.asarray([[np.inf, 2.0], [3.0, -np.inf]], dtype=np.float64),
+        },
+        n_steps=2,
+        profile_length=2,
+    )
+
+    manager._build_generated_zluts()
+
+    result = manager._generated_zluts[4].zlut_array
+    assert np.isnan(result[1, 0])
+    assert np.isnan(result[2, 1])
+    assert result[1, 1] == 3.0
+    assert result[2, 0] == 2.0
+
+
 def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     manager = make_manager()
     manager._phase = 'evaluating'

@@ -190,8 +190,6 @@ class VideoProcessorManager(ManagerProcessBase):
             raise ValueError('Z-LUT must include at least one profile row')
         if zlut_array.shape[1] < 2:
             raise ValueError('Z-LUT must include at least two z-reference values')
-        if not np.all(np.isfinite(zlut_array)):
-            raise ValueError('Z-LUT contains non-finite values')
 
         z_references = zlut_array[0, :]
         step_size = float(np.mean(np.diff(z_references)))

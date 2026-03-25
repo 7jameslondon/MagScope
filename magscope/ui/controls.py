@@ -2214,7 +2214,6 @@ class ZLUTSweepPreviewWidget(QWidget):
         layout.addWidget(self.summary_label)
 
         self._preview_cmap = matplotlib.colormaps['gray'].copy()
-        self._preview_cmap.set_bad(color='red')
 
         self.figure = Figure(dpi=100, facecolor='#1e1e1e')
         self.canvas = FigureCanvas(self.figure)

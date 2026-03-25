@@ -188,3 +188,23 @@ def test_worker_reports_zlut_capture_failure_to_manager():
     )
 
     assert queue.items == [(4, 0, 0, 'capture failed')]
+
+
+def test_extract_zlut_metadata_allows_nan_profile_values():
+    metadata = VideoProcessorManager._extract_zlut_metadata(
+        np.asarray(
+            [
+                [10.0, 20.0, 30.0],
+                [1.0, np.nan, 3.0],
+                [4.0, 5.0, np.nan],
+            ],
+            dtype=np.float64,
+        )
+    )
+
+    assert metadata == {
+        'z_min': 10.0,
+        'z_max': 30.0,
+        'step_size': 10.0,
+        'profile_length': 2,
+    }

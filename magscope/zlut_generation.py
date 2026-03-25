@@ -692,6 +692,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
 
             averaged_matrix = np.asarray(averaged_profiles, dtype=np.float64)
             zlut_array = np.vstack((np.asarray(z_references, dtype=np.float64), averaged_matrix.T))
+            zlut_array = np.where(np.isfinite(zlut_array), zlut_array, np.nan)
             generated[int(bead_id)] = GeneratedZLUTResult(bead_id=int(bead_id), zlut_array=zlut_array)
 
         if not generated:
