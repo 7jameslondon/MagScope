@@ -522,6 +522,17 @@ class VideoWorker(Process):
         except Full:
             logger.debug('Dropping Z-LUT capture task failure because queue is full')
 
+    def _report_zlut_capture_task_retry(self, zlut_capture: dict | None) -> None:
+        if self._zlut_capture_complete_queue is None or not isinstance(zlut_capture, dict):
+            return
+        step_index = zlut_capture.get('step_index')
+        if step_index is None:
+            return
+        try:
+            self._zlut_capture_complete_queue.put_nowait((int(step_index), 0, 0, None))
+        except Full:
+            logger.debug('Dropping Z-LUT capture retry because queue is full')
+
     def process(self, kwargs):
         acquisition_dir: str = kwargs['acquisition_dir']
         acquisition_dir_on: bool = kwargs['acquisition_dir_on']
@@ -637,6 +648,7 @@ class VideoWorker(Process):
                     None,
                 ))
             except DatasetNotReadyError:
+                self._report_zlut_capture_task_retry(zlut_capture)
                 return
             except Full:
                 logger.debug('Dropping Z-LUT capture completion because queue is full')

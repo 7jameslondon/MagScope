@@ -192,6 +192,27 @@ def test_worker_reports_zlut_capture_failure_to_manager():
     assert queue.items == [(4, 0, 0, 'capture failed')]
 
 
+def test_worker_reports_zlut_capture_retry_when_dataset_is_not_ready():
+    queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=queue,
+        locks={},
+        video_flag=None,
+        busy_count=None,
+        gpu_lock=None,
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=queue,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=None,
+        live_profile_bead=None,
+    )
+
+    worker._report_zlut_capture_task_retry({'step_index': 4})
+
+    assert queue.items == [(4, 0, 0, None)]
+
+
 def test_extract_zlut_metadata_allows_nan_profile_values():
     metadata = VideoProcessorManager._extract_zlut_metadata(
         np.asarray(
