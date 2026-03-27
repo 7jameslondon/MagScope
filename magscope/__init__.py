@@ -64,6 +64,9 @@ _EXPORTS = {
     'register_script_command': ('magscope.utils', 'register_script_command'),
 }
 
+for name in _SUBMODULES | set(_EXPORTS):
+    globals().pop(name, None)
+
 
 def __getattr__(name: str):
     if name in _SUBMODULES:
