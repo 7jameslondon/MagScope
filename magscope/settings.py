@@ -36,25 +36,25 @@ class SettingSpec:
 
         if not isinstance(coerced, self.value_type):
             raise ValueError(
-                f"Setting '{self.key}' must be of type {self.value_type}, got {type(coerced)}."
+                f"Setting '{self.key}' must be of type {self.value_type}, not {type(coerced)}."
             )
 
         if self.minimum is not None and isinstance(coerced, (int, float)):
             if coerced < self.minimum:
                 raise ValueError(
-                    f"Setting '{self.key}' must be at least {self.minimum}, got {coerced}."
+                    f"Setting '{self.key}' must be at least {self.minimum}, not {coerced}."
                 )
 
         if self.maximum is not None and isinstance(coerced, (int, float)):
             if coerced > self.maximum:
                 raise ValueError(
-                    f"Setting '{self.key}' must be at most {self.maximum}, got {coerced}."
+                    f"Setting '{self.key}' must be at most {self.maximum}, not {coerced}."
                 )
 
         if self.must_be_even and isinstance(coerced, int):
             if coerced % 2 != 0:
                 raise ValueError(
-                    f"Setting '{self.key}' must be an even integer, got {coerced}."
+                    f"Setting '{self.key}' must be an even integer, not {coerced}."
                 )
 
         return coerced

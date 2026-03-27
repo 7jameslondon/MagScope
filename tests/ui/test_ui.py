@@ -25,6 +25,11 @@ from magscope.ipc_commands import (
 from magscope.settings import MagScopeSettings
 from magscope.ui.controls import ZLUTGenerationDialog, ZLUTGenerationPanel, ZLUTSweepPreviewWidget
 from magscope.ui.ui import LoadingWindow, UIManager
+    StartupReadyCommand,
+    UpdateBeadRoisCommand,
+)
+from magscope.settings import MagScopeSettings
+from magscope.ui.ui import LoadingWindow, UIManager, _StartupReadyWindow
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
 
@@ -767,6 +772,33 @@ def test_dialog_helpers_show_details_inline(ui_manager, monkeypatch, method_name
     assert message_box.detailed_text is None
     assert message_box.buttons == FakeMessageBox.StandardButton.Ok
     assert message_box.shown is True
+def test_startup_ready_window_waits_until_shown_and_notifies_once(qtbot):
+    ready_calls: list[str] = []
+    window = _StartupReadyWindow(lambda: ready_calls.append('ready'))
+    qtbot.addWidget(window)
+
+    qtbot.wait(1)
+    assert ready_calls == []
+
+    window.show()
+    qtbot.waitUntil(lambda: len(ready_calls) == 1, timeout=1000)
+    qtbot.wait(10)
+
+    assert ready_calls == ['ready']
+
+
+def test_notify_startup_ready_sends_command_once(ui_manager, monkeypatch):
+    commands = []
+    ui_manager._command_registry = object()
+    ui_manager._pipe = object()
+    ui_manager._magscope_quitting = object()
+
+    monkeypatch.setattr(ui_manager, 'send_ipc', lambda command: commands.append(command))
+
+    ui_manager._notify_startup_ready()
+    ui_manager._notify_startup_ready()
+
+    assert commands == [StartupReadyCommand(process_name=ui_manager.name)]
 
 
 @pytest.mark.parametrize('n_windows', [1, 2, 3])

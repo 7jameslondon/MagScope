@@ -8,7 +8,7 @@ from typing import Callable, Iterable
 from warnings import warn
 
 import numpy as np
-from PyQt6.QtCore import QPoint, QRectF, QSettings, Qt, QThread, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
 from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -72,6 +72,37 @@ from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("ui.ui")
+
+
+class _StartupReadyWindow(QMainWindow):
+    def __init__(self, on_ready: Callable[[], None]):
+        super().__init__()
+        self._on_ready = on_ready
+        self._startup_ready_scheduled = False
+        self._startup_shown = False
+
+    def event(self, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Show:
+            self._startup_shown = True
+            self._maybe_schedule_startup_ready(after_paint=False)
+        elif event_type == QEvent.Type.Paint:
+            self._maybe_schedule_startup_ready(after_paint=True)
+        return super().event(event)
+
+    def _maybe_schedule_startup_ready(self, *, after_paint: bool) -> None:
+        if self._startup_ready_scheduled or not self._startup_shown or not self.isVisible():
+            return
+
+        platform_name = QGuiApplication.platformName()
+        window_handle = self.windowHandle()
+        is_exposed = window_handle is not None and window_handle.isExposed()
+        if not (is_exposed or after_paint or platform_name == "offscreen"):
+            return
+
+        self._startup_ready_scheduled = True
+        QTimer.singleShot(0, self._on_ready)
+
 
 class UIManager(ManagerProcessBase):
     def __init__(self):
@@ -244,6 +275,7 @@ class UIManager(ManagerProcessBase):
             'image_x_min': image_x_min,
             'image_x_max': image_x_max,
         }
+        self._startup_ready_sent = False
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -289,7 +321,10 @@ class UIManager(ManagerProcessBase):
 
         # Create the windows
         for i in range(self._n_windows):
-            window = QMainWindow()
+            if i == 0:
+                window = _StartupReadyWindow(self._notify_startup_ready)
+            else:
+                window = QMainWindow()
             window.setWindowTitle("MagScope")
             screen = QApplication.screens()[i % len(QApplication.screens())]
             geometry = screen.geometry()
@@ -324,6 +359,15 @@ class UIManager(ManagerProcessBase):
         # Start app
         self._running = True
         self.qt_app.exec()
+
+    def _notify_startup_ready(self) -> None:
+        if self._startup_ready_sent:
+            return
+        if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
+            return
+
+        self._startup_ready_sent = True
+        self.send_ipc(StartupReadyCommand(process_name=self.name))
 
     @register_ipc_command(
         SetSettingsCommand, delivery=Delivery.BROADCAST, target="ManagerProcessBase"
