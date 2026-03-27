@@ -367,15 +367,76 @@ def test_broadcast_quit_sets_quitting_and_stops_loop(scope_module, monkeypatch):
     assert drained == [True]
 
 
-def test_startup_ready_stops_startup_splash(scope_module, monkeypatch):
+def test_startup_ready_stops_startup_splash(scope_module):
     scope = make_scope(scope_module)
 
-    stopped = []
-    monkeypatch.setattr(scope, "_stop_startup_splash", lambda: stopped.append(True))
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
 
     scope.startup_ready(process_name="UIManager")
 
-    assert stopped == [True]
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_log_exception_from_ui_stops_startup_splash(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope.log_exception(process_name="UIManager", details="boom")
+
+    captured = capsys.readouterr()
+
+    assert "[UIManager] Unhandled exception in child process:\nboom" in captured.err
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_log_exception_from_non_ui_keeps_startup_splash(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope.log_exception(process_name="CameraManager", details="boom")
+
+    captured = capsys.readouterr()
+
+    assert "[CameraManager] Unhandled exception in child process:\nboom" in captured.err
+    assert scope._startup_splash_deadline == 123.0
+    assert scope._startup_splash_waiting_for_ui_ready is True
+
+
+def test_sleep_when_idle_dismisses_timed_out_startup_splash(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 10.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(scope_module.time, "sleep", lambda _: None)
+
+    scope._sleep_when_idle()
+
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_sleep_when_idle_keeps_completed_startup_splash_closed(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = None
+    scope._startup_splash_waiting_for_ui_ready = False
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(scope_module.time, "sleep", lambda _: None)
+
+    scope._sleep_when_idle()
+
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
 
 
 def test_start_launches_and_cleans_up_splash(scope_module, monkeypatch):
