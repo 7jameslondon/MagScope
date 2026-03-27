@@ -8,7 +8,9 @@ from magscope.ipc_commands import (
     RequestZLUTProfileLengthCommand,
     SetAcquisitionOnCommand,
     ShowErrorCommand,
+    ShowMessageCommand,
     UpdateZLUTGenerationEvaluationCommand,
+    UpdateZLUTGenerationStateCommand,
 )
 from magscope.utils import AcquisitionMode
 from magscope.zlut_generation import ZLUTGenerationManager
@@ -143,6 +145,37 @@ def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     assert saved[0][0] == filepath
     np.testing.assert_allclose(saved[0][1], np.asarray([[1.0, 2.0], [3.0, 4.0]]))
     assert isinstance(manager._sent_commands[0], LoadZLUTCommand)
+    assert isinstance(manager._sent_commands[1], ShowMessageCommand)
+    assert isinstance(manager._sent_commands[2], UpdateZLUTGenerationStateCommand)
+    assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
+
+
+def test_save_generated_zlut_without_loading_keeps_evaluation_active(monkeypatch, tmp_path):
+    manager = make_manager()
+    manager._phase = 'evaluating'
+    manager._generated_zluts = {
+        3: type('Result', (), {'zlut_array': np.asarray([[1.0, 2.0], [3.0, 4.0]])})()
+    }
+
+    saved = []
+
+    def fake_savetxt(path, array):
+        saved.append((path, array.copy()))
+
+    monkeypatch.setattr('magscope.zlut_generation.np.savetxt', fake_savetxt)
+
+    filepath = tmp_path / 'generated.txt'
+    manager.save_generated_zlut(str(filepath), 3, load_after_save=False)
+
+    assert saved[0][0] == filepath
+    np.testing.assert_allclose(saved[0][1], np.asarray([[1.0, 2.0], [3.0, 4.0]]))
+    assert not any(isinstance(command, LoadZLUTCommand) for command in manager._sent_commands)
+    assert not any(isinstance(command, ShowMessageCommand) for command in manager._sent_commands)
+    state_command = next(
+        command for command in manager._sent_commands if isinstance(command, UpdateZLUTGenerationStateCommand)
+    )
+    assert state_command.status == 'Generated Z-LUT saved.'
+    assert state_command.phase == 'evaluating'
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
 
 

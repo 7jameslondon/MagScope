@@ -253,6 +253,7 @@ class SelectGeneratedZLUTBeadCommand(Command):
 class SaveGeneratedZLUTCommand(Command):
     filepath: str
     bead_id: int
+    load_after_save: bool = True
 
 
 @dataclass(frozen=True)

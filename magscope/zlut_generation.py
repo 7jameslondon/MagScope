@@ -26,6 +26,7 @@ from magscope.ipc_commands import (
     SelectGeneratedZLUTBeadCommand,
     SetAcquisitionOnCommand,
     ShowErrorCommand,
+    ShowMessageCommand,
     StartZLUTGenerationCommand,
     UpdateZLUTGenerationEvaluationCommand,
     UpdateZLUTGenerationProgressCommand,
@@ -284,7 +285,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._send_evaluation_state(active=True)
 
     @register_ipc_command(SaveGeneratedZLUTCommand)
-    def save_generated_zlut(self, filepath: str, bead_id: int):
+    def save_generated_zlut(self, filepath: str, bead_id: int, load_after_save: bool = True):
         if self._phase != 'evaluating':
             return
 
@@ -306,15 +307,30 @@ class ZLUTGenerationManager(ManagerProcessBase):
             self._fail_evaluation(f'Failed to save generated Z-LUT: {reason}')
             return
 
-        self.send_ipc(LoadZLUTCommand(filepath=str(path)))
-        self._send_state(
-            'Generated Z-LUT saved and loaded.',
-            detail=f'Saved bead {bead_id} to {path}',
-            running=False,
-            can_cancel=False,
-            phase='complete',
-        )
-        self._cleanup_runtime_state(destroy_dataset=True)
+        if load_after_save:
+            self.send_ipc(LoadZLUTCommand(filepath=str(path)))
+            self.send_ipc(
+                ShowMessageCommand(
+                    text='Generated Z-LUT loaded.',
+                    details=f'Loaded bead {bead_id} from {path}',
+                )
+            )
+            self._send_state(
+                'Generated Z-LUT saved and loaded.',
+                detail=f'Saved and loaded bead {bead_id} from {path}',
+                running=False,
+                can_cancel=False,
+                phase='evaluating',
+            )
+        else:
+            self._send_state(
+                'Generated Z-LUT saved.',
+                detail=f'Saved bead {bead_id} to {path}',
+                running=False,
+                can_cancel=False,
+                phase='evaluating',
+            )
+        self._send_evaluation_state(active=True)
 
     @register_ipc_command(CancelGeneratedZLUTEvaluationCommand)
     def cancel_evaluation(self):

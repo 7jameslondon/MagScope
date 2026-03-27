@@ -2375,10 +2375,14 @@ class ZLUTGenerationDialog(QDialog):
         self.cancel_button = QPushButton('Cancel')
         self.cancel_button.clicked.connect(self._handle_cancel_clicked)
         button_row.addWidget(self.cancel_button)
-        self.save_button = QPushButton('Save and Load')
+        self.save_button = QPushButton('Save')
         self.save_button.clicked.connect(self._handle_save_clicked)
         self.save_button.setEnabled(False)
         button_row.addWidget(self.save_button)
+        self.save_and_load_button = QPushButton('Save and Load')
+        self.save_and_load_button.clicked.connect(self._handle_save_and_load_clicked)
+        self.save_and_load_button.setEnabled(False)
+        button_row.addWidget(self.save_and_load_button)
         self.close_button = QPushButton('Close')
         self.close_button.clicked.connect(self._handle_close_clicked)
         self.close_button.setEnabled(False)
@@ -2388,6 +2392,7 @@ class ZLUTGenerationDialog(QDialog):
         self._cancel_callback = None
         self._close_callback = None
         self._save_callback = None
+        self._save_and_load_callback = None
         self._select_bead_callback = None
 
     def set_cancel_callback(self, callback) -> None:
@@ -2395,6 +2400,9 @@ class ZLUTGenerationDialog(QDialog):
 
     def set_save_callback(self, callback) -> None:
         self._save_callback = callback
+
+    def set_save_and_load_callback(self, callback) -> None:
+        self._save_and_load_callback = callback
 
     def set_close_callback(self, callback) -> None:
         self._close_callback = callback
@@ -2411,6 +2419,10 @@ class ZLUTGenerationDialog(QDialog):
     def _handle_save_clicked(self) -> None:
         if self._save_callback is not None and self._selected_bead_id is not None:
             self._save_callback(self._selected_bead_id)
+
+    def _handle_save_and_load_clicked(self) -> None:
+        if self._save_and_load_callback is not None and self._selected_bead_id is not None:
+            self._save_and_load_callback(self._selected_bead_id)
 
     def _handle_close_clicked(self) -> None:
         if self._evaluation_active and self._close_callback is not None:
@@ -2444,7 +2456,9 @@ class ZLUTGenerationDialog(QDialog):
         self.cancel_button.setVisible(running or can_cancel)
         self.cancel_button.setEnabled(can_cancel)
         self.cancel_button.setText('Cancel')
-        self.save_button.setEnabled(self._evaluation_active and self._selected_bead_id is not None)
+        save_enabled = self._evaluation_active and self._selected_bead_id is not None
+        self.save_button.setEnabled(save_enabled)
+        self.save_and_load_button.setEnabled(save_enabled)
         self.bead_selector.setEnabled(self.bead_selector.count() > 0)
         self.close_button.setEnabled(not running)
         self.close_button.setText('Cancel' if self._evaluation_active else 'Close')
@@ -2489,7 +2503,9 @@ class ZLUTGenerationDialog(QDialog):
             self._selected_bead_id = None
         self.bead_selector.blockSignals(False)
         self.bead_selector.setEnabled(self.bead_selector.count() > 0)
-        self.save_button.setEnabled(active and self._selected_bead_id is not None)
+        save_enabled = active and self._selected_bead_id is not None
+        self.save_button.setEnabled(save_enabled)
+        self.save_and_load_button.setEnabled(save_enabled)
         self.cancel_button.setVisible(self._running)
         self.cancel_button.setEnabled(self._running)
         self.cancel_button.setText('Cancel')

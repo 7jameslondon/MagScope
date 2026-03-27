@@ -1347,7 +1347,12 @@ class UIManager(ManagerProcessBase):
             dialog = ZLUTGenerationDialog(self.windows[0])
             dialog.set_cancel_callback(self.cancel_zlut_generation)
             dialog.set_close_callback(self.discard_generated_zlut_evaluation)
-            dialog.set_save_callback(self.save_generated_zlut)
+            dialog.set_save_callback(
+                lambda bead_id: self.save_generated_zlut(bead_id, load_after_save=False)
+            )
+            dialog.set_save_and_load_callback(
+                lambda bead_id: self.save_generated_zlut(bead_id, load_after_save=True)
+            )
             dialog.set_select_bead_callback(self.select_generated_zlut_bead)
             dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
             self._zlut_generation_dialog = dialog
@@ -1387,13 +1392,13 @@ class UIManager(ManagerProcessBase):
         self.send_ipc(SelectGeneratedZLUTBeadCommand(bead_id=int(bead_id)))
         self._zlut_preview_last_poll = 0.0
 
-    def save_generated_zlut(self, bead_id: int) -> None:
+    def save_generated_zlut(self, bead_id: int, load_after_save: bool = True) -> None:
         settings = QSettings('MagScope', 'MagScope')
         last_value = settings.value('last zlut directory', os.path.expanduser('~'), type=str)
         default_path = os.path.join(last_value, f'generated_zlut_bead_{int(bead_id)}.txt')
         filepath, _ = QFileDialog.getSaveFileName(
             self.windows[0] if self.windows else None,
-            'Save and Load Generated Z-LUT',
+            'Save Generated Z-LUT',
             default_path,
             'Text Files (*.txt)',
         )
@@ -1402,7 +1407,13 @@ class UIManager(ManagerProcessBase):
 
         directory = os.path.dirname(filepath) or last_value
         settings.setValue('last zlut directory', directory)
-        self.send_ipc(SaveGeneratedZLUTCommand(filepath=filepath, bead_id=int(bead_id)))
+        self.send_ipc(
+            SaveGeneratedZLUTCommand(
+                filepath=filepath,
+                bead_id=int(bead_id),
+                load_after_save=bool(load_after_save),
+            )
+        )
 
     def request_profile_length(self) -> None:
         self.send_ipc(RequestProfileLengthCommand())

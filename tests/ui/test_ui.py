@@ -441,6 +441,18 @@ def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
     assert dialog.close_button.text() == 'Cancel'
 
 
+def test_zlut_generation_dialog_enables_save_actions_for_selected_bead(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.update_evaluation(active=True, bead_ids=[3, 5], selected_bead_id=5)
+
+    assert dialog.save_button.text() == 'Save'
+    assert dialog.save_button.isEnabled()
+    assert dialog.save_and_load_button.text() == 'Save and Load'
+    assert dialog.save_and_load_button.isEnabled()
+
+
 def test_zlut_generation_panel_has_no_cancel_button(qtbot):
     manager = SimpleNamespace(
         settings={
@@ -1424,7 +1436,22 @@ def test_save_generated_zlut_sends_command(ui_manager, monkeypatch):
 
     ui_manager.save_generated_zlut(5)
 
-    assert commands == [SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5)]
+    assert commands == [
+        SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5, load_after_save=True)
+    ]
+
+
+def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypatch):
+    commands = []
+    ui_manager.send_ipc = commands.append
+    ui_manager.windows = [QMainWindow()]
+    monkeypatch.setattr('magscope.ui.ui.QFileDialog.getSaveFileName', lambda *args, **kwargs: ('C:/tmp/test.txt', ''))
+
+    ui_manager.save_generated_zlut(5, load_after_save=False)
+
+    assert commands == [
+        SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5, load_after_save=False)
+    ]
 
 
 def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
