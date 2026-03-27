@@ -44,7 +44,7 @@ remain synchronized.
 import logging
 import sys
 import time
-from multiprocessing import Event, Lock, current_process, freeze_support
+from multiprocessing import Event, Lock, Process, current_process, freeze_support
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -59,14 +59,21 @@ from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
-    command_kwargs,
     CommandRegistry,
+    command_kwargs,
     create_pipes,
     Delivery,
     drain_pipe_until_quit,
     register_ipc_command,
 )
-from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand, UpdateSettingsCommand
+from magscope.ipc_commands import (
+    Command,
+    LogExceptionCommand,
+    QuitCommand,
+    SetSettingsCommand,
+    StartupReadyCommand,
+    UpdateSettingsCommand,
+)
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
@@ -130,6 +137,8 @@ class MagScope(metaclass=SingletonMeta):
         self._print_script_commands = print_script_commands
 
         self._terminated: bool = False
+        self._startup_splash_close_event: Event | None = None
+        self._startup_splash_process: Process | None = None
 
         self.live_profile_buffer: LiveProfileBuffer | None = None
         self.bead_roi_buffer: BeadRoiBuffer | None = None
@@ -167,21 +176,30 @@ class MagScope(metaclass=SingletonMeta):
         if not self._mark_running():
             return
 
-        self._collect_processes()
+        splash_started = False
+        try:
+            if not self._print_ipc_commands and not self._print_script_commands:
+                self._start_startup_splash()
+                splash_started = True
 
-        if self._print_ipc_commands or self._print_script_commands:
-            if self._print_ipc_commands:
-                self.print_registered_commands()
-            if self._print_script_commands:
-                self.print_registered_script_commands()
-            self._running = False
-            return
+            self._collect_processes()
 
-        self._initialize_shared_state()
-        self._start_managers()
-        self._main_ipc_loop()
-        self._join_processes()
-        self._mark_terminated()
+            if self._print_ipc_commands or self._print_script_commands:
+                if self._print_ipc_commands:
+                    self.print_registered_commands()
+                if self._print_script_commands:
+                    self.print_registered_script_commands()
+                self._running = False
+                return
+
+            self._initialize_shared_state()
+            self._start_managers()
+            self._main_ipc_loop()
+            self._join_processes()
+            self._mark_terminated()
+        finally:
+            if splash_started:
+                self._stop_startup_splash()
 
     def stop(self) -> None:
         """Request a graceful shutdown and wait for every manager to exit.
@@ -296,6 +314,39 @@ class MagScope(metaclass=SingletonMeta):
         """Record that this MagScope instance has finished its lifecycle."""
 
         self._terminated = True
+
+    def _start_startup_splash(self) -> None:
+        """Launch a lightweight splash window in a helper process."""
+
+        from magscope.startup_splash import run_startup_splash
+
+        if self._startup_splash_process is not None and self._startup_splash_process.is_alive():
+            return
+
+        close_event = Event()
+        splash_process = Process(
+            target=run_startup_splash,
+            args=(close_event,),
+            name="MagScopeStartupSplash",
+        )
+        splash_process.start()
+        self._startup_splash_close_event = close_event
+        self._startup_splash_process = splash_process
+
+    def _stop_startup_splash(self) -> None:
+        """Request the startup splash helper process to exit."""
+
+        if self._startup_splash_close_event is not None:
+            self._startup_splash_close_event.set()
+
+        if self._startup_splash_process is not None:
+            self._startup_splash_process.join(timeout=5)
+            if self._startup_splash_process.is_alive():
+                self._startup_splash_process.terminate()
+                self._startup_splash_process.join(timeout=1)
+
+        self._startup_splash_close_event = None
+        self._startup_splash_process = None
 
     def _collect_processes(self) -> None:
         """Assemble the ordered list of manager processes to supervise.
@@ -501,6 +552,13 @@ class MagScope(metaclass=SingletonMeta):
             file=sys.stderr,
             flush=True,
         )
+
+    @register_ipc_command(StartupReadyCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
+    def startup_ready(self, process_name: str = 'UIManager') -> None:
+        """Dismiss the startup splash once the UI process is ready."""
+
+        logger.info('%s reported startup ready', process_name)
+        self._stop_startup_splash()
 
     def _sleep_when_idle(self) -> None:
         """Throttle the IPC loop when no messages were processed."""

@@ -71,6 +71,11 @@ class LogExceptionCommand(Command):
 
 
 @dataclass(frozen=True)
+class StartupReadyCommand(Command):
+    process_name: str = "UIManager"
+
+
+@dataclass(frozen=True)
 class UpdateCameraSettingCommand(Command):
     name: str
     value: str

@@ -108,6 +108,7 @@ class UIManager(ManagerProcessBase):
         self._settings_persistence_warning_shown = False
         self._bead_roi_capacity = 10000
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
+        self._startup_ready_sent = False
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -185,9 +186,20 @@ class UIManager(ManagerProcessBase):
         self._timer_video_view.setInterval(25)
         self._timer_video_view.start()
 
+        QTimer.singleShot(0, self._notify_startup_ready)
+
         # Start app
         self._running = True
         self.qt_app.exec()
+
+    def _notify_startup_ready(self) -> None:
+        if self._startup_ready_sent:
+            return
+        if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
+            return
+
+        self._startup_ready_sent = True
+        self.send_ipc(StartupReadyCommand(process_name=self.name))
 
     @register_ipc_command(
         SetSettingsCommand, delivery=Delivery.BROADCAST, target="ManagerProcessBase"
