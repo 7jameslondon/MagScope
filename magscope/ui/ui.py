@@ -1356,6 +1356,7 @@ class UIManager(ManagerProcessBase):
             dialog.set_select_bead_callback(self.select_generated_zlut_bead)
             dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
             self._zlut_generation_dialog = dialog
+        self._zlut_generation_dialog.mark_starting()
         self._zlut_generation_dialog.show()
         self._zlut_generation_dialog.raise_()
         self._zlut_generation_dialog.activateWindow()

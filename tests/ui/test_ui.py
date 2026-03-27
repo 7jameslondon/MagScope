@@ -441,6 +441,18 @@ def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
     assert dialog.close_button.text() == 'Cancel'
 
 
+def test_zlut_generation_dialog_cannot_close_while_starting(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.show()
+    dialog.mark_starting()
+    dialog.close()
+
+    assert dialog.isVisible()
+    assert not dialog.close_button.isEnabled()
+
+
 def test_zlut_generation_dialog_enables_save_actions_for_selected_bead(qtbot):
     dialog = ZLUTGenerationDialog()
     qtbot.addWidget(dialog)
@@ -466,6 +478,23 @@ def test_zlut_generation_panel_has_no_cancel_button(qtbot):
     qtbot.addWidget(panel)
 
     assert not hasattr(panel, 'cancel_button')
+
+
+def test_zlut_generation_panel_disables_generate_during_evaluation(qtbot):
+    manager = SimpleNamespace(
+        settings={
+            'ROI': 64,
+            'video buffer n images': 8,
+        },
+        start_zlut_generation=lambda **kwargs: None,
+    )
+
+    panel = ZLUTGenerationPanel(manager)
+    qtbot.addWidget(panel)
+
+    panel.update_state('Review', running=False, can_cancel=False, phase='evaluating')
+
+    assert not panel.generate_button.isEnabled()
 
 
 def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
@@ -1393,12 +1422,16 @@ def test_add_bead_rolls_back_next_id_label_on_roi_update_failure(ui_manager, mon
 def test_start_zlut_generation_sends_command(ui_manager):
     commands = []
     ui_manager.send_ipc = commands.append
+    ui_manager.windows = [QMainWindow()]
 
     ui_manager.start_zlut_generation(start_nm=1.0, step_nm=2.0, stop_nm=3.0, profiles_per_bead=4)
 
     assert commands == [
         StartZLUTGenerationCommand(start_nm=1.0, step_nm=2.0, stop_nm=3.0, profiles_per_bead=4)
     ]
+    assert ui_manager._zlut_generation_dialog is not None
+    assert ui_manager._zlut_generation_dialog.isVisible()
+    assert not ui_manager._zlut_generation_dialog.close_button.isEnabled()
 
 
 def test_cancel_zlut_generation_sends_command(ui_manager):

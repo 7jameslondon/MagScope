@@ -2170,7 +2170,8 @@ class ZLUTGenerationPanel(ControlPanelBase):
         can_cancel: bool = False,
         phase: str = 'idle',
     ) -> None:
-        self.generate_button.setEnabled(not running)
+        generation_blocked = running or phase in {'evaluating', 'waiting_focus_limits'}
+        self.generate_button.setEnabled(not generation_blocked)
 
     def update_progress(
         self,
@@ -2337,6 +2338,7 @@ class ZLUTGenerationDialog(QDialog):
 
         self._running = False
         self._evaluation_active = False
+        self._startup_pending = False
         self._close_when_canceled = False
         self._selected_bead_id: int | None = None
 
@@ -2425,10 +2427,24 @@ class ZLUTGenerationDialog(QDialog):
             self._save_and_load_callback(self._selected_bead_id)
 
     def _handle_close_clicked(self) -> None:
+        if self._running or self._startup_pending:
+            return
         if self._evaluation_active and self._close_callback is not None:
             self._close_callback()
             self._evaluation_active = False
         self.close()
+
+    def mark_starting(self) -> None:
+        self._running = True
+        self._startup_pending = True
+        self._evaluation_active = False
+        self.status_label.setText('Preparing Z-LUT generation...')
+        self.detail_label.setText('Submitting the sweep request and waiting for the first status update.')
+        self.cancel_button.setVisible(False)
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText('Cancel')
+        self.close_button.setEnabled(False)
+        self.close_button.setText('Close')
 
     def _handle_bead_selection_changed(self, index: int) -> None:
         if index < 0:
@@ -2449,6 +2465,7 @@ class ZLUTGenerationDialog(QDialog):
         can_cancel: bool = False,
         phase: str = 'idle',
     ) -> None:
+        self._startup_pending = False
         self._running = running
         self._evaluation_active = phase == 'evaluating'
         self.status_label.setText(status)
@@ -2513,11 +2530,12 @@ class ZLUTGenerationDialog(QDialog):
 
     def force_close(self) -> None:
         self._running = False
+        self._startup_pending = False
         self._close_when_canceled = False
         self.close()
 
     def closeEvent(self, event) -> None:
-        if self._running:
+        if self._running or self._startup_pending:
             event.ignore()
             return
         if self._evaluation_active and self._close_callback is not None:
