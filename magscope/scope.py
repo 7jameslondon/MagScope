@@ -576,8 +576,7 @@ class MagScope(metaclass=SingletonMeta):
     def log_exception(self, process_name: str, details: str) -> None:
         """Surface an exception raised in a managed process."""
 
-        if process_name == 'UIManager':
-            self._dismiss_startup_splash_if_pending()
+        self._dismiss_startup_splash_if_pending()
 
         print(
             f'[{process_name}] Unhandled exception in child process:\n{details}',

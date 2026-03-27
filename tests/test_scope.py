@@ -394,7 +394,7 @@ def test_log_exception_from_ui_stops_startup_splash(scope_module, capsys):
     assert scope._startup_splash_waiting_for_ui_ready is False
 
 
-def test_log_exception_from_non_ui_keeps_startup_splash(scope_module, capsys):
+def test_log_exception_from_non_ui_stops_startup_splash(scope_module, capsys):
     scope = make_scope(scope_module)
 
     scope._startup_splash_deadline = 123.0
@@ -405,8 +405,8 @@ def test_log_exception_from_non_ui_keeps_startup_splash(scope_module, capsys):
     captured = capsys.readouterr()
 
     assert "[CameraManager] Unhandled exception in child process:\nboom" in captured.err
-    assert scope._startup_splash_deadline == 123.0
-    assert scope._startup_splash_waiting_for_ui_ready is True
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
 
 
 def test_sleep_when_idle_dismisses_timed_out_startup_splash(scope_module, monkeypatch):
