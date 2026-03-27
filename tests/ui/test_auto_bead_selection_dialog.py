@@ -1,7 +1,9 @@
 import os
+from threading import Event
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import QPoint, Qt
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -22,6 +24,10 @@ def _build_test_image() -> tuple[np.ndarray, tuple[int, int, int, int]]:
     return image, seed_roi
 
 
+def _wait_for_search_complete(qtbot, dialog: AutoBeadSelectionDialog) -> None:
+    qtbot.waitUntil(lambda: not dialog._search_in_progress, timeout=5000)
+
+
 def test_auto_bead_selection_dialog_updates_preview_with_score_threshold(qtbot):
     image, seed_roi = _build_test_image()
     dialog = AutoBeadSelectionDialog(
@@ -39,6 +45,7 @@ def test_auto_bead_selection_dialog_updates_preview_with_score_threshold(qtbot):
     assert 'Select a seed bead first' in dialog.step_2_body_label.text()
 
     dialog._set_seed_roi(seed_roi)
+    _wait_for_search_complete(qtbot, dialog)
 
     assert len(dialog.visible_candidates) >= 2
     assert dialog.threshold_value_label.text() != '0%'
@@ -68,6 +75,7 @@ def test_auto_bead_selection_dialog_accepts_visible_rois(qtbot):
     dialog.selectionAccepted.connect(lambda rois: accepted.append(rois))
 
     dialog._set_seed_roi(seed_roi)
+    _wait_for_search_complete(qtbot, dialog)
     dialog.threshold_slider.setValue(dialog.threshold_slider.maximum())
     dialog._accept_selection()
 
@@ -95,6 +103,7 @@ def test_auto_bead_selection_dialog_allows_seed_only_acceptance(qtbot):
     dialog.selectionAccepted.connect(lambda rois: accepted.append(rois))
 
     dialog._set_seed_roi(seed_roi)
+    _wait_for_search_complete(qtbot, dialog)
     dialog._visible_candidates = []
     dialog._accept_selection()
 
@@ -118,6 +127,7 @@ def test_auto_bead_selection_dialog_skips_overlapping_existing_seed_on_accept(qt
     dialog.selectionAccepted.connect(lambda rois: accepted.append(rois))
 
     dialog._set_seed_roi(seed_roi)
+    _wait_for_search_complete(qtbot, dialog)
     dialog.threshold_slider.setValue(dialog.threshold_slider.maximum())
     dialog._accept_selection()
 
@@ -166,7 +176,86 @@ def test_auto_bead_selection_dialog_shows_no_matches_for_seed_only_image(qtbot):
     qtbot.addWidget(dialog)
 
     dialog._set_seed_roi(seed_roi)
+    _wait_for_search_complete(qtbot, dialog)
 
     assert dialog.visible_candidates == []
     assert dialog.status_label.text() == 'No valid proposed beads were found for the selected seed bead.'
     assert dialog.accept_button.isEnabled()
+
+
+def test_auto_bead_selection_dialog_blocks_new_seed_during_active_search(qtbot, monkeypatch):
+    image, seed_roi = _build_test_image()
+    release_search = Event()
+    visited_seeds = []
+
+    def fake_detect(image_arg, seed_roi_arg, existing_rois_arg):
+        visited_seeds.append(seed_roi_arg)
+        release_search.wait(timeout=5)
+        return np.zeros((1, 1), dtype=np.float64), []
+
+    monkeypatch.setattr('magscope.ui.auto_bead_selection_dialog.detect_matching_beads', fake_detect)
+
+    dialog = AutoBeadSelectionDialog(
+        parent=None,
+        image=image,
+        roi_size=8,
+        existing_rois={},
+        display_scale=1,
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._set_seed_roi(seed_roi)
+    qtbot.waitUntil(lambda: dialog._search_in_progress, timeout=1000)
+    qtbot.waitUntil(lambda: visited_seeds == [seed_roi], timeout=1000)
+
+    assert dialog.search_progress_bar.isVisible()
+    assert dialog.search_cancel_button.isVisible()
+    assert dialog.search_cancel_button.isEnabled()
+    assert dialog.threshold_slider.isEnabled() is False
+    assert dialog.accept_button.isEnabled() is False
+
+    dialog._on_scene_clicked(QPoint(24, 24), Qt.MouseButton.LeftButton)
+
+    assert dialog.seed_roi == seed_roi
+
+    release_search.set()
+    _wait_for_search_complete(qtbot, dialog)
+
+
+def test_auto_bead_selection_dialog_cancel_clears_seed_and_ignores_late_results(qtbot, monkeypatch):
+    image, seed_roi = _build_test_image()
+    release_search = Event()
+
+    def fake_detect(image_arg, seed_roi_arg, existing_rois_arg):
+        release_search.wait(timeout=5)
+        return np.ones((2, 2), dtype=np.float64), [AutoBeadCandidate((20, 28, 6, 14), 0.9)]
+
+    monkeypatch.setattr('magscope.ui.auto_bead_selection_dialog.detect_matching_beads', fake_detect)
+
+    dialog = AutoBeadSelectionDialog(
+        parent=None,
+        image=image,
+        roi_size=8,
+        existing_rois={},
+        display_scale=1,
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog._set_seed_roi(seed_roi)
+    qtbot.waitUntil(lambda: dialog._search_in_progress, timeout=1000)
+
+    dialog.search_cancel_button.click()
+
+    assert dialog.seed_roi is None
+    assert dialog.visible_candidates == []
+    assert dialog.status_label.text() == 'No seed bead selected yet.'
+    assert dialog.accept_button.isEnabled() is False
+
+    release_search.set()
+    qtbot.waitUntil(lambda: dialog._search_thread is None, timeout=5000)
+
+    assert dialog.seed_roi is None
+    assert dialog.visible_candidates == []
+    assert dialog.status_label.text() == 'No seed bead selected yet.'

@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QSlider,
     QVBoxLayout,
@@ -28,6 +29,39 @@ from magscope.utils import numpy_type_to_qt_image_type
 
 if TYPE_CHECKING:
     from PyQt6.QtCore import QPoint
+
+
+class _AutoBeadSearchWorker(QObject):
+    failed = pyqtSignal(int, str)
+    finished = pyqtSignal(int, object, object)
+
+    def __init__(
+        self,
+        *,
+        request_id: int,
+        image: np.ndarray,
+        seed_roi: tuple[int, int, int, int],
+        existing_rois: tuple[tuple[int, int, int, int], ...],
+    ):
+        super().__init__()
+        self._request_id = request_id
+        self._image = image
+        self._seed_roi = seed_roi
+        self._existing_rois = existing_rois
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            score_map, candidates = detect_matching_beads(
+                self._image,
+                self._seed_roi,
+                self._existing_rois,
+            )
+        except Exception as exc:
+            self.failed.emit(self._request_id, str(exc))
+            return
+
+        self.finished.emit(self._request_id, score_map, candidates)
 
 
 class AutoBeadSelectionDialog(QDialog):
@@ -59,6 +93,11 @@ class AutoBeadSelectionDialog(QDialog):
         self._candidate_min_score = 0.0
         self._candidate_max_score = 1.0
         self._score_map: np.ndarray | None = None
+        self._next_search_request_id = 0
+        self._active_search_request_id: int | None = None
+        self._search_in_progress = False
+        self._search_thread: QThread | None = None
+        self._search_worker: _AutoBeadSearchWorker | None = None
 
         layout = QVBoxLayout(self)
 
@@ -100,20 +139,32 @@ class AutoBeadSelectionDialog(QDialog):
         slider_row.addWidget(self.threshold_value_label)
         layout.addLayout(slider_row)
 
+        progress_row = QHBoxLayout()
+        self.search_progress_label = QLabel('Searching for matching beads...')
+        progress_row.addWidget(self.search_progress_label)
+        self.search_progress_bar = QProgressBar()
+        self.search_progress_bar.setRange(0, 0)
+        progress_row.addWidget(self.search_progress_bar, 1)
+        self.search_cancel_button = QPushButton('Cancel Search')
+        self.search_cancel_button.clicked.connect(self._cancel_search)
+        progress_row.addWidget(self.search_cancel_button)
+        layout.addLayout(progress_row)
+
         self.status_label = QLabel('No seed bead selected yet.')
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        self.cancel_button = QPushButton('Cancel')
-        self.cancel_button.clicked.connect(self.reject)
-        button_row.addWidget(self.cancel_button)
+        self.close_button = QPushButton('Close')
+        self.close_button.clicked.connect(self.reject)
+        button_row.addWidget(self.close_button)
         self.accept_button = QPushButton('Accept Proposed Beads')
         self.accept_button.clicked.connect(self._accept_selection)
         button_row.addWidget(self.accept_button)
         layout.addLayout(button_row)
 
+        self._set_search_ui_state(False)
         self._refresh_visible_candidates()
 
     def _create_instruction_card(self, name: str, title: str, body: str) -> QFrame:
@@ -156,7 +207,7 @@ class AutoBeadSelectionDialog(QDialog):
         return QPixmap.fromImage(qimage.copy())
 
     def _accept_selection(self) -> None:
-        if self._seed_roi is None:
+        if self._seed_roi is None or self._search_in_progress:
             return
 
         accepted_rois: list[tuple[int, int, int, int]] = []
@@ -170,7 +221,7 @@ class AutoBeadSelectionDialog(QDialog):
         self.accept()
 
     def _on_scene_clicked(self, pos: 'QPoint', button) -> None:
-        if button != Qt.MouseButton.LeftButton:
+        if button != Qt.MouseButton.LeftButton or self._search_in_progress:
             return
         seed_roi = BeadGraphic.clamp_roi_to_scene(
             BeadGraphic.roi_from_center(pos.x(), pos.y(), self._roi_size),
@@ -179,14 +230,109 @@ class AutoBeadSelectionDialog(QDialog):
         self._set_seed_roi(seed_roi)
 
     def _set_seed_roi(self, seed_roi: tuple[int, int, int, int]) -> None:
+        if self._search_in_progress:
+            return
+
         self._seed_roi = seed_roi
-        self._score_map, self._candidates = detect_matching_beads(
-            self._image,
-            seed_roi,
-            self._existing_rois.values(),
+        self._reset_search_results()
+        self.status_label.setText('Searching for matching beads...')
+        self._set_instruction_cards_state(has_seed=True, has_candidates=False)
+        self._set_search_ui_state(True)
+        self._update_overlay()
+
+        self._next_search_request_id += 1
+        request_id = self._next_search_request_id
+        self._active_search_request_id = request_id
+
+        worker = _AutoBeadSearchWorker(
+            request_id=request_id,
+            image=self._image,
+            seed_roi=seed_roi,
+            existing_rois=tuple(self._existing_rois.values()),
         )
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_search_finished)
+        worker.failed.connect(self._on_search_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_search_thread_finished)
+
+        self._search_worker = worker
+        self._search_thread = thread
+        thread.start()
+
+    def _reset_search_results(self) -> None:
+        self._score_map = None
+        self._candidates = []
+        self._visible_candidates = []
+        self._candidate_min_score = 0.0
+        self._candidate_max_score = 1.0
+
+    def _clear_seed_and_results(self) -> None:
+        self._seed_roi = None
+        self._reset_search_results()
         self._configure_threshold_slider()
         self._refresh_visible_candidates()
+
+    def _set_search_ui_state(self, in_progress: bool) -> None:
+        self._search_in_progress = in_progress
+        self.search_progress_label.setVisible(in_progress)
+        self.search_progress_bar.setVisible(in_progress)
+        self.search_cancel_button.setVisible(in_progress)
+        self.search_cancel_button.setEnabled(in_progress)
+        self.threshold_slider.setEnabled(not in_progress and self.threshold_slider.maximum() > 0)
+        self.accept_button.setEnabled(not in_progress and self._seed_roi is not None)
+        self.close_button.setEnabled(not in_progress and self._search_thread is None)
+
+    def _cancel_search(self) -> None:
+        if not self._search_in_progress:
+            return
+
+        self._active_search_request_id = None
+        self._set_search_ui_state(False)
+        self._clear_seed_and_results()
+
+    @pyqtSlot(int, object, object)
+    def _on_search_finished(
+        self,
+        request_id: int,
+        score_map: np.ndarray,
+        candidates: list[AutoBeadCandidate],
+    ) -> None:
+        if request_id != self._active_search_request_id or self._seed_roi is None:
+            return
+
+        self._score_map = score_map
+        self._candidates = list(candidates)
+        self._configure_threshold_slider()
+        self._set_search_ui_state(False)
+        self._refresh_visible_candidates()
+
+    @pyqtSlot(int, str)
+    def _on_search_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._active_search_request_id:
+            return
+
+        self._active_search_request_id = None
+        self._set_search_ui_state(False)
+        self._clear_seed_and_results()
+        self.status_label.setText(f'Auto bead selection failed: {message}')
+
+    @pyqtSlot()
+    def _on_search_thread_finished(self) -> None:
+        thread = self.sender()
+        if thread is self._search_thread:
+            self._search_thread = None
+            self._search_worker = None
+            if not self._search_in_progress:
+                self._set_search_ui_state(False)
+        if self._search_in_progress:
+            self._active_search_request_id = None
+            self._set_search_ui_state(False)
 
     def _configure_threshold_slider(self) -> None:
         if not self._candidates:
@@ -234,8 +380,17 @@ class AutoBeadSelectionDialog(QDialog):
 
         if self._seed_roi is None:
             self._visible_candidates = []
-            self.accept_button.setEnabled(False)
+            if not self._search_in_progress:
+                self.accept_button.setEnabled(False)
+                self.status_label.setText('No seed bead selected yet.')
             self._set_instruction_cards_state(has_seed=False, has_candidates=False)
+            self._update_overlay()
+            return
+
+        if self._search_in_progress:
+            self._visible_candidates = []
+            self.accept_button.setEnabled(False)
+            self._set_instruction_cards_state(has_seed=True, has_candidates=False)
             self._update_overlay()
             return
 
@@ -257,12 +412,16 @@ class AutoBeadSelectionDialog(QDialog):
 
     def _set_instruction_cards_state(self, *, has_seed: bool, has_candidates: bool) -> None:
         if has_seed:
-            self.step_1_body_label.setText('Click another bead in the frozen image any time to choose a different seed ROI.')
-            if has_candidates:
+            if self._search_in_progress:
+                self.step_1_body_label.setText('Searching for matching beads. Wait for the search to finish or cancel it to choose a different seed ROI.')
+                self.step_2_body_label.setText('Search is in progress. Review and threshold controls are unavailable until it completes or is canceled.')
+            elif has_candidates:
+                self.step_1_body_label.setText('Click another bead in the frozen image any time to choose a different seed ROI.')
                 self.step_2_body_label.setText(
                     'Adjust the score threshold to refine the highlighted matches, then click Accept Proposed Beads.'
                 )
             else:
+                self.step_1_body_label.setText('Click another bead in the frozen image any time to choose a different seed ROI.')
                 self.step_2_body_label.setText(
                     'No additional matches are highlighted. You can accept the seed bead alone or click another bead to try again.'
                 )
@@ -330,3 +489,8 @@ class AutoBeadSelectionDialog(QDialog):
             state_overrides=state_overrides,
         )
         self.video_viewer.viewport().update()
+
+    def reject(self) -> None:
+        if self._search_in_progress or self._search_thread is not None:
+            return
+        super().reject()
