@@ -1,5 +1,18 @@
 from importlib import import_module
 
+_SUBMODULES = {
+    'camera',
+    'datatypes',
+    'hardware',
+    'ipc',
+    'ipc_commands',
+    'processes',
+    'scope',
+    'scripting',
+    'ui',
+    'utils',
+}
+
 __all__ = [
     'AcquisitionMode',
     'CameraBase',
@@ -23,6 +36,7 @@ __all__ = [
     'numpy_type_to_qt_image_type',
     'register_ipc_command',
     'register_script_command',
+    *_SUBMODULES,
 ]
 
 _EXPORTS = {
@@ -52,6 +66,11 @@ _EXPORTS = {
 
 
 def __getattr__(name: str):
+    if name in _SUBMODULES:
+        value = import_module(f'{__name__}.{name}')
+        globals()[name] = value
+        return value
+
     if name not in _EXPORTS:
         raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
