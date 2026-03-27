@@ -1,11 +1,26 @@
-from pathlib import Path
+from importlib import resources
+
+
+def _load_logo_pixmap():
+    from PyQt6.QtGui import QPixmap
+
+    logo_resource = resources.files("magscope").joinpath("assets/logo.png")
+    if not logo_resource.is_file():
+        return None
+
+    with resources.as_file(logo_resource) as logo_path:
+        pixmap = QPixmap(str(logo_path))
+
+    if pixmap.isNull():
+        return None
+
+    return pixmap
 
 
 def run_startup_splash(close_event) -> None:
     """Display the startup splash until ``close_event`` is set."""
 
     from PyQt6.QtCore import Qt, QTimer
-    from PyQt6.QtGui import QPixmap
     from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
     app = QApplication.instance()
@@ -28,20 +43,17 @@ def run_startup_splash(close_event) -> None:
     layout.setContentsMargins(36, 36, 36, 36)
     layout.setSpacing(0)
 
-    logo_path = Path(__file__).resolve().parents[1] / 'assets' / 'logo.png'
     logo = QLabel()
     logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    if logo_path.exists():
-        pixmap = QPixmap(str(logo_path))
-        if not pixmap.isNull():
-            logo.setPixmap(
-                pixmap.scaled(
-                    568,
-                    288,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+    if pixmap := _load_logo_pixmap():
+        logo.setPixmap(
+            pixmap.scaled(
+                568,
+                288,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
+        )
     layout.addWidget(logo)
 
     window.resize(640, 360)
