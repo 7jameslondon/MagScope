@@ -439,6 +439,29 @@ def test_sleep_when_idle_keeps_completed_startup_splash_closed(scope_module, mon
     assert scope._startup_splash_waiting_for_ui_ready is False
 
 
+def test_receive_ipc_dismisses_timed_out_startup_splash_while_busy(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 10.0
+    scope._startup_splash_waiting_for_ui_ready = True
+    scope.pipes = {"UIManager": DummyPipe([QuitCommand()])}
+
+    processed = []
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        scope,
+        "_process_command",
+        lambda command: processed.append(command) or False,
+    )
+
+    scope.receive_ipc()
+
+    assert processed == [QuitCommand()]
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
 def test_start_launches_and_cleans_up_splash(scope_module, monkeypatch):
     scope = make_scope(scope_module)
 

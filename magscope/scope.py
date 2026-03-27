@@ -479,6 +479,7 @@ class MagScope(metaclass=SingletonMeta):
 
     def receive_ipc(self):
         """Poll every IPC pipe once and relay any commands that arrive."""
+        self._check_startup_splash_timeout()
         handled_command = False
         for pipe in self.pipes.values():
             command = self._read_command(pipe)
