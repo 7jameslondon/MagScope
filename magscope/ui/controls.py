@@ -2532,6 +2532,7 @@ class ZLUTGenerationDialog(QDialog):
         self._running = False
         self._startup_pending = False
         self._close_when_canceled = False
+        self._evaluation_active = False
         self.close()
 
     def closeEvent(self, event) -> None:

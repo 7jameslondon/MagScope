@@ -431,6 +431,21 @@ def test_zlut_generation_dialog_close_discards_during_evaluation(qtbot):
     assert discard_calls == ['discard']
 
 
+def test_zlut_generation_dialog_force_close_skips_discard_callback(qtbot):
+    dialog = ZLUTGenerationDialog()
+    qtbot.addWidget(dialog)
+
+    discard_calls = []
+    dialog.set_close_callback(lambda: discard_calls.append('discard'))
+    dialog.show()
+    dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
+
+    dialog.force_close()
+
+    assert discard_calls == []
+    assert not dialog.isVisible()
+
+
 def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
     dialog = ZLUTGenerationDialog()
     qtbot.addWidget(dialog)
@@ -1548,6 +1563,27 @@ def test_update_zlut_generation_evaluation_forwards_to_dialog(ui_manager):
     ]
 
 
+def test_update_zlut_generation_evaluation_clears_preview_when_inactive(ui_manager):
+    class FakeDatasetHandle:
+        def __init__(self):
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    dataset = FakeDatasetHandle()
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_sweep_dataset = dataset
+
+    ui_manager.update_zlut_generation_evaluation(False, [], selected_bead_id=None)
+
+    assert dataset.closed
+    assert ui_manager._zlut_sweep_dataset is None
+    assert ui_manager._zlut_generation_dialog.preview_widget.clear_calls == [
+        'Waiting for Z-LUT sweep data...'
+    ]
+
+
 def test_cancel_generation_still_sends_cancel_during_evaluation(ui_manager):
     commands = []
     ui_manager.send_ipc = commands.append
@@ -1578,6 +1614,18 @@ def test_update_zlut_generation_dialog_clears_preview_when_dataset_missing(ui_ma
     ]
 
 
+def test_update_zlut_generation_dialog_clears_preview_when_idle_without_evaluation(ui_manager):
+    ui_manager._zlut_generation_dialog = FakeZLutGenerationDialog()
+    ui_manager._zlut_generation_phase = 'idle'
+    ui_manager._zlut_evaluation_bead_ids = []
+
+    ui_manager._update_zlut_generation_dialog()
+
+    assert ui_manager._zlut_generation_dialog.preview_widget.clear_calls == [
+        'Waiting for Z-LUT sweep data...'
+    ]
+
+
 def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkeypatch):
     from magscope.ui import ui as ui_module
 
@@ -1595,22 +1643,33 @@ def test_update_zlut_generation_dialog_pushes_dataset_preview(ui_manager, monkey
         def attach(*, locks):
             return FakeDataset()
 
-        def peak(self):
+        def read_preview(self, selected_bead_id=None):
+            assert selected_bead_id is None
             return {
-                'bead_ids': np.asarray([5, 5, 7], dtype=np.uint32),
-                'step_indices': np.asarray([0, 1, 0], dtype=np.uint32),
-                'timestamps': np.asarray([1.0, 2.0, 3.0], dtype=np.float64),
-                'motor_z_values': np.asarray([10.0, 20.0, 30.0], dtype=np.float64),
-                'valid_flags': np.asarray([1, 1, 1], dtype=np.uint8),
+                'state': self.state,
+                'count': 3,
+                'capacity': 8,
+                'n_steps': self.n_steps,
+                'n_beads': self.n_beads,
+                'profiles_per_bead': self.profiles_per_bead,
+                'profile_length': self.profile_length,
+                'available_bead_ids': [5, 7],
+                'selected_bead_id': 5,
+                'motor_z_min': 10.0,
+                'motor_z_max': 30.0,
+                'step_indices': np.asarray([0, 1], dtype=np.uint32),
+                'motor_z_values': np.asarray([10.0, 20.0], dtype=np.float64),
                 'profiles': np.asarray(
                     [
                         [1.0, 2.0, 3.0],
                         [4.0, 5.0, 6.0],
-                        [7.0, 8.0, 9.0],
                     ],
                     dtype=np.float64,
                 ),
             }
+
+        def peak(self):
+            raise AssertionError('Preview refresh should use read_preview instead of peak')
 
         def get_capacity(self):
             return 8
