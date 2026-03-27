@@ -154,7 +154,9 @@ class VideoProcessorManager(ManagerProcessBase):
             self._set_zlut_from_path(path)
         except Exception as exc:
             logger.exception('Failed to load Z-LUT file: %s', exc)
+            self._clear_zlut_state()
             self._notify_zlut_error(path, exc)
+            self._broadcast_zlut_metadata()
             return
 
         self._broadcast_zlut_metadata()
@@ -167,11 +169,14 @@ class VideoProcessorManager(ManagerProcessBase):
 
     @register_ipc_command(UnloadZLUTCommand)
     def unload_zlut(self) -> None:
+        self._clear_zlut_state()
+        self._broadcast_zlut_metadata()
+
+    def _clear_zlut_state(self) -> None:
         self._zlut_path = None
         self._zlut_metadata = None
         self._zlut = None
         self._lookup_z_warning_reported = False
-        self._broadcast_zlut_metadata()
 
     def _set_zlut_from_path(self, path: Path) -> None:
         zlut_array = np.loadtxt(path)
@@ -192,6 +197,9 @@ class VideoProcessorManager(ManagerProcessBase):
             raise ValueError('Z-LUT must include at least two z-reference values')
 
         z_references = zlut_array[0, :]
+        if not np.all(np.isfinite(z_references)):
+            raise ValueError('Z-LUT z-reference row must contain only finite values')
+
         step_size = float(np.mean(np.diff(z_references)))
 
         return {

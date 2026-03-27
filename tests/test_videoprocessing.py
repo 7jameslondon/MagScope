@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import numpy as np
 
+from magscope.ipc_commands import ShowMessageCommand, UpdateZLUTMetadataCommand
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -208,3 +210,54 @@ def test_extract_zlut_metadata_allows_nan_profile_values():
         'step_size': 10.0,
         'profile_length': 2,
     }
+
+
+@pytest.mark.parametrize('bad_value', [np.nan, np.inf])
+def test_extract_zlut_metadata_rejects_non_finite_z_reference_values(bad_value):
+    with pytest.raises(ValueError, match='z-reference row'):
+        VideoProcessorManager._extract_zlut_metadata(
+            np.asarray(
+                [
+                    [10.0, bad_value, 30.0],
+                    [1.0, 2.0, 3.0],
+                ],
+                dtype=np.float64,
+            )
+        )
+
+
+def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manager, monkeypatch, tmp_path):
+    manager._zlut_path = Path('existing.txt')
+    manager._zlut_metadata = {
+        'z_min': 10.0,
+        'z_max': 30.0,
+        'step_size': 10.0,
+        'profile_length': 2,
+    }
+    manager._zlut = np.asarray([[10.0, 20.0], [1.0, 2.0]], dtype=np.float64)
+    manager._lookup_z_warning_reported = True
+
+    monkeypatch.setattr(
+        videoprocessing.np,
+        'loadtxt',
+        lambda _: np.asarray([[10.0, np.nan], [1.0, 2.0]], dtype=np.float64),
+    )
+
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+
+    manager.load_zlut_file(str(tmp_path / 'bad_zlut.txt'))
+
+    assert manager._zlut is None
+    assert manager._zlut_path is None
+    assert manager._zlut_metadata is None
+    assert manager._lookup_z_warning_reported is False
+    assert isinstance(sent_commands[0], ShowMessageCommand)
+    assert isinstance(sent_commands[1], UpdateZLUTMetadataCommand)
+    assert sent_commands[1] == UpdateZLUTMetadataCommand(
+        filepath=None,
+        z_min=None,
+        z_max=None,
+        step_size=None,
+        profile_length=None,
+    )
