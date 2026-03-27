@@ -2124,11 +2124,6 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.generate_button.clicked.connect(self.generate_callback)
         buttons_row.addWidget(self.generate_button)
 
-        self.cancel_button = QPushButton('Cancel')
-        self.cancel_button.clicked.connect(self.cancel_callback)
-        self.cancel_button.setEnabled(False)
-        buttons_row.addWidget(self.cancel_button)
-
     def generate_callback(self):
         # Start
         start_text = self.start_input.lineedit.text()
@@ -2166,9 +2161,6 @@ class ZLUTGenerationPanel(ControlPanelBase):
             profiles_per_bead=profiles_per_bead,
         )
 
-    def cancel_callback(self):
-        self.manager.cancel_zlut_generation()
-
     def update_state(
         self,
         status: str,
@@ -2179,7 +2171,6 @@ class ZLUTGenerationPanel(ControlPanelBase):
         phase: str = 'idle',
     ) -> None:
         self.generate_button.setEnabled(not running)
-        self.cancel_button.setEnabled(can_cancel)
 
     def update_progress(
         self,

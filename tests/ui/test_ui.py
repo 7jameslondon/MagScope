@@ -23,7 +23,7 @@ from magscope.ipc_commands import (
     UpdateBeadRoisCommand,
 )
 from magscope.settings import MagScopeSettings
-from magscope.ui.controls import ZLUTGenerationDialog, ZLUTSweepPreviewWidget
+from magscope.ui.controls import ZLUTGenerationDialog, ZLUTGenerationPanel, ZLUTSweepPreviewWidget
 from magscope.ui.ui import LoadingWindow, UIManager
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
@@ -439,6 +439,21 @@ def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
 
     assert not dialog.cancel_button.isVisible()
     assert dialog.close_button.text() == 'Cancel'
+
+
+def test_zlut_generation_panel_has_no_cancel_button(qtbot):
+    manager = SimpleNamespace(
+        settings={
+            'ROI': 64,
+            'video buffer n images': 8,
+        },
+        start_zlut_generation=lambda **kwargs: None,
+    )
+
+    panel = ZLUTGenerationPanel(manager)
+    qtbot.addWidget(panel)
+
+    assert not hasattr(panel, 'cancel_button')
 
 
 def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
