@@ -7,7 +7,7 @@ import types
 import pytest
 
 from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
-from magscope.ipc_commands import Command, QuitCommand
+from magscope.ipc_commands import Command, QuitCommand, StartupReadyCommand
 
 
 class DummyEvent:
@@ -365,6 +365,149 @@ def test_broadcast_quit_sets_quitting_and_stops_loop(scope_module, monkeypatch):
     assert scope._quitting.is_set()
     assert pipe.sent == [QuitCommand()]
     assert drained == [True]
+
+
+def test_startup_ready_stops_startup_splash(scope_module):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope.startup_ready(process_name="UIManager")
+
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_log_exception_from_ui_stops_startup_splash(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope.log_exception(process_name="UIManager", details="boom")
+
+    captured = capsys.readouterr()
+
+    assert "[UIManager] Unhandled exception in child process:\nboom" in captured.err
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_log_exception_from_non_ui_stops_startup_splash(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope.log_exception(process_name="CameraManager", details="boom")
+
+    captured = capsys.readouterr()
+
+    assert "[CameraManager] Unhandled exception in child process:\nboom" in captured.err
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_sleep_when_idle_dismisses_timed_out_startup_splash(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 10.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(scope_module.time, "sleep", lambda _: None)
+
+    scope._sleep_when_idle()
+
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_sleep_when_idle_keeps_completed_startup_splash_closed(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = None
+    scope._startup_splash_waiting_for_ui_ready = False
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(scope_module.time, "sleep", lambda _: None)
+
+    scope._sleep_when_idle()
+
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_receive_ipc_dismisses_timed_out_startup_splash_while_busy(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    scope._startup_splash_deadline = 10.0
+    scope._startup_splash_waiting_for_ui_ready = True
+    scope.pipes = {"UIManager": DummyPipe([QuitCommand()])}
+
+    processed = []
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        scope,
+        "_process_command",
+        lambda command: processed.append(command) or False,
+    )
+
+    scope.receive_ipc()
+
+    assert processed == [QuitCommand()]
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_start_launches_and_cleans_up_splash(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    calls = []
+
+    monkeypatch.setattr(scope, "_start_startup_splash", lambda: calls.append("start_splash"))
+    monkeypatch.setattr(scope, "_stop_startup_splash", lambda: calls.append("stop_splash"))
+    monkeypatch.setattr(scope, "_collect_processes", lambda: calls.append("collect"))
+    monkeypatch.setattr(scope, "_initialize_shared_state", lambda: calls.append("init"))
+    monkeypatch.setattr(scope, "_start_managers", lambda: calls.append("start_managers"))
+    monkeypatch.setattr(scope, "_join_processes", lambda: calls.append("join"))
+
+    def fake_loop():
+        calls.append("loop")
+        scope._running = False
+
+    monkeypatch.setattr(scope, "_main_ipc_loop", fake_loop)
+
+    scope.start()
+
+    assert calls == [
+        "start_splash",
+        "collect",
+        "init",
+        "start_managers",
+        "loop",
+        "join",
+        "stop_splash",
+    ]
+    assert scope._terminated is True
+
+
+def test_start_skips_splash_for_print_only_mode(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.print_ipc_commands = True
+
+    calls = []
+
+    monkeypatch.setattr(scope, "_start_startup_splash", lambda: calls.append("start_splash"))
+    monkeypatch.setattr(scope, "_stop_startup_splash", lambda: calls.append("stop_splash"))
+    monkeypatch.setattr(scope, "_collect_processes", lambda: calls.append("collect"))
+    monkeypatch.setattr(scope, "print_registered_commands", lambda: calls.append("print_ipc"))
+
+    scope.start()
+
+    assert calls == ["collect", "print_ipc"]
 
 
 def test_magscope_is_singleton(scope_module):
