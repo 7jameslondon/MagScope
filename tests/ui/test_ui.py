@@ -769,18 +769,49 @@ def test_dialog_helpers_show_details_inline(ui_manager, monkeypatch, method_name
     assert message_box.shown is True
 
 
-def test_startup_ready_window_waits_until_shown_and_notifies_once(qtbot):
+def test_startup_ready_window_waits_for_shown_state_before_scheduling(qtbot, monkeypatch):
     ready_calls: list[str] = []
+    timer_calls = []
     window = _StartupReadyWindow(lambda: ready_calls.append('ready'))
     qtbot.addWidget(window)
 
-    qtbot.wait(1)
+    monkeypatch.setattr(window, 'isVisible', lambda: True)
+    monkeypatch.setattr(window, 'windowHandle', lambda: SimpleNamespace(isExposed=lambda: True))
+    monkeypatch.setattr(
+        'magscope.ui.ui.QTimer.singleShot',
+        lambda delay_ms, callback: timer_calls.append(delay_ms) or callback(),
+    )
+
+    window._maybe_schedule_startup_ready(after_paint=False)
+
+    assert timer_calls == []
     assert ready_calls == []
 
-    window.show()
-    qtbot.waitUntil(lambda: len(ready_calls) == 1, timeout=1000)
-    qtbot.wait(10)
+    window._startup_shown = True
+    window._maybe_schedule_startup_ready(after_paint=False)
 
+    assert timer_calls == [0]
+    assert ready_calls == ['ready']
+
+
+def test_startup_ready_window_schedules_callback_once_when_ready(qtbot, monkeypatch):
+    ready_calls: list[str] = []
+    timer_calls = []
+    window = _StartupReadyWindow(lambda: ready_calls.append('ready'))
+    qtbot.addWidget(window)
+    window._startup_shown = True
+
+    monkeypatch.setattr(window, 'isVisible', lambda: True)
+    monkeypatch.setattr(window, 'windowHandle', lambda: SimpleNamespace(isExposed=lambda: True))
+    monkeypatch.setattr(
+        'magscope.ui.ui.QTimer.singleShot',
+        lambda delay_ms, callback: timer_calls.append(delay_ms) or callback(),
+    )
+
+    window._maybe_schedule_startup_ready(after_paint=False)
+    window._maybe_schedule_startup_ready(after_paint=True)
+
+    assert timer_calls == [0]
     assert ready_calls == ['ready']
 
 
