@@ -89,9 +89,9 @@ def build_demo_case(
 
 def build_default_cases() -> list[BenchmarkCase]:
     return [
-        build_demo_case(name='small', seed=101, image_size=400, roi_size=40, inserted_matches=3),
         build_demo_case(name='medium', seed=202, image_size=700, roi_size=70, inserted_matches=4),
         build_demo_case(name='large', seed=1234, image_size=1000, roi_size=100, inserted_matches=4),
+        build_demo_case(name='extra-large', seed=777, image_size=2560, roi_size=50, inserted_matches=4),
     ]
 
 
@@ -290,8 +290,8 @@ def run_instrumented_variant(
 
 def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]:
     return {
-        'production': lambda case, chunk_rows: run_production_variant(case, chunk_rows=chunk_rows),
-        'reference': lambda case, chunk_rows: run_instrumented_variant(
+        'reference': lambda case, chunk_rows: run_production_variant(case, chunk_rows=chunk_rows),
+        'legacy-reference': lambda case, chunk_rows: run_instrumented_variant(
             case,
             chunk_rows=chunk_rows,
             use_cached_kernel=False,
@@ -384,20 +384,20 @@ def run_repeated(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Compare auto bead selection optimization variants.')
-    parser.add_argument('--chunk-rows', type=int, default=64)
+    parser.add_argument('--chunk-rows', type=int, default=20)
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument(
         '--cases',
         nargs='*',
-        default=['small', 'medium', 'large'],
-        help='Case names to run: small medium large',
+        default=['medium', 'large', 'extra-large'],
+        help='Case names to run: medium large extra-large',
     )
     parser.add_argument(
         '--variants',
         nargs='*',
         default=[
-            'production',
             'reference',
+            'legacy-reference',
             'cached-kernel',
             'square-out',
             'fast-filter',
@@ -437,15 +437,15 @@ def main() -> None:
             f'roi={case.seed_roi[1] - case.seed_roi[0]} inserted_matches={len(case.inserted_match_rois)}'
         )
         baseline_result, baseline_times = run_repeated(
-            variants['production'],
+            variants['reference'],
             case,
             chunk_rows=args.chunk_rows,
             repeats=args.repeats,
         )
-        print_variant_summary('production', baseline_times, 'BASE', min(baseline_times))
+        print_variant_summary('reference', baseline_times, 'BASE', min(baseline_times))
 
         for variant_name in args.variants:
-            if variant_name == 'production':
+            if variant_name == 'reference':
                 continue
             result, times = run_repeated(
                 variants[variant_name],

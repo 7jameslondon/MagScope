@@ -10,7 +10,7 @@ import numpy as np
 from scipy.signal import correlate2d
 
 
-_DEFAULT_CORRELATION_CHUNK_ROWS = 64
+_DEFAULT_CORRELATION_CHUNK_ROWS = 20
 _CANDIDATE_PROGRESS_UPDATE_INTERVAL = 512
 _MIN_CANDIDATE_SCORE = np.finfo(np.float64).eps
 
