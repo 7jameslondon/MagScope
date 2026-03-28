@@ -265,7 +265,7 @@ class DummyCameraNoise(CameraBase):
     """Noise camera that generates random images at a configurable frame rate."""
 
     width = 512
-    height = 512
+    height = 256
     bits = 8
     dtype = np.uint8
     nm_per_px = 5000.
