@@ -1,4 +1,5 @@
 import os
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -415,6 +416,10 @@ def test_loading_window_defaults(qtbot):
     expected_flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
     assert window.windowFlags() & expected_flags == expected_flags
 
+@pytest.mark.skipif(
+    sys.platform == 'win32' and sys.version_info >= (3, 13),
+    reason='FigureCanvasQTAgg teardown segfaults on Windows Python 3.13 in CI',
+)
 def test_zlut_preview_widget_masks_non_finite_values_without_red_override(qtbot):
     widget = ZLUTSweepPreviewWidget()
     qtbot.addWidget(widget)
