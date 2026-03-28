@@ -8,6 +8,7 @@ import textwrap
 import time
 from typing import TYPE_CHECKING, Any
 
+import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
@@ -25,6 +26,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QBoxLayout,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -2109,14 +2111,18 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.stop_input = LabeledLineEdit(label_text='Stop (nm):')
         self.layout().addWidget(self.stop_input)
 
-        # Generate button
-        button = QPushButton('Generate')
-        button.clicked.connect(self.generate_callback)
-        self.layout().addWidget(button)
+        # Measurements per step
+        self.measurements_input = LabeledLineEdit(label_text='Measurements per step:')
+        self.measurements_input.lineedit.setText(str(self.manager.settings['video buffer n images']))
+        self.layout().addWidget(self.measurements_input)
 
-        note = QLabel('Temporary development behavior: Generate prints the measured profile length.')
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        # Generate button
+        buttons_row = QHBoxLayout()
+        self.layout().addLayout(buttons_row)
+
+        self.generate_button = QPushButton('Generate')
+        self.generate_button.clicked.connect(self.generate_callback)
+        buttons_row.addWidget(self.generate_button)
 
     def generate_callback(self):
         # Start
@@ -2140,7 +2146,403 @@ class ZLUTGenerationPanel(ControlPanelBase):
         except ValueError:
             return
 
-        self.manager.request_profile_length()
+        measurements_text = self.measurements_input.lineedit.text()
+        try:
+            profiles_per_bead = int(measurements_text)
+        except ValueError:
+            return
+        if profiles_per_bead <= 0:
+            return
+
+        self.manager.start_zlut_generation(
+            start_nm=start_nm,
+            step_nm=step_nm,
+            stop_nm=stop_nm,
+            profiles_per_bead=profiles_per_bead,
+        )
+
+    def update_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        *,
+        running: bool = False,
+        can_cancel: bool = False,
+        phase: str = 'idle',
+    ) -> None:
+        generation_blocked = running or phase in {'evaluating', 'waiting_focus_limits'}
+        self.generate_button.setEnabled(not generation_blocked)
+
+    def update_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        _ = (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
+
+
+class ZLUTSweepPreviewWidget(QWidget):
+    _STATE_LABELS = {
+        0: 'Absent',
+        1: 'Creating',
+        2: 'Ready',
+        3: 'Capturing',
+        4: 'Complete',
+        5: 'Detaching',
+        6: 'Failed',
+        7: 'Destroyed',
+    }
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+
+        self.summary_label = QLabel('Waiting for Z-LUT sweep data...')
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        self._preview_cmap = matplotlib.colormaps['gray'].copy()
+
+        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(280)
+        layout.addWidget(self.canvas, 1)
+
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_xlabel('Capture Index')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self._image = self.axes.imshow(
+            np.zeros((1, 1), dtype=np.float64),
+            cmap=self._preview_cmap,
+            aspect='auto',
+            interpolation='nearest',
+            origin='lower',
+        )
+        self.axes.set_title('No sweep preview available')
+        self.figure.tight_layout()
+
+    def clear(self, message: str = 'Waiting for Z-LUT sweep data...') -> None:
+        self.summary_label.setText(message)
+        self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+        self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
+        self._image.set_clim(0.0, 1.0)
+        self.axes.set_title('No sweep preview available')
+        self.axes.set_xlabel('Capture Index')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(-0.5, 0.5)
+        self.axes.set_ylim(-0.5, 0.5)
+        self.canvas.draw()
+
+    def update_preview(
+        self,
+        *,
+        state: int,
+        count: int,
+        capacity: int,
+        n_steps: int,
+        n_beads: int,
+        profiles_per_bead: int,
+        profile_length: int,
+        preview_image: np.ndarray | None,
+        selected_bead_id: int | None,
+        mode: str,
+        motor_z_min: float | None,
+        motor_z_max: float | None,
+        expected_capture_count: int | None = None,
+        x_axis_label: str = 'Z Position (nm)',
+        x_axis_min: float | None = None,
+        x_axis_max: float | None = None,
+        image_x_min: float | None = None,
+        image_x_max: float | None = None,
+    ) -> None:
+        state_text = self._STATE_LABELS.get(int(state), str(state))
+        summary_parts = [
+            f'State: {state_text}',
+            f'Captures: {count} / {capacity}',
+            f'Steps: {n_steps}',
+            f'Beads: {n_beads}',
+            f'Profiles/bead: {profiles_per_bead}',
+            f'Profile length: {profile_length}',
+        ]
+        if selected_bead_id is not None:
+            summary_parts.append(f'Preview bead: {selected_bead_id}')
+        if motor_z_min is not None and motor_z_max is not None:
+            summary_parts.append(f'Observed Z: {motor_z_min:.1f} to {motor_z_max:.1f} nm')
+        self.summary_label.setText(' | '.join(summary_parts))
+
+        if preview_image is None or preview_image.size == 0:
+            self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
+            self._image.set_clim(0.0, 1.0)
+            self.axes.set_title('No sweep preview available')
+            self.axes.set_xlabel(x_axis_label)
+            self.axes.set_ylabel('Profile Radius (px)')
+            self.axes.set_xlim(-0.5, 0.5)
+            self.axes.set_ylim(-0.5, 0.5)
+            self.canvas.draw()
+            return
+
+        finite = np.asarray(preview_image, dtype=np.float64)
+        finite_mask = np.isfinite(finite)
+        if not np.any(finite_mask):
+            self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+            self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
+            self._image.set_clim(0.0, 1.0)
+            self.axes.set_title('No finite sweep data available')
+            self.axes.set_xlabel(x_axis_label)
+            self.axes.set_ylabel('Profile Radius (px)')
+            self.axes.set_xlim(-0.5, 0.5)
+            self.axes.set_ylim(-0.5, 0.5)
+            self.canvas.draw()
+            return
+
+        finite_values = finite[finite_mask]
+        vmin = float(np.min(finite_values))
+        vmax = float(np.max(finite_values))
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1.0
+
+        extent_x_min = -0.5
+        extent_x_max = finite.shape[1] - 0.5
+        if image_x_min is not None and image_x_max is not None:
+            extent_x_min = float(image_x_min)
+            extent_x_max = float(image_x_max)
+        self._image.set_data(np.ma.masked_invalid(finite))
+        self._image.set_extent((extent_x_min, extent_x_max, -0.5, finite.shape[0] - 0.5))
+        self._image.set_clim(vmin, vmax)
+        self.axes.set_title(f'{mode} preview')
+        self.axes.set_xlabel(x_axis_label)
+        self.axes.set_ylabel('Profile Radius (px)')
+        if x_axis_min is not None and x_axis_max is not None:
+            self.axes.set_xlim(float(x_axis_min), float(x_axis_max))
+        elif mode == 'Raw sweep' and expected_capture_count is not None and expected_capture_count > 0:
+            self.axes.set_xlim(-0.5, expected_capture_count - 0.5)
+        else:
+            self.axes.set_xlim(-0.5, finite.shape[1] - 0.5)
+        self.axes.set_ylim(-0.5, finite.shape[0] - 0.5)
+        self.canvas.draw()
+
+
+class ZLUTGenerationDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Z-LUT Generation')
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.resize(900, 700)
+
+        self._running = False
+        self._evaluation_active = False
+        self._startup_pending = False
+        self._close_when_canceled = False
+        self._selected_bead_id: int | None = None
+
+        layout = QVBoxLayout(self)
+
+        self.status_label = QLabel('Preparing Z-LUT generation...')
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        self.detail_label = QLabel('')
+        self.detail_label.setWordWrap(True)
+        layout.addWidget(self.detail_label)
+
+        self.progress_label = QLabel('0 / 0 steps')
+        layout.addWidget(self.progress_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
+        self.preview_widget = ZLUTSweepPreviewWidget(self)
+        layout.addWidget(self.preview_widget, 1)
+
+        evaluation_row = QHBoxLayout()
+        evaluation_row.addWidget(QLabel('Bead:'))
+        self.bead_selector = QComboBox()
+        self.bead_selector.currentIndexChanged.connect(self._handle_bead_selection_changed)
+        self.bead_selector.setEnabled(False)
+        evaluation_row.addWidget(self.bead_selector)
+        evaluation_row.addStretch(1)
+        layout.addLayout(evaluation_row)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self._handle_cancel_clicked)
+        button_row.addWidget(self.cancel_button)
+        self.save_button = QPushButton('Save')
+        self.save_button.clicked.connect(self._handle_save_clicked)
+        self.save_button.setEnabled(False)
+        button_row.addWidget(self.save_button)
+        self.save_and_load_button = QPushButton('Save and Load')
+        self.save_and_load_button.clicked.connect(self._handle_save_and_load_clicked)
+        self.save_and_load_button.setEnabled(False)
+        button_row.addWidget(self.save_and_load_button)
+        self.close_button = QPushButton('Close')
+        self.close_button.clicked.connect(self._handle_close_clicked)
+        self.close_button.setEnabled(False)
+        button_row.addWidget(self.close_button)
+        layout.addLayout(button_row)
+
+        self._cancel_callback = None
+        self._close_callback = None
+        self._save_callback = None
+        self._save_and_load_callback = None
+        self._select_bead_callback = None
+
+    def set_cancel_callback(self, callback) -> None:
+        self._cancel_callback = callback
+
+    def set_save_callback(self, callback) -> None:
+        self._save_callback = callback
+
+    def set_save_and_load_callback(self, callback) -> None:
+        self._save_and_load_callback = callback
+
+    def set_close_callback(self, callback) -> None:
+        self._close_callback = callback
+
+    def set_select_bead_callback(self, callback) -> None:
+        self._select_bead_callback = callback
+
+    def _handle_cancel_clicked(self) -> None:
+        if self._cancel_callback is not None:
+            self._close_when_canceled = True
+            self.cancel_button.setEnabled(False)
+            self._cancel_callback()
+
+    def _handle_save_clicked(self) -> None:
+        if self._save_callback is not None and self._selected_bead_id is not None:
+            self._save_callback(self._selected_bead_id)
+
+    def _handle_save_and_load_clicked(self) -> None:
+        if self._save_and_load_callback is not None and self._selected_bead_id is not None:
+            self._save_and_load_callback(self._selected_bead_id)
+
+    def _handle_close_clicked(self) -> None:
+        if self._running or self._startup_pending:
+            return
+        if self._evaluation_active and self._close_callback is not None:
+            self._close_callback()
+            self._evaluation_active = False
+        self.close()
+
+    def mark_starting(self) -> None:
+        self._running = True
+        self._startup_pending = True
+        self._evaluation_active = False
+        self.status_label.setText('Preparing Z-LUT generation...')
+        self.detail_label.setText('Submitting the sweep request and waiting for the first status update.')
+        self.cancel_button.setVisible(False)
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText('Cancel')
+        self.close_button.setEnabled(False)
+        self.close_button.setText('Close')
+
+    def _handle_bead_selection_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        bead_id = self.bead_selector.itemData(index)
+        if bead_id is None:
+            return
+        self._selected_bead_id = int(bead_id)
+        if self._select_bead_callback is not None:
+            self._select_bead_callback(self._selected_bead_id)
+
+    def update_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        *,
+        running: bool = False,
+        can_cancel: bool = False,
+        phase: str = 'idle',
+    ) -> None:
+        self._startup_pending = False
+        self._running = running
+        self._evaluation_active = phase == 'evaluating'
+        self.status_label.setText(status)
+        self.detail_label.setText(detail or '')
+        self.cancel_button.setVisible(running or can_cancel)
+        self.cancel_button.setEnabled(can_cancel)
+        self.cancel_button.setText('Cancel')
+        save_enabled = self._evaluation_active and self._selected_bead_id is not None
+        self.save_button.setEnabled(save_enabled)
+        self.save_and_load_button.setEnabled(save_enabled)
+        self.bead_selector.setEnabled(self.bead_selector.count() > 0)
+        self.close_button.setEnabled(not running)
+        self.close_button.setText('Cancel' if self._evaluation_active else 'Close')
+        if self._close_when_canceled and not running and phase == 'idle':
+            self._close_when_canceled = False
+            self.close()
+
+    def update_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        progress_total = max(total_steps, 1)
+        progress_value = min(max(current_step, 0), progress_total)
+        self.progress_bar.setRange(0, progress_total)
+        self.progress_bar.setValue(progress_value)
+
+        progress_text = f'{current_step} / {total_steps} steps'
+        if capture_capacity > 0:
+            progress_text += f' | {capture_count} / {capture_capacity} captures'
+        if motor_z_value is not None:
+            progress_text += f' | Z = {motor_z_value:.1f} nm'
+        self.progress_label.setText(progress_text)
+
+    def update_evaluation(self, *, active: bool, bead_ids: list[int], selected_bead_id: int | None) -> None:
+        self._evaluation_active = active
+        self.bead_selector.blockSignals(True)
+        self.bead_selector.clear()
+        for bead_id in bead_ids:
+            self.bead_selector.addItem(str(bead_id), bead_id)
+        if selected_bead_id is not None:
+            index = self.bead_selector.findData(selected_bead_id)
+            if index >= 0:
+                self.bead_selector.setCurrentIndex(index)
+                self._selected_bead_id = int(selected_bead_id)
+            else:
+                self._selected_bead_id = None
+        else:
+            self._selected_bead_id = None
+        self.bead_selector.blockSignals(False)
+        self.bead_selector.setEnabled(self.bead_selector.count() > 0)
+        save_enabled = active and self._selected_bead_id is not None
+        self.save_button.setEnabled(save_enabled)
+        self.save_and_load_button.setEnabled(save_enabled)
+        self.cancel_button.setVisible(self._running)
+        self.cancel_button.setEnabled(self._running)
+        self.cancel_button.setText('Cancel')
+        self.close_button.setText('Cancel' if active else 'Close')
+
+    def force_close(self) -> None:
+        self._running = False
+        self._startup_pending = False
+        self._close_when_canceled = False
+        self._evaluation_active = False
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        if self._running or self._startup_pending:
+            event.ignore()
+            return
+        if self._evaluation_active and self._close_callback is not None:
+            self._close_callback()
+            self._evaluation_active = False
+        super().closeEvent(event)
 
 
 class ZLUTPanel(ControlPanelBase):

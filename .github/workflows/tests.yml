@@ -14,6 +14,7 @@ jobs:
       QT_QPA_PLATFORM: ${{ runner.os == 'Linux' && 'offscreen' || '' }}
       TEST_COMMAND: ${{ runner.os == 'Linux' && 'xvfb-run -a pytest -q' || 'pytest -q' }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12", "3.13"]
@@ -43,3 +44,24 @@ jobs:
     - name: Run tests
       shell: bash
       run: ${{ env.TEST_COMMAND }}
+      run: |
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          export QT_QPA_PLATFORM=offscreen
+          xvfb-run -a python -m pytest -q
+        elif [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
+          export PYTHONFAULTHANDLER=1
+          export PYTHONMALLOC=debug
+          echo "Running Windows Python 3.13 diagnostics: UI/package tests first"
+          python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running Windows Python 3.13 diagnostics: remaining tests"
+          python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+        elif [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
+          export PYTHONFAULTHANDLER=1
+          export PYTHONMALLOC=debug
+          echo "Running macOS Python 3.13 diagnostics: UI/package tests first"
+          python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running macOS Python 3.13 diagnostics: remaining tests"
+          python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+        else
+          python -m pytest -q
+        fi

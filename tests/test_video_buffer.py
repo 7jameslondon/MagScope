@@ -3,6 +3,7 @@ from importlib import util
 from multiprocessing import Lock
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -14,8 +15,10 @@ SPEC.loader.exec_module(datatypes)  # type: ignore[union-attr]
 BufferOverflow = datatypes.BufferOverflow
 BufferUnderflow = datatypes.BufferUnderflow
 BeadRoiBuffer = datatypes.BeadRoiBuffer
+DatasetNotReadyError = datatypes.DatasetNotReadyError
 MatrixBuffer = datatypes.MatrixBuffer
 VideoBuffer = datatypes.VideoBuffer
+ZLUTSweepDataset = datatypes.ZLUTSweepDataset
 int_to_uint_dtype = datatypes.int_to_uint_dtype
 
 
@@ -23,6 +26,16 @@ VIDEO_BUFFER_NAME = "VideoBuffer"
 VIDEO_SUFFIXES = [" Info", "", " Timestamps", " Index"]
 BEAD_ROI_BUFFER_NAME = "BeadRoiBuffer"
 BEAD_ROI_SUFFIXES = [" Info", " Data", " Occupancy"]
+ZLUT_SWEEP_DATASET_NAME = "ZLUTSweepDataset"
+ZLUT_SWEEP_DATASET_SUFFIXES = [
+    " Info",
+    " BeadIds",
+    " StepIndices",
+    " Timestamps",
+    " MotorZ",
+    " Valid",
+    " Profiles",
+]
 
 
 def _cleanup_video_shared_memory():
@@ -41,6 +54,17 @@ def _cleanup_bead_roi_shared_memory():
     for suffix in BEAD_ROI_SUFFIXES:
         try:
             shm = SharedMemory(name=BEAD_ROI_BUFFER_NAME + suffix)
+        except FileNotFoundError:
+            continue
+        else:
+            shm.unlink()
+            shm.close()
+
+
+def _cleanup_zlut_sweep_dataset_shared_memory():
+    for suffix in ZLUT_SWEEP_DATASET_SUFFIXES:
+        try:
+            shm = SharedMemory(name=ZLUT_SWEEP_DATASET_NAME + suffix)
         except FileNotFoundError:
             continue
         else:
@@ -303,10 +327,198 @@ class TestBeadRoiBuffer(BeadRoiBufferTestCase):
     def test_validation_rejects_invalid_ids(self):
         with self.assertRaises(ValueError):
             self.buffer.add_beads({8: (1, 2, 3, 4)})
+
+
+class ZLUTSweepDatasetTestCase(unittest.TestCase):
+    def setUp(self):
+        _cleanup_zlut_sweep_dataset_shared_memory()
+        self.locks = {ZLUT_SWEEP_DATASET_NAME: Lock()}
+        self.dataset = ZLUTSweepDataset.create(
+            locks=self.locks,
+            capacity=6,
+            profile_length=4,
+            n_steps=3,
+            n_beads=2,
+            profiles_per_bead=1,
+        )
+
+    def tearDown(self):
+        dataset = getattr(self, "dataset", None)
+        if dataset is not None:
+            try:
+                dataset.destroy()
+            except (FileNotFoundError, RuntimeError):
+                dataset.close()
+        _cleanup_zlut_sweep_dataset_shared_memory()
+
+
+class TestZLUTSweepDataset(ZLUTSweepDatasetTestCase):
+    def test_metadata_shared_across_instances(self):
+        consumer = ZLUTSweepDataset.attach(locks=self.locks)
+        try:
+            self.assertEqual(consumer.get_capacity(), self.dataset.get_capacity())
+            self.assertEqual(consumer.profile_length, self.dataset.profile_length)
+            self.assertEqual(consumer.n_steps, self.dataset.n_steps)
+            self.assertEqual(consumer.n_beads, self.dataset.n_beads)
+            self.assertEqual(consumer.profiles_per_bead, self.dataset.profiles_per_bead)
+            self.assertEqual(consumer.state, ZLUTSweepDataset.STATE_READY)
+        finally:
+            consumer.close()
+
+    def test_write_and_peak_round_trip(self):
+        self.dataset.write(
+            bead_ids=np.array([3, 4], dtype=np.uint32),
+            step_indices=np.array([0, 1], dtype=np.uint32),
+            timestamps=np.array([1.5, 2.5], dtype=np.float64),
+            motor_z_values=np.array([10.0, 20.0], dtype=np.float64),
+            valid_flags=np.array([1, 0], dtype=np.uint8),
+            profiles=np.array(
+                [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+                dtype=np.float64,
+            ),
+        )
+
+        self.assertEqual(self.dataset.get_count(), 2)
+        data = self.dataset.peak()
+
+        np.testing.assert_array_equal(data['bead_ids'], np.array([3, 4], dtype=np.uint32))
+        np.testing.assert_array_equal(data['step_indices'], np.array([0, 1], dtype=np.uint32))
+        np.testing.assert_allclose(data['timestamps'], np.array([1.5, 2.5], dtype=np.float64))
+        np.testing.assert_allclose(data['motor_z_values'], np.array([10.0, 20.0], dtype=np.float64))
+        np.testing.assert_array_equal(data['valid_flags'], np.array([1, 0], dtype=np.uint8))
+        np.testing.assert_allclose(
+            data['profiles'],
+            np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]], dtype=np.float64),
+        )
+
+    def test_read_preview_returns_selected_bead_rows_only(self):
+        self.dataset.write(
+            bead_ids=np.array([3, 4, 3], dtype=np.uint32),
+            step_indices=np.array([0, 0, 1], dtype=np.uint32),
+            timestamps=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+            motor_z_values=np.array([10.0, 20.0, 30.0], dtype=np.float64),
+            valid_flags=np.array([1, 1, 1], dtype=np.uint8),
+            profiles=np.array(
+                [
+                    [1.0, 2.0, 3.0, 4.0],
+                    [5.0, 6.0, 7.0, 8.0],
+                    [9.0, 10.0, 11.0, 12.0],
+                ],
+                dtype=np.float64,
+            ),
+        )
+
+        preview = self.dataset.read_preview(selected_bead_id=3)
+
+        self.assertEqual(preview['state'], ZLUTSweepDataset.STATE_READY)
+        self.assertEqual(preview['count'], 3)
+        self.assertEqual(preview['capacity'], 6)
+        self.assertEqual(preview['available_bead_ids'], [3, 4])
+        self.assertEqual(preview['selected_bead_id'], 3)
+        self.assertEqual(preview['motor_z_min'], 10.0)
+        self.assertEqual(preview['motor_z_max'], 30.0)
+        np.testing.assert_array_equal(
+            preview['step_indices'],
+            np.array([0, 1], dtype=np.uint32),
+        )
+        np.testing.assert_allclose(
+            preview['motor_z_values'],
+            np.array([10.0, 30.0], dtype=np.float64),
+        )
+        np.testing.assert_allclose(
+            preview['profiles'],
+            np.array(
+                [[1.0, 2.0, 3.0, 4.0], [9.0, 10.0, 11.0, 12.0]],
+                dtype=np.float64,
+            ),
+        )
+
+    def test_write_overflow_raises(self):
+        self.dataset.write(
+            bead_ids=np.arange(6, dtype=np.uint32),
+            step_indices=np.arange(6, dtype=np.uint32),
+            timestamps=np.arange(6, dtype=np.float64),
+            motor_z_values=np.arange(6, dtype=np.float64),
+            valid_flags=np.ones(6, dtype=np.uint8),
+            profiles=np.ones((6, 4), dtype=np.float64),
+        )
+
+        with self.assertRaises(BufferOverflow):
+            self.dataset.write(
+                bead_ids=np.array([9], dtype=np.uint32),
+                step_indices=np.array([9], dtype=np.uint32),
+                timestamps=np.array([9.0], dtype=np.float64),
+                motor_z_values=np.array([9.0], dtype=np.float64),
+                valid_flags=np.array([1], dtype=np.uint8),
+                profiles=np.array([[9.0, 9.0, 9.0, 9.0]], dtype=np.float64),
+            )
+
+    def test_write_shape_validation(self):
         with self.assertRaises(ValueError):
-            self.buffer.update_beads({1: (1, 2, 3, 4)})
+            self.dataset.write(
+                bead_ids=np.array([1, 2], dtype=np.uint32),
+                step_indices=np.array([0], dtype=np.uint32),
+                timestamps=np.array([1.0, 2.0], dtype=np.float64),
+                motor_z_values=np.array([1.0, 2.0], dtype=np.float64),
+                valid_flags=np.array([1, 1], dtype=np.uint8),
+                profiles=np.ones((2, 4), dtype=np.float64),
+            )
+
         with self.assertRaises(ValueError):
-            self.buffer.replace_beads({1: (-1, 2, 3, 4)})
+            self.dataset.write(
+                bead_ids=np.array([1, 2], dtype=np.uint32),
+                step_indices=np.array([0, 1], dtype=np.uint32),
+                timestamps=np.array([1.0, 2.0], dtype=np.float64),
+                motor_z_values=np.array([1.0, 2.0], dtype=np.float64),
+                valid_flags=np.array([1, 1], dtype=np.uint8),
+                profiles=np.ones((2, 3), dtype=np.float64),
+            )
+
+    def test_non_owner_cannot_destroy(self):
+        consumer = ZLUTSweepDataset.attach(locks=self.locks)
+        try:
+            with self.assertRaises(RuntimeError):
+                consumer.destroy()
+        finally:
+            consumer.close()
+
+    def test_destroy_removes_shared_memory(self):
+        self.dataset.destroy()
+        self.dataset = None
+
+        with self.assertRaises(DatasetNotReadyError):
+            ZLUTSweepDataset.attach(locks=self.locks)
+
+    def test_create_failure_rolls_back_allocated_shared_memory(self):
+        self.dataset.destroy()
+        self.dataset = None
+
+        real_shared_memory = datatypes.SharedMemory
+        create_call_count = 0
+
+        def failing_shared_memory(*args, **kwargs):
+            nonlocal create_call_count
+            if kwargs.get('create'):
+                create_call_count += 1
+                if create_call_count == 3:
+                    raise OSError('boom')
+            return real_shared_memory(*args, **kwargs)
+
+        with mock.patch.object(datatypes, 'SharedMemory', side_effect=failing_shared_memory):
+            with self.assertRaises(OSError):
+                ZLUTSweepDataset.create(
+                    locks=self.locks,
+                    capacity=6,
+                    profile_length=4,
+                    n_steps=3,
+                    n_beads=2,
+                    profiles_per_bead=1,
+                )
+
+        for suffix in ZLUT_SWEEP_DATASET_SUFFIXES:
+            with self.assertRaises(FileNotFoundError):
+                leaked = SharedMemory(name=ZLUT_SWEEP_DATASET_NAME + suffix)
+                leaked.close()
 
 
 class TestIntToUintDtype(unittest.TestCase):

@@ -87,6 +87,22 @@ class SetSimulatedFocusCommand(Command):
 
 
 @dataclass(frozen=True)
+class MoveFocusMotorAbsoluteCommand(Command):
+    z: float
+
+
+@dataclass(frozen=True)
+class RequestFocusMotorLimitsCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ReportFocusMotorLimitsCommand(Command):
+    z_min: float
+    z_max: float
+
+
+@dataclass(frozen=True)
 class UpdateVideoBufferPurgeCommand(Command):
     t: float
 
@@ -193,6 +209,64 @@ class UnloadZLUTCommand(Command):
 
 
 @dataclass(frozen=True)
+class StartZLUTGenerationCommand(Command):
+    start_nm: float
+    step_nm: float
+    stop_nm: float
+    profiles_per_bead: int
+
+
+@dataclass(frozen=True)
+class CancelZLUTGenerationCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationStateCommand(Command):
+    status: str
+    detail: str | None = None
+    running: bool = False
+    can_cancel: bool = False
+    phase: str = 'idle'
+    z_axis_min_nm: float | None = None
+    z_axis_max_nm: float | None = None
+    z_axis_descending: bool = False
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationProgressCommand(Command):
+    current_step: int
+    total_steps: int
+    capture_count: int
+    capture_capacity: int
+    motor_z_value: float | None = None
+
+
+@dataclass(frozen=True)
+class UpdateZLUTGenerationEvaluationCommand(Command):
+    active: bool
+    bead_ids: list[int]
+    selected_bead_id: int | None = None
+
+
+@dataclass(frozen=True)
+class SelectGeneratedZLUTBeadCommand(Command):
+    bead_id: int
+
+
+@dataclass(frozen=True)
+class SaveGeneratedZLUTCommand(Command):
+    filepath: str
+    bead_id: int
+    load_after_save: bool = True
+
+
+@dataclass(frozen=True)
+class CancelGeneratedZLUTEvaluationCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
 class RequestProfileLengthCommand(Command):
     pass
 
@@ -200,6 +274,45 @@ class RequestProfileLengthCommand(Command):
 @dataclass(frozen=True)
 class ReportProfileLengthCommand(Command):
     profile_length: int | None = None
+
+
+@dataclass(frozen=True)
+class RequestZLUTProfileLengthCommand(Command):
+    bead_ids: tuple[int, ...] = ()
+    bead_rois: tuple[tuple[int, int, int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportZLUTProfileLengthCommand(Command):
+    profile_length: int | None = None
+
+
+@dataclass(frozen=True)
+class ClearPendingZLUTProfileLengthCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ArmZLUTSweepCaptureCommand(Command):
+    step_index: int
+    motor_z_value: float
+    remaining_profiles_per_bead: int
+    earliest_timestamp: float
+    bead_ids: tuple[int, ...] = ()
+    bead_rois: tuple[tuple[int, int, int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class DisarmZLUTSweepCaptureCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ZLUTSweepCaptureCompleteCommand(Command):
+    step_index: int
+    written_count: int
+    written_profiles_per_bead: int
+    error: str | None = None
 
 
 @dataclass(frozen=True)

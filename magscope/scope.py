@@ -56,7 +56,7 @@ from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import BeadRoiBuffer, LiveProfileBuffer, MatrixBuffer, VideoBuffer
 from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
-from magscope.hardware import HardwareManagerBase
+from magscope.hardware import FocusMotorBase, HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
     CommandRegistry,
@@ -78,6 +78,7 @@ from magscope.processes import InterprocessValues, ManagerProcessBase, Singleton
 from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
 from magscope.videoprocessing import VideoProcessorManager
+from magscope.zlut_generation import ZLUTGenerationManager
 
 logger = get_logger("scope")
 
@@ -112,6 +113,7 @@ class MagScope(metaclass=SingletonMeta):
         self.beadlock_manager = BeadLockManager()
         self.camera_manager = CameraManager()
         self.video_processor_manager = VideoProcessorManager()
+        self.zlut_generation_manager = ZLUTGenerationManager()
         self.ui_manager = UIManager()
         self.script_manager = ScriptManager()
 
@@ -121,7 +123,13 @@ class MagScope(metaclass=SingletonMeta):
         self.command_registry: CommandRegistry = CommandRegistry()
 
         self.locks: dict[str, LockType] = {}
-        self.lock_names: list[str] = ['BeadRoiBuffer', 'LiveProfileBuffer', 'TracksBuffer', 'VideoBuffer']
+        self.lock_names: list[str] = [
+            'BeadRoiBuffer',
+            'LiveProfileBuffer',
+            'TracksBuffer',
+            'VideoBuffer',
+            'ZLUTSweepDataset',
+        ]
         self.pipes: dict[str, Connection] = {}
         self.quitting_events: dict[str, EventType] = {}
         self.shared_values: InterprocessValues = InterprocessValues()
@@ -225,6 +233,13 @@ class MagScope(metaclass=SingletonMeta):
 
     def add_hardware(self, hardware: HardwareManagerBase):
         """Register a hardware manager so its process launches with MagScope."""
+        if isinstance(hardware, FocusMotorBase):
+            for existing in self._hardware.values():
+                if isinstance(existing, FocusMotorBase):
+                    raise ValueError(
+                        'MagScope supports only one FocusMotorBase hardware manager. '
+                        f'Already registered: {existing.name}; refusing to add {hardware.name}.'
+                    )
         self._hardware[hardware.name] = hardware
         self.command_registry.register_manager(hardware)
 
@@ -388,6 +403,7 @@ class MagScope(metaclass=SingletonMeta):
             self.camera_manager,
             self.beadlock_manager,
             self.video_processor_manager,
+            self.zlut_generation_manager,
             self.ui_manager,
         ]
         proc_list.extend(self._hardware.values())
