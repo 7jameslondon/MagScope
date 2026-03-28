@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from math import floor, ceil
+import os
 import sys
 from time import time
 import traceback
@@ -11,6 +12,7 @@ from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
 from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -25,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from magscope._logging import get_logger
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
-from magscope.datatypes import VideoBuffer
+from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
 from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
@@ -52,6 +54,7 @@ from magscope.ui.controls import (
     ResetPanel,
     TrackingOptionsPanel,
     XYLockPanel,
+    ZLUTGenerationDialog,
     ZLUTGenerationPanel,
     ZLUTPanel,
     ZLockPanel,
@@ -140,6 +143,139 @@ class UIManager(ManagerProcessBase):
         self._bead_roi_capacity = 10000
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
         self._startup_ready_sent = False
+        self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
+        self._zlut_generation_phase = 'idle'
+        self._zlut_generation_z_axis_min_nm: float | None = None
+        self._zlut_generation_z_axis_max_nm: float | None = None
+        self._zlut_generation_z_axis_descending = False
+        self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
+        self._zlut_evaluation_bead_ids: list[int] = []
+        self._zlut_evaluation_selected_bead_id: int | None = None
+        self._zlut_preview_last_poll: float = 0.0
+
+    @staticmethod
+    def _zlut_requested_sweep_edges(
+        z_axis_min_nm: float | None,
+        z_axis_max_nm: float | None,
+        n_steps: int,
+    ) -> tuple[float | None, float | None]:
+        if z_axis_min_nm is None or z_axis_max_nm is None or int(n_steps) <= 0:
+            return None, None
+
+        if int(n_steps) == 1:
+            return float(z_axis_min_nm), float(z_axis_max_nm)
+
+        step_spacing = float(z_axis_max_nm - z_axis_min_nm) / float(int(n_steps) - 1)
+        half_step = 0.5 * step_spacing
+        return float(z_axis_min_nm - half_step), float(z_axis_max_nm + half_step)
+
+    @staticmethod
+    def _build_zlut_preview_payload(
+        preview_snapshot: dict[str, object],
+        *,
+        z_axis_min_nm: float | None,
+        z_axis_max_nm: float | None,
+        z_axis_descending: bool,
+    ) -> dict[str, object]:
+        state = int(preview_snapshot['state'])
+        n_steps = int(preview_snapshot['n_steps'])
+        profiles_per_bead = int(preview_snapshot['profiles_per_bead'])
+        x_axis_min, x_axis_max = UIManager._zlut_requested_sweep_edges(
+            z_axis_min_nm,
+            z_axis_max_nm,
+            n_steps,
+        )
+
+        preview_image = None
+        image_x_min = None
+        image_x_max = None
+        mode = 'Raw sweep'
+        profiles = np.asarray(preview_snapshot['profiles'], dtype=np.float64)
+
+        if profiles.size > 0:
+            step_indices = np.asarray(preview_snapshot['step_indices'], dtype=np.uint32)
+            selected_motor_z_values = np.asarray(
+                preview_snapshot['motor_z_values'],
+                dtype=np.float64,
+            )
+            if state == ZLUTSweepDataset.STATE_COMPLETE:
+                mode = 'Averaged sweep'
+                unique_steps = np.unique(step_indices)
+                averaged_profiles = []
+                averaged_z_positions = []
+                for step_index in unique_steps:
+                    step_profiles = profiles[step_indices == step_index]
+                    step_motor_z_values = selected_motor_z_values[step_indices == step_index]
+                    if step_profiles.size == 0:
+                        continue
+                    averaged_profiles.append(np.nanmean(step_profiles, axis=0))
+                    averaged_z_positions.append(float(np.nanmean(step_motor_z_values)))
+                if averaged_profiles:
+                    averaged_profiles_array = np.asarray(averaged_profiles, dtype=np.float64)
+                    averaged_z_positions_array = np.asarray(averaged_z_positions, dtype=np.float64)
+                    order = np.argsort(averaged_z_positions_array)
+                    preview_image = averaged_profiles_array[order].T
+                    image_x_min = x_axis_min
+                    image_x_max = x_axis_max
+            else:
+                slot_indices = np.zeros((profiles.shape[0],), dtype=np.int64)
+                per_step_capture_counts: dict[int, int] = {}
+                for row_index, step_index in enumerate(step_indices):
+                    step_index_int = int(step_index)
+                    within_step_index = per_step_capture_counts.get(step_index_int, 0)
+                    per_step_capture_counts[step_index_int] = within_step_index + 1
+                    if z_axis_descending:
+                        step_rank = n_steps - 1 - step_index_int
+                    else:
+                        step_rank = step_index_int
+                    slot_indices[row_index] = step_rank * profiles_per_bead + within_step_index
+
+                sorted_order = np.argsort(slot_indices, kind='stable')
+                sorted_slot_indices = np.asarray(slot_indices[sorted_order], dtype=np.int64)
+                sorted_profiles = np.asarray(profiles[sorted_order], dtype=np.float64)
+                if x_axis_min is not None and x_axis_max is not None and sorted_profiles.shape[0] > 0:
+                    total_slots = n_steps * profiles_per_bead
+                    if total_slots > 0:
+                        slot_width = float(x_axis_max - x_axis_min) / float(total_slots)
+                        min_slot = int(np.min(sorted_slot_indices))
+                        max_slot = int(np.max(sorted_slot_indices))
+                        sparse_width = max_slot - min_slot + 1
+                        preview_image = np.full(
+                            (sorted_profiles.shape[1], sparse_width),
+                            np.nan,
+                            dtype=np.float64,
+                        )
+                        for profile_row, slot_index in zip(
+                            sorted_profiles,
+                            sorted_slot_indices,
+                            strict=False,
+                        ):
+                            preview_image[:, int(slot_index - min_slot)] = profile_row
+                        image_x_min = float(x_axis_min + min_slot * slot_width)
+                        image_x_max = float(x_axis_min + (max_slot + 1) * slot_width)
+                elif sorted_profiles.shape[0] > 0:
+                    preview_image = sorted_profiles.T
+
+        return {
+            'state': state,
+            'count': int(preview_snapshot['count']),
+            'capacity': int(preview_snapshot['capacity']),
+            'n_steps': n_steps,
+            'n_beads': int(preview_snapshot['n_beads']),
+            'profiles_per_bead': profiles_per_bead,
+            'profile_length': int(preview_snapshot['profile_length']),
+            'preview_image': preview_image,
+            'selected_bead_id': preview_snapshot['selected_bead_id'],
+            'mode': mode,
+            'motor_z_min': preview_snapshot['motor_z_min'],
+            'motor_z_max': preview_snapshot['motor_z_max'],
+            'expected_capture_count': n_steps * profiles_per_bead,
+            'x_axis_label': 'Z Position (nm)',
+            'x_axis_min': x_axis_min,
+            'x_axis_max': x_axis_max,
+            'image_x_min': image_x_min,
+            'image_x_max': image_x_max,
+        }
 
     def setup(self):
         self.qt_app = QApplication.instance()
@@ -288,6 +424,17 @@ class UIManager(ManagerProcessBase):
         for window in self.windows:
             window.close()
 
+        self._detach_zlut_sweep_dataset()
+        self._zlut_generation_phase = 'idle'
+        self._zlut_generation_z_axis_min_nm = None
+        self._zlut_generation_z_axis_max_nm = None
+        self._zlut_generation_z_axis_descending = False
+        self._zlut_evaluation_bead_ids = []
+        self._zlut_evaluation_selected_bead_id = None
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.force_close()
+            self._zlut_generation_dialog = None
+
     def do_main_loop(self):
         # Because the UIManager is a special case with a GUI
         # the main loop is actually called by a timer, not the
@@ -298,6 +445,7 @@ class UIManager(ManagerProcessBase):
             self.update_video_buffer_status()
             self.update_video_processors_status()
             self.controls.profile_panel.update_plot()
+            self._update_zlut_generation_dialog()
             self.receive_ipc()
 
     def _handle_timer_exception(self, exc: BaseException) -> None:
@@ -1230,7 +1378,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.info('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.info('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1244,7 +1392,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.error('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.error('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1257,7 +1405,7 @@ class UIManager(ManagerProcessBase):
         msg.setText(text)
         if details:
             logger.warning('%s: %s', text, details)
-            msg.setDetailedText(details)
+            msg.setInformativeText(details)
         else:
             logger.warning('%s', text)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
@@ -1343,6 +1491,144 @@ class UIManager(ManagerProcessBase):
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
+    def _clear_zlut_generation_preview(
+        self,
+        message: str = 'Waiting for Z-LUT sweep data...',
+    ) -> None:
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.preview_widget.clear(message)
+
+    def _read_zlut_preview_snapshot(self, dataset: ZLUTSweepDataset) -> dict[str, object]:
+        if hasattr(dataset, 'read_preview'):
+            return dataset.read_preview(selected_bead_id=self._zlut_evaluation_selected_bead_id)
+
+        snapshot = dataset.peak()
+        count = snapshot['bead_ids'].shape[0]
+        available_bead_ids: list[int] = []
+        selected_bead_id: int | None = None
+        motor_z_min: float | None = None
+        motor_z_max: float | None = None
+        step_indices = np.zeros((0,), dtype=np.uint32)
+        motor_z_values = np.zeros((0,), dtype=np.float64)
+        profiles = np.zeros((0, int(dataset.profile_length)), dtype=np.float64)
+
+        if count > 0:
+            bead_ids = snapshot['bead_ids']
+            available_bead_ids = [int(bead_id) for bead_id in np.unique(bead_ids)]
+
+            if (
+                self._zlut_evaluation_selected_bead_id is not None
+                and self._zlut_evaluation_selected_bead_id in bead_ids
+            ):
+                selected_bead_id = int(self._zlut_evaluation_selected_bead_id)
+            else:
+                selected_bead_id = int(np.min(bead_ids))
+
+            all_motor_z_values = snapshot['motor_z_values']
+            finite_motor_z = all_motor_z_values[np.isfinite(all_motor_z_values)]
+            if finite_motor_z.size > 0:
+                motor_z_min = float(np.min(finite_motor_z))
+                motor_z_max = float(np.max(finite_motor_z))
+
+            selected_rows = bead_ids == selected_bead_id
+            step_indices = snapshot['step_indices'][selected_rows]
+            motor_z_values = all_motor_z_values[selected_rows]
+            profiles = snapshot['profiles'][selected_rows]
+
+        return {
+            'state': dataset.state,
+            'count': count,
+            'capacity': dataset.get_capacity(),
+            'n_steps': dataset.n_steps,
+            'n_beads': dataset.n_beads,
+            'profiles_per_bead': dataset.profiles_per_bead,
+            'profile_length': dataset.profile_length,
+            'available_bead_ids': available_bead_ids,
+            'selected_bead_id': selected_bead_id,
+            'motor_z_min': motor_z_min,
+            'motor_z_max': motor_z_max,
+            'step_indices': step_indices,
+            'motor_z_values': motor_z_values,
+            'profiles': profiles,
+        }
+
+    def show_zlut_generation_dialog(self) -> None:
+        if not self.windows:
+            return
+        self._detach_zlut_sweep_dataset()
+        if self._zlut_generation_dialog is None:
+            dialog = ZLUTGenerationDialog(self.windows[0])
+            dialog.set_cancel_callback(self.cancel_zlut_generation)
+            dialog.set_close_callback(self.discard_generated_zlut_evaluation)
+            dialog.set_save_callback(
+                lambda bead_id: self.save_generated_zlut(bead_id, load_after_save=False)
+            )
+            dialog.set_save_and_load_callback(
+                lambda bead_id: self.save_generated_zlut(bead_id, load_after_save=True)
+            )
+            dialog.set_select_bead_callback(self.select_generated_zlut_bead)
+            dialog.destroyed.connect(lambda *_: self._handle_zlut_dialog_destroyed())
+            self._zlut_generation_dialog = dialog
+        self._zlut_generation_dialog.mark_starting()
+        self._zlut_generation_dialog.show()
+        self._zlut_generation_dialog.raise_()
+        self._zlut_generation_dialog.activateWindow()
+        self._clear_zlut_generation_preview()
+        self._zlut_generation_phase = 'waiting_profile_length'
+        self._zlut_preview_last_poll = 0.0
+
+    def start_zlut_generation(
+        self,
+        *,
+        start_nm: float,
+        step_nm: float,
+        stop_nm: float,
+        profiles_per_bead: int,
+    ) -> None:
+        self.show_zlut_generation_dialog()
+        self.send_ipc(
+            StartZLUTGenerationCommand(
+                start_nm=float(start_nm),
+                step_nm=float(step_nm),
+                stop_nm=float(stop_nm),
+                profiles_per_bead=int(profiles_per_bead),
+            )
+        )
+
+    def cancel_zlut_generation(self) -> None:
+        self.send_ipc(CancelZLUTGenerationCommand())
+
+    def discard_generated_zlut_evaluation(self) -> None:
+        self.send_ipc(CancelGeneratedZLUTEvaluationCommand())
+
+    def select_generated_zlut_bead(self, bead_id: int) -> None:
+        self._zlut_evaluation_selected_bead_id = int(bead_id)
+        self.send_ipc(SelectGeneratedZLUTBeadCommand(bead_id=int(bead_id)))
+        self._zlut_preview_last_poll = 0.0
+
+    def save_generated_zlut(self, bead_id: int, load_after_save: bool = True) -> None:
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value('last zlut directory', os.path.expanduser('~'), type=str)
+        default_path = os.path.join(last_value, f'generated_zlut_bead_{int(bead_id)}.txt')
+        filepath, _ = QFileDialog.getSaveFileName(
+            self.windows[0] if self.windows else None,
+            'Save Generated Z-LUT',
+            default_path,
+            'Text Files (*.txt)',
+        )
+        if not filepath:
+            return
+
+        directory = os.path.dirname(filepath) or last_value
+        settings.setValue('last zlut directory', directory)
+        self.send_ipc(
+            SaveGeneratedZLUTCommand(
+                filepath=filepath,
+                bead_id=int(bead_id),
+                load_after_save=bool(load_after_save),
+            )
+        )
+
     def request_profile_length(self) -> None:
         self.send_ipc(RequestProfileLengthCommand())
 
@@ -1363,6 +1649,141 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:
         print(f'Temporary development behavior: profile length = {profile_length}')
+
+    @register_ipc_command(UpdateZLUTGenerationStateCommand)
+    def update_zlut_generation_state(
+        self,
+        status: str,
+        detail: str | None = None,
+        running: bool = False,
+        can_cancel: bool = False,
+        phase: str = 'idle',
+        z_axis_min_nm: float | None = None,
+        z_axis_max_nm: float | None = None,
+        z_axis_descending: bool = False,
+    ) -> None:
+        if self.controls is None:
+            return
+        self._zlut_generation_phase = phase
+        self._zlut_generation_z_axis_min_nm = z_axis_min_nm
+        self._zlut_generation_z_axis_max_nm = z_axis_max_nm
+        self._zlut_generation_z_axis_descending = bool(z_axis_descending)
+        self.controls.z_lut_generation_panel.update_state(
+            status,
+            detail,
+            running=running,
+            can_cancel=can_cancel,
+            phase=phase,
+        )
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_state(
+                status,
+                detail,
+                running=running,
+                can_cancel=can_cancel,
+                phase=phase,
+            )
+
+    @register_ipc_command(UpdateZLUTGenerationEvaluationCommand)
+    def update_zlut_generation_evaluation(
+        self,
+        active: bool,
+        bead_ids: list[int],
+        selected_bead_id: int | None = None,
+    ) -> None:
+        self._zlut_evaluation_bead_ids = [int(bead_id) for bead_id in bead_ids]
+        self._zlut_evaluation_selected_bead_id = None if selected_bead_id is None else int(selected_bead_id)
+        if not active:
+            self._detach_zlut_sweep_dataset()
+            self._clear_zlut_generation_preview()
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_evaluation(
+                active=active,
+                bead_ids=self._zlut_evaluation_bead_ids,
+                selected_bead_id=self._zlut_evaluation_selected_bead_id,
+            )
+        self._zlut_preview_last_poll = 0.0
+
+    @register_ipc_command(UpdateZLUTGenerationProgressCommand)
+    def update_zlut_generation_progress(
+        self,
+        current_step: int,
+        total_steps: int,
+        capture_count: int,
+        capture_capacity: int,
+        motor_z_value: float | None = None,
+    ) -> None:
+        if self.controls is None:
+            return
+        if self._zlut_generation_dialog is not None:
+            self._zlut_generation_dialog.update_progress(
+                current_step,
+                total_steps,
+                capture_count,
+                capture_capacity,
+                motor_z_value,
+            )
+
+    def _handle_zlut_dialog_destroyed(self) -> None:
+        self._zlut_generation_dialog = None
+
+    def _detach_zlut_sweep_dataset(self) -> None:
+        if self._zlut_sweep_dataset is not None:
+            self._zlut_sweep_dataset.close()
+            self._zlut_sweep_dataset = None
+
+    def _update_zlut_generation_dialog(self) -> None:
+        if self._zlut_generation_dialog is None or not self._zlut_generation_dialog.isVisible():
+            return
+        if self._zlut_generation_phase in {'idle', 'complete'} and not self._zlut_evaluation_bead_ids:
+            self._clear_zlut_generation_preview()
+            return
+        now = time()
+        if now - self._zlut_preview_last_poll < 1.0:
+            return
+        self._zlut_preview_last_poll = now
+
+        if self._zlut_sweep_dataset is None:
+            try:
+                self._zlut_sweep_dataset = ZLUTSweepDataset.attach(locks=self.locks)
+            except (DatasetNotReadyError, FileNotFoundError):
+                self._clear_zlut_generation_preview()
+                return
+
+        try:
+            self._refresh_zlut_preview_from_dataset()
+        except FileNotFoundError:
+            self._detach_zlut_sweep_dataset()
+            self._clear_zlut_generation_preview()
+
+    def _refresh_zlut_preview_from_dataset(self) -> None:
+        if self._zlut_generation_dialog is None or self._zlut_sweep_dataset is None:
+            return
+
+        dataset = self._zlut_sweep_dataset
+        preview_snapshot = self._read_zlut_preview_snapshot(dataset)
+        count = int(preview_snapshot['count'])
+        available_bead_ids = list(preview_snapshot['available_bead_ids'])
+        if available_bead_ids != self._zlut_evaluation_bead_ids:
+            self._zlut_evaluation_bead_ids = available_bead_ids
+            if self._zlut_evaluation_selected_bead_id not in self._zlut_evaluation_bead_ids:
+                self._zlut_evaluation_selected_bead_id = (
+                    None if not self._zlut_evaluation_bead_ids else self._zlut_evaluation_bead_ids[0]
+                )
+            self._zlut_generation_dialog.update_evaluation(
+                active=self._zlut_generation_phase == 'evaluating',
+                bead_ids=self._zlut_evaluation_bead_ids,
+                selected_bead_id=self._zlut_evaluation_selected_bead_id,
+            )
+
+        preview_payload = self._build_zlut_preview_payload(
+            preview_snapshot,
+            z_axis_min_nm=self._zlut_generation_z_axis_min_nm,
+            z_axis_max_nm=self._zlut_generation_z_axis_max_nm,
+            z_axis_descending=self._zlut_generation_z_axis_descending,
+        )
+        preview_payload['count'] = count
+        self._zlut_generation_dialog.preview_widget.update_preview(**preview_payload)
 
 class LoadingWindow(QMainWindow):
 

@@ -168,12 +168,19 @@ def load_scope_with_stubs(monkeypatch):
             self.controls_to_add = []
             self.plots_to_add = []
 
+    class ZLUTGenerationManager(StubManagerProcessBase):
+        def __init__(self):
+            super().__init__(name="ZLUTGenerationManager")
+
     class ScriptManager(StubManagerProcessBase):
         def __init__(self):
             super().__init__(name="ScriptManager")
             self.script_registry = StubScriptRegistry()
 
     class HardwareManagerBase(StubManagerProcessBase):
+        pass
+
+    class FocusMotorBase(HardwareManagerBase):
         pass
 
     class InterprocessValues:
@@ -193,7 +200,10 @@ def load_scope_with_stubs(monkeypatch):
             "TimeSeriesPlotBase": type("TimeSeriesPlotBase", (), {}),
             "UIManager": UIManager,
         },
-        "magscope.hardware": {"HardwareManagerBase": HardwareManagerBase},
+        "magscope.hardware": {
+            "FocusMotorBase": FocusMotorBase,
+            "HardwareManagerBase": HardwareManagerBase,
+        },
         "magscope.processes": {
             "InterprocessValues": InterprocessValues,
             "ManagerProcessBase": StubManagerProcessBase,
@@ -202,6 +212,7 @@ def load_scope_with_stubs(monkeypatch):
         },
         "magscope.scripting": {"ScriptManager": ScriptManager},
         "magscope.videoprocessing": {"VideoProcessorManager": VideoProcessorManager},
+        "magscope.zlut_generation": {"ZLUTGenerationManager": ZLUTGenerationManager},
     }
 
     for module_name, attributes in stub_modules.items():
@@ -517,3 +528,42 @@ def test_magscope_is_singleton(scope_module):
         scope_module.MagScope()
 
     scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_collect_processes_includes_zlut_generation_manager(scope_module):
+    scope = scope_module.MagScope()
+
+    scope._collect_processes()
+
+    assert list(scope.processes) == [
+        'ScriptManager',
+        'CameraManager',
+        'BeadLockManager',
+        'VideoProcessorManager',
+        'ZLUTGenerationManager',
+        'UIManager',
+    ]
+    assert 'ZLUTSweepDataset' in scope.lock_names
+
+    scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_add_hardware_rejects_multiple_focus_motors(scope_module):
+    scope = make_scope(scope_module)
+    FocusMotorBase = scope_module.FocusMotorBase
+
+    class PrimaryFocusMotor(FocusMotorBase):
+        pass
+
+    class SecondaryFocusMotor(FocusMotorBase):
+        pass
+
+    primary = PrimaryFocusMotor()
+    primary.name = 'PrimaryFocusMotor'
+    secondary = SecondaryFocusMotor()
+    secondary.name = 'SecondaryFocusMotor'
+
+    scope.add_hardware(primary)
+
+    with pytest.raises(ValueError, match='supports only one FocusMotorBase'):
+        scope.add_hardware(secondary)

@@ -4,8 +4,8 @@ import types
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -85,9 +85,20 @@ processes_spec = importlib.util.spec_from_file_location(
 processes = importlib.util.module_from_spec(processes_spec)
 sys.modules["magscope.processes"] = processes
 processes_spec.loader.exec_module(processes)
+hardware_spec = importlib.util.spec_from_file_location(
+    "magscope.hardware", ROOT / "magscope" / "hardware.py"
+)
+hardware = importlib.util.module_from_spec(hardware_spec)
+sys.modules["magscope.hardware"] = hardware
+hardware_spec.loader.exec_module(hardware)
 import magscope.ipc_commands as ipc_commands
 from magscope.ipc import CommandRegistry, Delivery, UnknownCommandError
-from magscope.ipc_commands import LogExceptionCommand, QuitCommand, SetAcquisitionOnCommand
+from magscope.ipc_commands import (
+    LogExceptionCommand,
+    QuitCommand,
+    ReportFocusMotorLimitsCommand,
+    SetAcquisitionOnCommand,
+)
 
 
 class FakeEvent:
@@ -383,3 +394,92 @@ def test_run_reports_exception(monkeypatch):
     assert isinstance(exception_message, LogExceptionCommand)
     assert exception_message.process_name == proc.name
     assert "boom" in exception_message.details
+
+
+class FakeHardwareBuffer:
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        self.rows = []
+
+    def write(self, row):
+        self.rows.append(np.array(row, copy=True))
+
+
+class DummyFocusMotor(hardware.FocusMotorBase):
+    def __init__(self):
+        super().__init__()
+        self.position = 1.5
+        self.target = 1.5
+        self.moving = False
+
+    def connect(self):
+        self._is_connected = True
+
+    def disconnect(self):
+        self._is_connected = False
+
+    def move_absolute(self, z: float) -> None:
+        self.target = z
+        self.moving = True
+
+    def get_current_z(self) -> float:
+        return self.position
+
+    def get_is_moving(self) -> bool:
+        return self.moving
+
+    def get_position_limits(self) -> tuple[float, float]:
+        return (0.0, 10.0)
+
+    def _poll_hardware(self, now: float) -> None:
+        if self.moving:
+            self.position = self.target
+            self.moving = False
+
+
+def test_focus_motor_base_setup_writes_initial_state(monkeypatch):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+
+    motor.setup()
+
+    assert motor._is_connected is True
+    assert isinstance(motor._buffer, FakeHardwareBuffer)
+    assert len(motor._buffer.rows) == 1
+    np.testing.assert_allclose(motor._buffer.rows[0][0, 1:], [1.5, 1.5, 1.0])
+
+
+def test_focus_motor_base_clips_move_and_records_polled_state(monkeypatch):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor.setup()
+
+    motor.handle_move_absolute(25.0)
+
+    assert motor.get_target_z() == pytest.approx(10.0)
+    assert motor.target == pytest.approx(10.0)
+    assert motor.is_at_target() is False
+    np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [1.5, 10.0, 0.0])
+
+    motor.fetch()
+
+    assert motor.is_at_target() is True
+    assert len(motor._buffer.rows) >= 3
+    np.testing.assert_allclose(motor._buffer.rows[-1][0, 1:], [10.0, 10.0, 1.0])
+
+
+def test_focus_motor_base_reports_position_limits():
+    motor = DummyFocusMotor()
+    sent_commands = []
+    motor.send_ipc = sent_commands.append
+
+    motor.report_focus_motor_limits()
+
+    assert sent_commands == [ReportFocusMotorLimitsCommand(z_min=0.0, z_max=10.0)]

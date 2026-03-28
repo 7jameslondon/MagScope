@@ -399,7 +399,15 @@ class LinearMotorControls(magscope.ControlPanelBase):
         row.addWidget(self.force_ramp_rate_textedit)
 
     def update_values(self):
-        _, position, target, speed = self._buffer.peak_sorted()[-1, :]
+        data = self._buffer.peak_sorted()
+        if data.size == 0:
+            return
+
+        finite_rows = np.isfinite(data[:, 0])
+        if not np.any(finite_rows):
+            return
+
+        _, position, target, speed = data[finite_rows][-1, :]
         current_force = self.force_calibration.motor2force(position)
         target_force = self.force_calibration.motor2force(target)
 

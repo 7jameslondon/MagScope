@@ -11,6 +11,7 @@ _SUBMODULES = {
     'scripting',
     'ui',
     'utils',
+    'zlut_generation',
 }
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     'CommandRegistry',
     'ControlPanelBase',
     'Delivery',
+    'FocusMotorBase',
     'HardwareManagerBase',
     'MagScope',
     'ManagerProcessBase',
@@ -30,6 +32,7 @@ __all__ = [
     'TimeSeriesPlotBase',
     'UIManager',
     'Units',
+    'ZLUTGenerationManager',
     'check_cupy',
     'crop_stack_to_rois',
     'date_timestamp_str',
@@ -47,6 +50,7 @@ _EXPORTS = {
     'CommandRegistry': ('magscope.ipc', 'CommandRegistry'),
     'ControlPanelBase': ('magscope.ui', 'ControlPanelBase'),
     'Delivery': ('magscope.ipc', 'Delivery'),
+    'FocusMotorBase': ('magscope.hardware', 'FocusMotorBase'),
     'HardwareManagerBase': ('magscope.hardware', 'HardwareManagerBase'),
     'MagScope': ('magscope.scope', 'MagScope'),
     'ManagerProcessBase': ('magscope.processes', 'ManagerProcessBase'),
@@ -56,6 +60,7 @@ _EXPORTS = {
     'TimeSeriesPlotBase': ('magscope.ui', 'TimeSeriesPlotBase'),
     'UIManager': ('magscope.ui', 'UIManager'),
     'Units': ('magscope.utils', 'Units'),
+    'ZLUTGenerationManager': ('magscope.zlut_generation', 'ZLUTGenerationManager'),
     'check_cupy': ('magscope.utils', 'check_cupy'),
     'crop_stack_to_rois': ('magscope.utils', 'crop_stack_to_rois'),
     'date_timestamp_str': ('magscope.utils', 'date_timestamp_str'),
