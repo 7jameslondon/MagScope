@@ -10,9 +10,6 @@ jobs:
   build:
 
     runs-on: ${{ matrix.os }}
-    env:
-      QT_QPA_PLATFORM: ${{ runner.os == 'Linux' && 'offscreen' || '' }}
-      TEST_COMMAND: ${{ runner.os == 'Linux' && 'xvfb-run -a pytest -q' || 'pytest -q' }}
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +40,6 @@ jobs:
 
     - name: Run tests
       shell: bash
-      run: ${{ env.TEST_COMMAND }}
       run: |
         if [ "${{ runner.os }}" = "Linux" ]; then
           export QT_QPA_PLATFORM=offscreen
