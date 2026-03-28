@@ -41,7 +41,15 @@ jobs:
     - name: Run tests
       shell: bash
       run: |
-        if [ "${{ runner.os }}" = "Linux" ]; then
+        if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
+          export QT_QPA_PLATFORM=offscreen
+          export PYTHONFAULTHANDLER=1
+          export PYTHONMALLOC=debug
+          echo "Running Linux Python 3.13 diagnostics: UI/package tests first"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running Linux Python 3.13 diagnostics: remaining tests"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+        elif [ "${{ runner.os }}" = "Linux" ]; then
           export QT_QPA_PLATFORM=offscreen
           xvfb-run -a python -m pytest -q
         elif [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
