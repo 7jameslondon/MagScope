@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from multiprocessing.synchronize import Event as EventType
+from multiprocessing.sharedctypes import Synchronized
+from queue import Empty
 from typing import Iterable
 
 import numpy as np
@@ -329,14 +330,40 @@ def detect_matching_beads(
 def run_auto_bead_search_process(
     request_queue,
     result_queue,
-    cancel_event: EventType,
+    active_request_id: Synchronized,
     *,
     chunk_rows: int = _DEFAULT_CORRELATION_CHUNK_ROWS,
 ) -> None:
     """Serve auto-bead search requests from a temporary worker process."""
 
-    while True:
+    def is_request_active(request_id: int) -> bool:
+        with active_request_id.get_lock():
+            return int(active_request_id.value) == int(request_id)
+
+    def get_next_message():
         message = request_queue.get()
+        if not isinstance(message, tuple) or not message:
+            return message
+
+        if message[0] != 'search':
+            return message
+
+        latest_message = message
+        while True:
+            try:
+                queued_message = request_queue.get_nowait()
+            except Empty:
+                return latest_message
+
+            if not isinstance(queued_message, tuple) or not queued_message:
+                continue
+            if queued_message[0] == 'shutdown':
+                return queued_message
+            if queued_message[0] == 'search':
+                latest_message = queued_message
+
+    while True:
+        message = get_next_message()
         if not isinstance(message, tuple) or not message:
             continue
 
@@ -348,8 +375,15 @@ def run_auto_bead_search_process(
 
         _, request_id, image, seed_roi, existing_rois = message
 
+        if not is_request_active(request_id):
+            result_queue.put(('canceled', request_id))
+            continue
+
         def report_progress(completed_steps: int, total_steps: int) -> None:
             result_queue.put(('progress', request_id, completed_steps, total_steps))
+
+        def cancel_check() -> bool:
+            return not is_request_active(request_id)
 
         try:
             _score_map, candidates = detect_matching_beads(
@@ -357,7 +391,7 @@ def run_auto_bead_search_process(
                 seed_roi,
                 existing_rois,
                 chunk_rows=chunk_rows,
-                cancel_check=cancel_event.is_set,
+                cancel_check=cancel_check,
                 progress_callback=report_progress,
             )
         except AutoBeadSearchCancelled:

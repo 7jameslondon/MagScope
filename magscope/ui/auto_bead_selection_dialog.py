@@ -34,14 +34,16 @@ if TYPE_CHECKING:
 
 
 class _AutoBeadSearchProcessBackend:
+    _NO_ACTIVE_REQUEST_ID = -1
+
     def __init__(self) -> None:
         self._context = mp.get_context('spawn')
         self._request_queue = self._context.Queue()
         self._result_queue = self._context.Queue()
-        self._cancel_event = self._context.Event()
+        self._active_request_id = self._context.Value('q', self._NO_ACTIVE_REQUEST_ID)
         self._process = self._context.Process(
             target=run_auto_bead_search_process,
-            args=(self._request_queue, self._result_queue, self._cancel_event),
+            args=(self._request_queue, self._result_queue, self._active_request_id),
             daemon=True,
         )
         self._process.start()
@@ -54,11 +56,13 @@ class _AutoBeadSearchProcessBackend:
         seed_roi: tuple[int, int, int, int],
         existing_rois: tuple[tuple[int, int, int, int], ...],
     ) -> None:
-        self._cancel_event.clear()
+        with self._active_request_id.get_lock():
+            self._active_request_id.value = int(request_id)
         self._request_queue.put(('search', request_id, image, seed_roi, existing_rois))
 
     def cancel_search(self) -> None:
-        self._cancel_event.set()
+        with self._active_request_id.get_lock():
+            self._active_request_id.value = self._NO_ACTIVE_REQUEST_ID
 
     def poll_messages(self) -> list[tuple]:
         messages: list[tuple] = []
@@ -73,7 +77,7 @@ class _AutoBeadSearchProcessBackend:
             return
 
         if self._process.is_alive():
-            self._cancel_event.set()
+            self.cancel_search()
             self._request_queue.put(('shutdown',))
             self._process.join(timeout=1.0)
         if self._process.is_alive():

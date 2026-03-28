@@ -1,3 +1,8 @@
+import multiprocessing as mp
+import queue
+import threading
+import time
+
 import numpy as np
 import pytest
 from scipy.signal import correlate2d
@@ -12,6 +17,7 @@ from magscope.auto_bead_selection import (
     normalized_cross_correlation,
     normalized_cross_correlation_chunked,
     roi_overlaps,
+    run_auto_bead_search_process,
 )
 
 
@@ -262,3 +268,124 @@ def test_detect_matching_beads_supports_cancellation_during_candidate_phase():
         )
 
     assert any(completed > 800 for completed, _total in progress_calls)
+
+
+def test_run_auto_bead_search_process_cancels_stale_request_before_next_search(monkeypatch):
+    request_queue: queue.Queue[tuple] = queue.Queue()
+    result_queue: queue.Queue[tuple] = queue.Queue()
+    active_request_id = mp.Value('q', -1)
+    request_started = threading.Event()
+    cancel_seen = threading.Event()
+    completed_requests: list[int] = []
+
+    def fake_detect_matching_beads(image, seed_roi, existing_rois, *, chunk_rows, cancel_check, progress_callback):
+        request_id = int(seed_roi[0])
+        request_started.set()
+        if request_id == 1:
+            while not cancel_check():
+                time.sleep(0.01)
+            cancel_seen.set()
+            raise AutoBeadSearchCancelled('Auto bead selection was canceled')
+
+        completed_requests.append(request_id)
+        return image, [AutoBeadCandidate((4, 12, 4, 12), 0.95)]
+
+    monkeypatch.setattr('magscope.auto_bead_selection.detect_matching_beads', fake_detect_matching_beads)
+
+    worker = threading.Thread(
+        target=run_auto_bead_search_process,
+        args=(request_queue, result_queue, active_request_id),
+        daemon=True,
+    )
+    worker.start()
+
+    with active_request_id.get_lock():
+        active_request_id.value = 1
+    request_queue.put(('search', 1, np.zeros((8, 8), dtype=np.uint16), (1, 9, 1, 9), ()))
+    assert request_started.wait(timeout=1.0)
+
+    with active_request_id.get_lock():
+        active_request_id.value = -1
+    with active_request_id.get_lock():
+        active_request_id.value = 2
+    request_queue.put(('search', 2, np.zeros((8, 8), dtype=np.uint16), (2, 10, 2, 10), ()))
+
+    assert cancel_seen.wait(timeout=1.0)
+
+    messages: list[tuple] = []
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            messages.append(result_queue.get(timeout=0.1))
+        except queue.Empty:
+            pass
+        if ('canceled', 1) in messages and any(message[:2] == ('result', 2) for message in messages):
+            break
+
+    request_queue.put(('shutdown',))
+    worker.join(timeout=1.0)
+
+    assert ('canceled', 1) in messages
+    assert any(message[:2] == ('result', 2) for message in messages)
+    assert completed_requests == [2]
+
+
+def test_run_auto_bead_search_process_keeps_only_latest_queued_search(monkeypatch):
+    request_queue: queue.Queue[tuple] = queue.Queue()
+    result_queue: queue.Queue[tuple] = queue.Queue()
+    active_request_id = mp.Value('q', -1)
+    request_started = threading.Event()
+    release_request = threading.Event()
+    completed_requests: list[int] = []
+
+    def fake_detect_matching_beads(image, seed_roi, existing_rois, *, chunk_rows, cancel_check, progress_callback):
+        request_id = int(seed_roi[0])
+        request_started.set()
+        if request_id == 1:
+            assert release_request.wait(timeout=1.0)
+            if cancel_check():
+                raise AutoBeadSearchCancelled('Auto bead selection was canceled')
+
+        completed_requests.append(request_id)
+        return image, [AutoBeadCandidate((4, 12, 4, 12), 0.95)]
+
+    monkeypatch.setattr('magscope.auto_bead_selection.detect_matching_beads', fake_detect_matching_beads)
+
+    worker = threading.Thread(
+        target=run_auto_bead_search_process,
+        args=(request_queue, result_queue, active_request_id),
+        daemon=True,
+    )
+    worker.start()
+
+    with active_request_id.get_lock():
+        active_request_id.value = 1
+    request_queue.put(('search', 1, np.zeros((8, 8), dtype=np.uint16), (1, 9, 1, 9), ()))
+    assert request_started.wait(timeout=1.0)
+
+    with active_request_id.get_lock():
+        active_request_id.value = 2
+    request_queue.put(('search', 2, np.zeros((8, 8), dtype=np.uint16), (2, 10, 2, 10), ()))
+    with active_request_id.get_lock():
+        active_request_id.value = 3
+    request_queue.put(('search', 3, np.zeros((8, 8), dtype=np.uint16), (3, 11, 3, 11), ()))
+
+    release_request.set()
+
+    messages: list[tuple] = []
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            messages.append(result_queue.get(timeout=0.1))
+        except queue.Empty:
+            pass
+        if ('canceled', 1) in messages and any(message[:2] == ('result', 3) for message in messages):
+            break
+
+    request_queue.put(('shutdown',))
+    worker.join(timeout=1.0)
+
+    assert ('canceled', 1) in messages
+    assert not any(message[:2] == ('result', 2) for message in messages)
+    assert any(message[:2] == ('result', 3) for message in messages)
+    assert completed_requests == [3]
