@@ -51,6 +51,13 @@ jobs:
           python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
           echo "Running Windows Python 3.13 diagnostics: remaining tests"
           python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+        elif [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
+          export PYTHONFAULTHANDLER=1
+          export PYTHONMALLOC=debug
+          echo "Running macOS Python 3.13 diagnostics: UI/package tests first"
+          python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running macOS Python 3.13 diagnostics: remaining tests"
+          python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
         else
           python -m pytest -q
         fi
