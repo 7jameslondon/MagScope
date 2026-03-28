@@ -110,6 +110,23 @@ def _window_sum_integral(image: np.ndarray, window_shape: tuple[int, int]) -> np
     )
 
 
+def _mark_blocked_roi(
+    blocked_mask: np.ndarray,
+    roi: tuple[int, int, int, int],
+    roi_size: tuple[int, int],
+) -> None:
+    """Mark all top-left positions whose ROI would overlap ``roi``."""
+
+    roi_height, roi_width = roi_size
+    x0, x1, y0, y1 = roi
+    block_x0 = max(0, x0 - roi_width + 1)
+    block_x1 = min(blocked_mask.shape[1], x1)
+    block_y0 = max(0, y0 - roi_height + 1)
+    block_y1 = min(blocked_mask.shape[0], y1)
+    if block_x0 < block_x1 and block_y0 < block_y1:
+        blocked_mask[block_y0:block_y1, block_x0:block_x1] = True
+
+
 def normalized_cross_correlation_chunked(
     image: np.ndarray,
     template: np.ndarray,
@@ -271,14 +288,11 @@ def detect_matching_beads(
     sorted_order = np.argsort(flat_scores[candidate_indices])[::-1]
     sorted_indices = candidate_indices[sorted_order]
 
-    blocked_x0 = [int(roi[0]) for roi in existing_rois]
-    blocked_x1 = [int(roi[1]) for roi in existing_rois]
-    blocked_y0 = [int(roi[2]) for roi in existing_rois]
-    blocked_y1 = [int(roi[3]) for roi in existing_rois]
-    blocked_x0.append(seed_roi[0])
-    blocked_x1.append(seed_roi[1])
-    blocked_y0.append(seed_roi[2])
-    blocked_y1.append(seed_roi[3])
+    blocked_mask = np.zeros(score_map.shape, dtype=bool)
+    roi_size = (roi_height, roi_width)
+    for roi in existing_rois:
+        _mark_blocked_roi(blocked_mask, roi, roi_size)
+    _mark_blocked_roi(blocked_mask, seed_roi, roi_size)
 
     candidates: list[AutoBeadCandidate] = []
     total_sorted_indices = sorted_indices.size
@@ -286,39 +300,27 @@ def detect_matching_beads(
     sorted_y0 = sorted_indices // score_map_width
     sorted_x0 = sorted_indices - sorted_y0 * score_map_width
     image_height, image_width = image.shape
+    next_progress_index = 1
     for index, (y0_raw, x0_raw) in enumerate(zip(sorted_y0, sorted_x0, strict=False), start=1):
-        if index == 1 or index % _CANDIDATE_PROGRESS_UPDATE_INTERVAL == 0 or index == total_sorted_indices:
+        if index == next_progress_index or index == total_sorted_indices:
             report_progress(800 + int((index * 200) / total_sorted_indices), 1000)
             check_canceled()
+            next_progress_index += _CANDIDATE_PROGRESS_UPDATE_INTERVAL
 
         y0 = int(y0_raw)
         x0 = int(x0_raw)
-        score = float(score_map[y0, x0])
         x1 = x0 + roi_width
         y1 = y0 + roi_height
         if x0 < 0 or x1 > image_width or y0 < 0 or y1 > image_height:
             continue
 
-        overlaps_existing = False
-        for blocked_index in range(len(blocked_x0)):
-            if (
-                x0 < blocked_x1[blocked_index]
-                and blocked_x0[blocked_index] < x1
-                and y0 < blocked_y1[blocked_index]
-                and blocked_y0[blocked_index] < y1
-            ):
-                overlaps_existing = True
-                break
-        if overlaps_existing:
+        if blocked_mask[y0, x0]:
             continue
 
         roi = (x0, x1, y0, y1)
-        candidate = AutoBeadCandidate(roi=roi, score=score)
+        candidate = AutoBeadCandidate(roi=roi, score=float(score_map[y0, x0]))
         candidates.append(candidate)
-        blocked_x0.append(x0)
-        blocked_x1.append(x1)
-        blocked_y0.append(y0)
-        blocked_y1.append(y1)
+        _mark_blocked_roi(blocked_mask, roi, roi_size)
 
     report_progress(1000, 1000)
     return score_map, candidates

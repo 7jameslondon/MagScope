@@ -186,6 +186,59 @@ def _filter_candidates_fast(
     return candidates
 
 
+def _mark_blocked_roi(
+    blocked_mask: np.ndarray,
+    roi: tuple[int, int, int, int],
+    roi_size: tuple[int, int],
+) -> None:
+    roi_height, roi_width = roi_size
+    x0, x1, y0, y1 = roi
+    block_x0 = max(0, x0 - roi_width + 1)
+    block_x1 = min(blocked_mask.shape[1], x1)
+    block_y0 = max(0, y0 - roi_height + 1)
+    block_y1 = min(blocked_mask.shape[0], y1)
+    if block_x0 < block_x1 and block_y0 < block_y1:
+        blocked_mask[block_y0:block_y1, block_x0:block_x1] = True
+
+
+def _filter_candidates_masked(
+    score_map: np.ndarray,
+    image_shape: tuple[int, int],
+    roi_size: tuple[int, int],
+    existing_rois: tuple[tuple[int, int, int, int], ...],
+    seed_roi: tuple[int, int, int, int],
+) -> list[AutoBeadCandidate]:
+    roi_height, roi_width = roi_size
+    flat_scores = score_map.ravel()
+    candidate_indices = np.flatnonzero(flat_scores > _MIN_CANDIDATE_SCORE)
+    sorted_order = np.argsort(flat_scores[candidate_indices])[::-1]
+    sorted_indices = candidate_indices[sorted_order]
+
+    blocked_mask = np.zeros(score_map.shape, dtype=bool)
+    for roi in existing_rois:
+        _mark_blocked_roi(blocked_mask, roi, roi_size)
+    _mark_blocked_roi(blocked_mask, seed_roi, roi_size)
+
+    candidates: list[AutoBeadCandidate] = []
+    score_map_width = score_map.shape[1]
+    image_height, image_width = image_shape
+    sorted_y0 = sorted_indices // score_map_width
+    sorted_x0 = sorted_indices - sorted_y0 * score_map_width
+    for y0_raw, x0_raw in zip(sorted_y0, sorted_x0, strict=False):
+        y0 = int(y0_raw)
+        x0 = int(x0_raw)
+        x1 = x0 + roi_width
+        y1 = y0 + roi_height
+        if x0 < 0 or x1 > image_width or y0 < 0 or y1 > image_height:
+            continue
+        if blocked_mask[y0, x0]:
+            continue
+        roi = (x0, x1, y0, y1)
+        candidates.append(AutoBeadCandidate(roi=roi, score=float(score_map[y0, x0])))
+        _mark_blocked_roi(blocked_mask, roi, roi_size)
+    return candidates
+
+
 def _window_sum_integral(image: np.ndarray, window_shape: tuple[int, int]) -> np.ndarray:
     window_height, window_width = window_shape
     integral = np.pad(np.cumsum(np.cumsum(image, axis=0), axis=1), ((1, 0), (1, 0)), mode='constant')
@@ -221,6 +274,7 @@ def run_instrumented_variant(
     use_cached_kernel: bool,
     use_square_out: bool,
     use_fast_filter: bool,
+    use_mask_filter: bool,
     use_integral_sums: bool,
 ) -> VariantResult:
     timings: dict[str, float] = {}
@@ -274,7 +328,12 @@ def run_instrumented_variant(
     timings['assemble_score_map'] = perf_counter() - t0
 
     t0 = perf_counter()
-    filter_func = _filter_candidates_fast if use_fast_filter else _filter_candidates_reference
+    if use_mask_filter:
+        filter_func = _filter_candidates_masked
+    elif use_fast_filter:
+        filter_func = _filter_candidates_fast
+    else:
+        filter_func = _filter_candidates_reference
     candidates = filter_func(score_map, case.image.shape, template.shape, case.existing_rois, case.seed_roi)
     timings['filter_candidates'] = perf_counter() - t0
 
@@ -297,6 +356,7 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=False,
             use_square_out=False,
             use_fast_filter=False,
+            use_mask_filter=False,
             use_integral_sums=False,
         ),
         'cached-kernel': lambda case, chunk_rows: run_instrumented_variant(
@@ -305,6 +365,7 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=True,
             use_square_out=False,
             use_fast_filter=False,
+            use_mask_filter=False,
             use_integral_sums=False,
         ),
         'square-out': lambda case, chunk_rows: run_instrumented_variant(
@@ -313,6 +374,7 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=False,
             use_square_out=True,
             use_fast_filter=False,
+            use_mask_filter=False,
             use_integral_sums=False,
         ),
         'fast-filter': lambda case, chunk_rows: run_instrumented_variant(
@@ -321,6 +383,16 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=False,
             use_square_out=False,
             use_fast_filter=True,
+            use_mask_filter=False,
+            use_integral_sums=False,
+        ),
+        'mask-filter': lambda case, chunk_rows: run_instrumented_variant(
+            case,
+            chunk_rows=chunk_rows,
+            use_cached_kernel=False,
+            use_square_out=False,
+            use_fast_filter=False,
+            use_mask_filter=True,
             use_integral_sums=False,
         ),
         'integral-sums': lambda case, chunk_rows: run_instrumented_variant(
@@ -329,6 +401,7 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=False,
             use_square_out=False,
             use_fast_filter=False,
+            use_mask_filter=False,
             use_integral_sums=True,
         ),
         'integral-fast': lambda case, chunk_rows: run_instrumented_variant(
@@ -337,6 +410,16 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=False,
             use_square_out=True,
             use_fast_filter=True,
+            use_mask_filter=False,
+            use_integral_sums=True,
+        ),
+        'integral-mask': lambda case, chunk_rows: run_instrumented_variant(
+            case,
+            chunk_rows=chunk_rows,
+            use_cached_kernel=False,
+            use_square_out=True,
+            use_fast_filter=False,
+            use_mask_filter=True,
             use_integral_sums=True,
         ),
         'optimized': lambda case, chunk_rows: run_instrumented_variant(
@@ -345,6 +428,7 @@ def build_variants() -> dict[str, Callable[[BenchmarkCase, int], VariantResult]]
             use_cached_kernel=True,
             use_square_out=True,
             use_fast_filter=True,
+            use_mask_filter=False,
             use_integral_sums=False,
         ),
     }
@@ -401,8 +485,10 @@ def parse_args() -> argparse.Namespace:
             'cached-kernel',
             'square-out',
             'fast-filter',
+            'mask-filter',
             'integral-sums',
             'integral-fast',
+            'integral-mask',
             'optimized',
         ],
         help='Variant names to run',
