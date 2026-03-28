@@ -44,7 +44,7 @@ remain synchronized.
 import logging
 import sys
 import time
-from multiprocessing import Event, Lock, current_process, freeze_support
+from multiprocessing import Event, Lock, Process, current_process, freeze_support
 from multiprocessing.connection import Connection
 from typing import TYPE_CHECKING
 from warnings import warn
@@ -59,14 +59,21 @@ from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
 from magscope.hardware import FocusMotorBase, HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
-    command_kwargs,
     CommandRegistry,
+    command_kwargs,
     create_pipes,
     Delivery,
     drain_pipe_until_quit,
     register_ipc_command,
 )
-from magscope.ipc_commands import Command, LogExceptionCommand, QuitCommand, SetSettingsCommand, UpdateSettingsCommand
+from magscope.ipc_commands import (
+    Command,
+    LogExceptionCommand,
+    QuitCommand,
+    SetSettingsCommand,
+    StartupReadyCommand,
+    UpdateSettingsCommand,
+)
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
@@ -138,6 +145,11 @@ class MagScope(metaclass=SingletonMeta):
         self._print_script_commands = print_script_commands
 
         self._terminated: bool = False
+        self._startup_splash_deadline: float | None = None
+        self._startup_splash_close_event: Event | None = None
+        self._startup_splash_process: Process | None = None
+        self._startup_splash_timeout_seconds: float = 600.0
+        self._startup_splash_waiting_for_ui_ready: bool = False
 
         self.live_profile_buffer: LiveProfileBuffer | None = None
         self.bead_roi_buffer: BeadRoiBuffer | None = None
@@ -175,21 +187,30 @@ class MagScope(metaclass=SingletonMeta):
         if not self._mark_running():
             return
 
-        self._collect_processes()
+        splash_started = False
+        try:
+            if not self._print_ipc_commands and not self._print_script_commands:
+                self._start_startup_splash()
+                splash_started = True
 
-        if self._print_ipc_commands or self._print_script_commands:
-            if self._print_ipc_commands:
-                self.print_registered_commands()
-            if self._print_script_commands:
-                self.print_registered_script_commands()
-            self._running = False
-            return
+            self._collect_processes()
 
-        self._initialize_shared_state()
-        self._start_managers()
-        self._main_ipc_loop()
-        self._join_processes()
-        self._mark_terminated()
+            if self._print_ipc_commands or self._print_script_commands:
+                if self._print_ipc_commands:
+                    self.print_registered_commands()
+                if self._print_script_commands:
+                    self.print_registered_script_commands()
+                self._running = False
+                return
+
+            self._initialize_shared_state()
+            self._start_managers()
+            self._main_ipc_loop()
+            self._join_processes()
+            self._mark_terminated()
+        finally:
+            if splash_started:
+                self._stop_startup_splash()
 
     def stop(self) -> None:
         """Request a graceful shutdown and wait for every manager to exit.
@@ -312,6 +333,64 @@ class MagScope(metaclass=SingletonMeta):
 
         self._terminated = True
 
+    def _start_startup_splash(self) -> None:
+        """Launch a lightweight splash window in a helper process."""
+
+        from magscope.startup_splash import run_startup_splash
+
+        if self._startup_splash_process is not None and self._startup_splash_process.is_alive():
+            return
+
+        close_event = Event()
+        splash_process = Process(
+            target=run_startup_splash,
+            args=(close_event,),
+            name="MagScopeStartupSplash",
+        )
+        splash_process.start()
+        self._startup_splash_deadline = time.monotonic() + self._startup_splash_timeout_seconds
+        self._startup_splash_close_event = close_event
+        self._startup_splash_process = splash_process
+        self._startup_splash_waiting_for_ui_ready = True
+
+    def _dismiss_startup_splash_if_pending(self) -> None:
+        """Dismiss the splash while startup is still waiting on the UI."""
+
+        if not self._startup_splash_waiting_for_ui_ready:
+            return
+        self._stop_startup_splash()
+
+    def _stop_startup_splash(self) -> None:
+        """Request the startup splash helper process to exit."""
+
+        if self._startup_splash_close_event is not None:
+            self._startup_splash_close_event.set()
+
+        if self._startup_splash_process is not None:
+            self._startup_splash_process.join(timeout=5)
+            if self._startup_splash_process.is_alive():
+                self._startup_splash_process.terminate()
+                self._startup_splash_process.join(timeout=1)
+
+        self._startup_splash_deadline = None
+        self._startup_splash_close_event = None
+        self._startup_splash_process = None
+        self._startup_splash_waiting_for_ui_ready = False
+
+    def _check_startup_splash_timeout(self) -> None:
+        """Dismiss the splash if UI startup has been pending too long."""
+
+        if not self._startup_splash_waiting_for_ui_ready or self._startup_splash_deadline is None:
+            return
+        if time.monotonic() < self._startup_splash_deadline:
+            return
+
+        logger.warning(
+            'Startup splash timed out after %.1f seconds while waiting for UI startup',
+            self._startup_splash_timeout_seconds,
+        )
+        self._dismiss_startup_splash_if_pending()
+
     def _collect_processes(self) -> None:
         """Assemble the ordered list of manager processes to supervise.
 
@@ -416,6 +495,7 @@ class MagScope(metaclass=SingletonMeta):
 
     def receive_ipc(self):
         """Poll every IPC pipe once and relay any commands that arrive."""
+        self._check_startup_splash_timeout()
         handled_command = False
         for pipe in self.pipes.values():
             command = self._read_command(pipe)
@@ -512,15 +592,25 @@ class MagScope(metaclass=SingletonMeta):
     def log_exception(self, process_name: str, details: str) -> None:
         """Surface an exception raised in a managed process."""
 
+        self._dismiss_startup_splash_if_pending()
+
         print(
             f'[{process_name}] Unhandled exception in child process:\n{details}',
             file=sys.stderr,
             flush=True,
         )
 
+    @register_ipc_command(StartupReadyCommand, delivery=Delivery.MAG_SCOPE, target='MagScope')
+    def startup_ready(self, process_name: str = 'UIManager') -> None:
+        """Dismiss the startup splash once the UI process is ready."""
+
+        logger.info('%s reported startup ready', process_name)
+        self._dismiss_startup_splash_if_pending()
+
     def _sleep_when_idle(self) -> None:
         """Throttle the IPC loop when no messages were processed."""
 
+        self._check_startup_splash_timeout()
         time.sleep(0.001)
 
     def _drain_child_pipes_after_quit(self) -> None:

@@ -1,2 +1,9 @@
 import magscope
-magscope.MagScope().start()
+
+
+def main() -> None:
+    magscope.MagScope().start()
+
+
+if __name__ == "__main__":
+    main()

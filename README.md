@@ -4,7 +4,7 @@
 
 [![PyPi](https://img.shields.io/pypi/v/magscope.svg)](https://pypi.org/project/magscope/)
 [![Docs](https://img.shields.io/readthedocs/magscope/latest.svg)](https://magscope.readthedocs.io)
-[![Python package](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml/badge.svg)](https://github.com/7jameslondon/MagScope/actions/workflows/python-package.yml)
+[![Python package](https://github.com/7jameslondon/MagScope/actions/workflows/tests.yml/badge.svg)](https://github.com/7jameslondon/MagScope/actions/workflows/tests.yml)
 [![Paper](https://img.shields.io/badge/DOI-10.1101/2025.10.31.685671-blue)](https://doi.org/10.1101/2025.10.31.685671)
 
 [MagScope](https://github.com/7jameslondon/MagScope) is a Python-based application for live data acquisition and analysis in [magnetic tweezers microscopy](https://doi.org/10.1007/978-1-0716-3377-9_18). 
