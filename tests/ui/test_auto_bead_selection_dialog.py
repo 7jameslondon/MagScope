@@ -14,6 +14,72 @@ from magscope.auto_bead_selection import AutoBeadCandidate
 from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
 
 
+class _BlockingFakeSearchBackend:
+    def __init__(self, seed_log: list[tuple[int, int, int, int]], release_search: Event):
+        self._seed_log = seed_log
+        self._release_search = release_search
+        self._request_id: int | None = None
+        self._messages: list[tuple] = []
+        self._canceled = False
+        self._result_sent = False
+
+    def start_search(self, *, request_id, image, seed_roi, existing_rois):
+        self._request_id = request_id
+        self._seed_log.append(seed_roi)
+        self._canceled = False
+        self._result_sent = False
+
+    def cancel_search(self) -> None:
+        self._canceled = True
+
+    def poll_messages(self) -> list[tuple]:
+        if self._request_id is None:
+            return []
+        if self._canceled:
+            request_id = self._request_id
+            self._request_id = None
+            return [('canceled', request_id)]
+        if self._release_search.is_set() and not self._result_sent:
+            self._result_sent = True
+            return [('result', self._request_id, [])]
+        return []
+
+    def shutdown(self) -> None:
+        self._request_id = None
+
+
+class _LateResultFakeSearchBackend:
+    def __init__(self, release_search: Event):
+        self._release_search = release_search
+        self._request_id: int | None = None
+        self._canceled = False
+        self._result_sent = False
+
+    def start_search(self, *, request_id, image, seed_roi, existing_rois):
+        self._request_id = request_id
+        self._canceled = False
+        self._result_sent = False
+
+    def cancel_search(self) -> None:
+        self._canceled = True
+
+    def poll_messages(self) -> list[tuple]:
+        if self._request_id is None:
+            return []
+        if self._canceled and self._release_search.is_set() and not self._result_sent:
+            self._result_sent = True
+            request_id = self._request_id
+            self._request_id = None
+            return [
+                ('canceled', request_id),
+                ('result', request_id, [(((20, 28, 6, 14)), 0.9)]),
+            ]
+        return []
+
+    def shutdown(self) -> None:
+        self._request_id = None
+
+
 def _build_test_image() -> tuple[np.ndarray, tuple[int, int, int, int]]:
     image = np.zeros((48, 48), dtype=np.uint16)
     template = np.arange(64, dtype=np.uint16).reshape(8, 8)
@@ -187,13 +253,11 @@ def test_auto_bead_selection_dialog_blocks_new_seed_during_active_search(qtbot, 
     image, seed_roi = _build_test_image()
     release_search = Event()
     visited_seeds = []
-
-    def fake_detect(image_arg, seed_roi_arg, existing_rois_arg):
-        visited_seeds.append(seed_roi_arg)
-        release_search.wait(timeout=5)
-        return np.zeros((1, 1), dtype=np.float64), []
-
-    monkeypatch.setattr('magscope.ui.auto_bead_selection_dialog.detect_matching_beads', fake_detect)
+    monkeypatch.setattr(
+        AutoBeadSelectionDialog,
+        '_create_search_backend',
+        lambda self: _BlockingFakeSearchBackend(visited_seeds, release_search),
+    )
 
     dialog = AutoBeadSelectionDialog(
         parent=None,
@@ -226,12 +290,11 @@ def test_auto_bead_selection_dialog_blocks_new_seed_during_active_search(qtbot, 
 def test_auto_bead_selection_dialog_cancel_clears_seed_and_ignores_late_results(qtbot, monkeypatch):
     image, seed_roi = _build_test_image()
     release_search = Event()
-
-    def fake_detect(image_arg, seed_roi_arg, existing_rois_arg):
-        release_search.wait(timeout=5)
-        return np.ones((2, 2), dtype=np.float64), [AutoBeadCandidate((20, 28, 6, 14), 0.9)]
-
-    monkeypatch.setattr('magscope.ui.auto_bead_selection_dialog.detect_matching_beads', fake_detect)
+    monkeypatch.setattr(
+        AutoBeadSelectionDialog,
+        '_create_search_backend',
+        lambda self: _LateResultFakeSearchBackend(release_search),
+    )
 
     dialog = AutoBeadSelectionDialog(
         parent=None,
@@ -254,7 +317,7 @@ def test_auto_bead_selection_dialog_cancel_clears_seed_and_ignores_late_results(
     assert dialog.accept_button.isEnabled() is False
 
     release_search.set()
-    qtbot.waitUntil(lambda: dialog._search_thread is None, timeout=5000)
+    qtbot.wait(100)
 
     assert dialog.seed_roi is None
     assert dialog.visible_candidates == []
