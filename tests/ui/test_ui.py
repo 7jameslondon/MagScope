@@ -234,6 +234,19 @@ class FakeZLutPreviewWidget:
         self.preview_calls.append(kwargs)
 
 
+class StubZLutPreviewWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.clear_calls = []
+        self.preview_calls = []
+
+    def clear(self, message='Waiting for Z-LUT sweep data...') -> None:
+        self.clear_calls.append(message)
+
+    def update_preview(self, **kwargs) -> None:
+        self.preview_calls.append(kwargs)
+
+
 class FakeZLutGenerationDialog:
     def __init__(self):
         self.state_calls = []
@@ -292,6 +305,20 @@ class FakeZLutGenerationDialog:
 
     def force_close(self) -> None:
         self.visible = False
+
+
+@pytest.fixture
+def zlut_dialog_factory(qtbot, monkeypatch):
+    from magscope.ui import controls as controls_module
+
+    monkeypatch.setattr(controls_module, 'ZLUTSweepPreviewWidget', StubZLutPreviewWidget)
+
+    def factory() -> ZLUTGenerationDialog:
+        dialog = ZLUTGenerationDialog()
+        qtbot.addWidget(dialog)
+        return dialog
+
+    return factory
 
 
 class FakeControls:
@@ -418,9 +445,143 @@ def test_zlut_preview_widget_masks_non_finite_values_without_red_override(qtbot)
     assert widget._image.cmap is widget._preview_cmap
 
 
-def test_zlut_generation_dialog_close_discards_during_evaluation(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_build_zlut_preview_payload_averages_complete_sweep():
+    preview_payload = UIManager._build_zlut_preview_payload(
+        {
+            'state': 4,
+            'count': 3,
+            'capacity': 8,
+            'n_steps': 2,
+            'n_beads': 2,
+            'profiles_per_bead': 2,
+            'profile_length': 3,
+            'selected_bead_id': 5,
+            'motor_z_min': 10.0,
+            'motor_z_max': 30.0,
+            'step_indices': np.asarray([0, 1], dtype=np.uint32),
+            'motor_z_values': np.asarray([10.0, 20.0], dtype=np.float64),
+            'profiles': np.asarray(
+                [
+                    [1.0, 2.0, 3.0],
+                    [4.0, 5.0, 6.0],
+                ],
+                dtype=np.float64,
+            ),
+        },
+        z_axis_min_nm=10.0,
+        z_axis_max_nm=20.0,
+        z_axis_descending=False,
+    )
+
+    assert preview_payload['mode'] == 'Averaged sweep'
+    assert preview_payload['selected_bead_id'] == 5
+    assert preview_payload['x_axis_min'] == 5.0
+    assert preview_payload['x_axis_max'] == 25.0
+    assert preview_payload['image_x_min'] == 5.0
+    assert preview_payload['image_x_max'] == 25.0
+    np.testing.assert_allclose(
+        preview_payload['preview_image'],
+        np.asarray([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]], dtype=np.float64),
+    )
+
+
+def test_build_zlut_preview_payload_sorts_descending_raw_low_to_high():
+    preview_payload = UIManager._build_zlut_preview_payload(
+        {
+            'state': 3,
+            'count': 3,
+            'capacity': 3,
+            'n_steps': 3,
+            'n_beads': 1,
+            'profiles_per_bead': 1,
+            'profile_length': 2,
+            'selected_bead_id': 5,
+            'motor_z_min': 10.0,
+            'motor_z_max': 30.0,
+            'step_indices': np.asarray([0, 1, 2], dtype=np.uint32),
+            'motor_z_values': np.asarray([30.0, 20.0, 10.0], dtype=np.float64),
+            'profiles': np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=np.float64),
+        },
+        z_axis_min_nm=10.0,
+        z_axis_max_nm=30.0,
+        z_axis_descending=True,
+    )
+
+    assert preview_payload['mode'] == 'Raw sweep'
+    assert preview_payload['x_axis_min'] == 5.0
+    assert preview_payload['x_axis_max'] == 35.0
+    assert preview_payload['image_x_min'] == 5.0
+    assert preview_payload['image_x_max'] == 35.0
+    np.testing.assert_allclose(
+        preview_payload['preview_image'],
+        np.asarray([[5.0, 3.0, 1.0], [6.0, 4.0, 2.0]], dtype=np.float64),
+    )
+
+
+def test_build_zlut_preview_payload_preserves_sparse_slot_alignment():
+    preview_payload = UIManager._build_zlut_preview_payload(
+        {
+            'state': 3,
+            'count': 2,
+            'capacity': 24,
+            'n_steps': 4,
+            'n_beads': 2,
+            'profiles_per_bead': 3,
+            'profile_length': 2,
+            'selected_bead_id': 5,
+            'motor_z_min': 10.0,
+            'motor_z_max': 20.0,
+            'step_indices': np.asarray([0, 1], dtype=np.uint32),
+            'motor_z_values': np.asarray([10.0, 20.0], dtype=np.float64),
+            'profiles': np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64),
+        },
+        z_axis_min_nm=10.0,
+        z_axis_max_nm=40.0,
+        z_axis_descending=False,
+    )
+
+    assert preview_payload['expected_capture_count'] == 12
+    assert preview_payload['image_x_min'] == 5.0
+    assert preview_payload['image_x_max'] == pytest.approx(18.3333333333)
+    np.testing.assert_allclose(
+        preview_payload['preview_image'],
+        np.asarray([[1.0, np.nan, np.nan, 3.0], [2.0, np.nan, np.nan, 4.0]], dtype=np.float64),
+        equal_nan=True,
+    )
+
+
+def test_build_zlut_preview_payload_aligns_descending_partial_capture_right():
+    preview_payload = UIManager._build_zlut_preview_payload(
+        {
+            'state': 3,
+            'count': 2,
+            'capacity': 3,
+            'n_steps': 3,
+            'n_beads': 1,
+            'profiles_per_bead': 1,
+            'profile_length': 2,
+            'selected_bead_id': 5,
+            'motor_z_min': 20.0,
+            'motor_z_max': 30.0,
+            'step_indices': np.asarray([0, 1], dtype=np.uint32),
+            'motor_z_values': np.asarray([30.0, 20.0], dtype=np.float64),
+            'profiles': np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64),
+        },
+        z_axis_min_nm=10.0,
+        z_axis_max_nm=30.0,
+        z_axis_descending=True,
+    )
+
+    assert preview_payload['image_x_min'] == 15.0
+    assert preview_payload['image_x_max'] == 35.0
+    np.testing.assert_allclose(
+        preview_payload['preview_image'],
+        np.asarray([[3.0, 1.0], [4.0, 2.0]], dtype=np.float64),
+    )
+
+
+def test_zlut_generation_dialog_close_discards_during_evaluation(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     discard_calls = []
     dialog.set_close_callback(lambda: discard_calls.append('discard'))
@@ -431,9 +592,8 @@ def test_zlut_generation_dialog_close_discards_during_evaluation(qtbot):
     assert discard_calls == ['discard']
 
 
-def test_zlut_generation_dialog_force_close_skips_discard_callback(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_force_close_skips_discard_callback(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     discard_calls = []
     dialog.set_close_callback(lambda: discard_calls.append('discard'))
@@ -446,9 +606,8 @@ def test_zlut_generation_dialog_force_close_skips_discard_callback(qtbot):
     assert not dialog.isVisible()
 
 
-def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_cancel_hidden_during_evaluation(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
 
@@ -456,9 +615,8 @@ def test_zlut_generation_dialog_cancel_hidden_during_evaluation(qtbot):
     assert dialog.close_button.text() == 'Cancel'
 
 
-def test_zlut_generation_dialog_cannot_close_while_starting(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_cannot_close_while_starting(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     dialog.show()
     dialog.mark_starting()
@@ -468,9 +626,8 @@ def test_zlut_generation_dialog_cannot_close_while_starting(qtbot):
     assert not dialog.close_button.isEnabled()
 
 
-def test_zlut_generation_dialog_enables_save_actions_for_selected_bead(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_enables_save_actions_for_selected_bead(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     dialog.update_evaluation(active=True, bead_ids=[3, 5], selected_bead_id=5)
 
@@ -512,9 +669,8 @@ def test_zlut_generation_panel_disables_generate_during_evaluation(qtbot):
     assert not panel.generate_button.isEnabled()
 
 
-def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_cancel_closes_after_idle_state(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     cancel_calls = []
     dialog.set_cancel_callback(lambda: cancel_calls.append('cancel'))
@@ -531,9 +687,8 @@ def test_zlut_generation_dialog_cancel_closes_after_idle_state(qtbot):
     assert not dialog.isVisible()
 
 
-def test_zlut_generation_dialog_cancel_does_not_close_on_failure_state(qtbot):
-    dialog = ZLUTGenerationDialog()
-    qtbot.addWidget(dialog)
+def test_zlut_generation_dialog_cancel_does_not_close_on_failure_state(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
 
     dialog.set_cancel_callback(lambda: None)
     dialog.show()

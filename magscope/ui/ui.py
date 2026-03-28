@@ -137,6 +137,114 @@ class UIManager(ManagerProcessBase):
         half_step = 0.5 * step_spacing
         return float(z_axis_min_nm - half_step), float(z_axis_max_nm + half_step)
 
+    @staticmethod
+    def _build_zlut_preview_payload(
+        preview_snapshot: dict[str, object],
+        *,
+        z_axis_min_nm: float | None,
+        z_axis_max_nm: float | None,
+        z_axis_descending: bool,
+    ) -> dict[str, object]:
+        state = int(preview_snapshot['state'])
+        n_steps = int(preview_snapshot['n_steps'])
+        profiles_per_bead = int(preview_snapshot['profiles_per_bead'])
+        x_axis_min, x_axis_max = UIManager._zlut_requested_sweep_edges(
+            z_axis_min_nm,
+            z_axis_max_nm,
+            n_steps,
+        )
+
+        preview_image = None
+        image_x_min = None
+        image_x_max = None
+        mode = 'Raw sweep'
+        profiles = np.asarray(preview_snapshot['profiles'], dtype=np.float64)
+
+        if profiles.size > 0:
+            step_indices = np.asarray(preview_snapshot['step_indices'], dtype=np.uint32)
+            selected_motor_z_values = np.asarray(
+                preview_snapshot['motor_z_values'],
+                dtype=np.float64,
+            )
+            if state == ZLUTSweepDataset.STATE_COMPLETE:
+                mode = 'Averaged sweep'
+                unique_steps = np.unique(step_indices)
+                averaged_profiles = []
+                averaged_z_positions = []
+                for step_index in unique_steps:
+                    step_profiles = profiles[step_indices == step_index]
+                    step_motor_z_values = selected_motor_z_values[step_indices == step_index]
+                    if step_profiles.size == 0:
+                        continue
+                    averaged_profiles.append(np.nanmean(step_profiles, axis=0))
+                    averaged_z_positions.append(float(np.nanmean(step_motor_z_values)))
+                if averaged_profiles:
+                    averaged_profiles_array = np.asarray(averaged_profiles, dtype=np.float64)
+                    averaged_z_positions_array = np.asarray(averaged_z_positions, dtype=np.float64)
+                    order = np.argsort(averaged_z_positions_array)
+                    preview_image = averaged_profiles_array[order].T
+                    image_x_min = x_axis_min
+                    image_x_max = x_axis_max
+            else:
+                slot_indices = np.zeros((profiles.shape[0],), dtype=np.int64)
+                per_step_capture_counts: dict[int, int] = {}
+                for row_index, step_index in enumerate(step_indices):
+                    step_index_int = int(step_index)
+                    within_step_index = per_step_capture_counts.get(step_index_int, 0)
+                    per_step_capture_counts[step_index_int] = within_step_index + 1
+                    if z_axis_descending:
+                        step_rank = n_steps - 1 - step_index_int
+                    else:
+                        step_rank = step_index_int
+                    slot_indices[row_index] = step_rank * profiles_per_bead + within_step_index
+
+                sorted_order = np.argsort(slot_indices, kind='stable')
+                sorted_slot_indices = np.asarray(slot_indices[sorted_order], dtype=np.int64)
+                sorted_profiles = np.asarray(profiles[sorted_order], dtype=np.float64)
+                if x_axis_min is not None and x_axis_max is not None and sorted_profiles.shape[0] > 0:
+                    total_slots = n_steps * profiles_per_bead
+                    if total_slots > 0:
+                        slot_width = float(x_axis_max - x_axis_min) / float(total_slots)
+                        min_slot = int(np.min(sorted_slot_indices))
+                        max_slot = int(np.max(sorted_slot_indices))
+                        sparse_width = max_slot - min_slot + 1
+                        preview_image = np.full(
+                            (sorted_profiles.shape[1], sparse_width),
+                            np.nan,
+                            dtype=np.float64,
+                        )
+                        for profile_row, slot_index in zip(
+                            sorted_profiles,
+                            sorted_slot_indices,
+                            strict=False,
+                        ):
+                            preview_image[:, int(slot_index - min_slot)] = profile_row
+                        image_x_min = float(x_axis_min + min_slot * slot_width)
+                        image_x_max = float(x_axis_min + (max_slot + 1) * slot_width)
+                elif sorted_profiles.shape[0] > 0:
+                    preview_image = sorted_profiles.T
+
+        return {
+            'state': state,
+            'count': int(preview_snapshot['count']),
+            'capacity': int(preview_snapshot['capacity']),
+            'n_steps': n_steps,
+            'n_beads': int(preview_snapshot['n_beads']),
+            'profiles_per_bead': profiles_per_bead,
+            'profile_length': int(preview_snapshot['profile_length']),
+            'preview_image': preview_image,
+            'selected_bead_id': preview_snapshot['selected_bead_id'],
+            'mode': mode,
+            'motor_z_min': preview_snapshot['motor_z_min'],
+            'motor_z_max': preview_snapshot['motor_z_max'],
+            'expected_capture_count': n_steps * profiles_per_bead,
+            'x_axis_label': 'Z Position (nm)',
+            'x_axis_min': x_axis_min,
+            'x_axis_max': x_axis_max,
+            'image_x_min': image_x_min,
+            'image_x_max': image_x_max,
+        }
+
     def setup(self):
         self.qt_app = QApplication.instance()
         if not self.qt_app:
@@ -1624,100 +1732,14 @@ class UIManager(ManagerProcessBase):
                 selected_bead_id=self._zlut_evaluation_selected_bead_id,
             )
 
-        selected_bead_id = preview_snapshot['selected_bead_id']
-        preview_image = None
-        mode = 'Raw sweep'
-        expected_capture_count = int(preview_snapshot['n_steps']) * int(preview_snapshot['profiles_per_bead'])
-        x_axis_min, x_axis_max = self._zlut_requested_sweep_edges(
-            self._zlut_generation_z_axis_min_nm,
-            self._zlut_generation_z_axis_max_nm,
-            int(preview_snapshot['n_steps']),
+        preview_payload = self._build_zlut_preview_payload(
+            preview_snapshot,
+            z_axis_min_nm=self._zlut_generation_z_axis_min_nm,
+            z_axis_max_nm=self._zlut_generation_z_axis_max_nm,
+            z_axis_descending=self._zlut_generation_z_axis_descending,
         )
-        image_x_min = None
-        image_x_max = None
-        profiles = np.asarray(preview_snapshot['profiles'], dtype=np.float64)
-        if profiles.size > 0:
-            step_indices = np.asarray(preview_snapshot['step_indices'], dtype=np.uint32)
-            selected_motor_z_values = np.asarray(preview_snapshot['motor_z_values'], dtype=np.float64)
-            if int(preview_snapshot['state']) == ZLUTSweepDataset.STATE_COMPLETE:
-                mode = 'Averaged sweep'
-                unique_steps = np.unique(step_indices)
-                averaged_profiles = []
-                averaged_z_positions = []
-                for step_index in unique_steps:
-                    step_profiles = profiles[step_indices == step_index]
-                    step_motor_z_values = selected_motor_z_values[step_indices == step_index]
-                    if step_profiles.size == 0:
-                        continue
-                    averaged_profiles.append(np.nanmean(step_profiles, axis=0))
-                    averaged_z_positions.append(float(np.nanmean(step_motor_z_values)))
-                if averaged_profiles:
-                    averaged_profiles_array = np.asarray(averaged_profiles, dtype=np.float64)
-                    averaged_z_positions_array = np.asarray(averaged_z_positions, dtype=np.float64)
-                    order = np.argsort(averaged_z_positions_array)
-                    preview_image = averaged_profiles_array[order].T
-                    image_x_min = x_axis_min
-                    image_x_max = x_axis_max
-            else:
-                slot_indices = np.zeros((profiles.shape[0],), dtype=np.int64)
-                per_step_capture_counts: dict[int, int] = {}
-                profiles_per_bead = int(preview_snapshot['profiles_per_bead'])
-                for row_index, step_index in enumerate(step_indices):
-                    step_index_int = int(step_index)
-                    within_step_index = per_step_capture_counts.get(step_index_int, 0)
-                    per_step_capture_counts[step_index_int] = within_step_index + 1
-                    if self._zlut_generation_z_axis_descending:
-                        step_rank = int(preview_snapshot['n_steps']) - 1 - step_index_int
-                    else:
-                        step_rank = step_index_int
-                    slot_indices[row_index] = step_rank * profiles_per_bead + within_step_index
-
-                sorted_order = np.argsort(slot_indices, kind='stable')
-                sorted_slot_indices = np.asarray(slot_indices[sorted_order], dtype=np.int64)
-                sorted_profiles = np.asarray(profiles[sorted_order], dtype=np.float64)
-                if (
-                    x_axis_min is not None
-                    and x_axis_max is not None
-                    and sorted_profiles.shape[0] > 0
-                ):
-                    total_slots = int(preview_snapshot['n_steps']) * profiles_per_bead
-                    if total_slots > 0:
-                        slot_width = float(x_axis_max - x_axis_min) / float(total_slots)
-                        min_slot = int(np.min(sorted_slot_indices))
-                        max_slot = int(np.max(sorted_slot_indices))
-                        sparse_width = max_slot - min_slot + 1
-                        preview_image = np.full(
-                            (sorted_profiles.shape[1], sparse_width),
-                            np.nan,
-                            dtype=np.float64,
-                        )
-                        for profile_row, slot_index in zip(sorted_profiles, sorted_slot_indices, strict=False):
-                            preview_image[:, int(slot_index - min_slot)] = profile_row
-                        image_x_min = float(x_axis_min + min_slot * slot_width)
-                        image_x_max = float(x_axis_min + (max_slot + 1) * slot_width)
-                elif sorted_profiles.shape[0] > 0:
-                    preview_image = sorted_profiles.T
-
-        self._zlut_generation_dialog.preview_widget.update_preview(
-            state=int(preview_snapshot['state']),
-            count=count,
-            capacity=int(preview_snapshot['capacity']),
-            n_steps=int(preview_snapshot['n_steps']),
-            n_beads=int(preview_snapshot['n_beads']),
-            profiles_per_bead=int(preview_snapshot['profiles_per_bead']),
-            profile_length=int(preview_snapshot['profile_length']),
-            preview_image=preview_image,
-            selected_bead_id=selected_bead_id,
-            mode=mode,
-            motor_z_min=preview_snapshot['motor_z_min'],
-            motor_z_max=preview_snapshot['motor_z_max'],
-            expected_capture_count=expected_capture_count,
-            x_axis_label='Z Position (nm)',
-            x_axis_min=x_axis_min,
-            x_axis_max=x_axis_max,
-            image_x_min=image_x_min,
-            image_x_max=image_x_max,
-        )
+        preview_payload['count'] = count
+        self._zlut_generation_dialog.preview_widget.update_preview(**preview_payload)
 
 class LoadingWindow(QMainWindow):
 
