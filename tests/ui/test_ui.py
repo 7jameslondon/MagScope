@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,6 +27,7 @@ from magscope.ipc_commands import (
 )
 from magscope.settings import MagScopeSettings
 from magscope.ui.controls import ZLUTGenerationDialog, ZLUTGenerationPanel, ZLUTSweepPreviewWidget
+from magscope.ui.plots import TracksTimeSeriesPlot
 from magscope.ui.ui import LoadingWindow, UIManager, _StartupReadyWindow
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
@@ -354,6 +356,49 @@ class FakeTracksBuffer:
 
     def peak_unsorted(self):
         return self._data
+
+
+class FakeLine:
+    def __init__(self):
+        self.xdata = None
+        self.ydata = None
+
+    def set_xdata(self, xdata):
+        self.xdata = xdata
+
+    def set_ydata(self, ydata):
+        self.ydata = ydata
+
+
+class FakeAxisDirection:
+    def __init__(self):
+        self.inverted = False
+
+    def set_inverted(self, value: bool) -> None:
+        self.inverted = value
+
+
+class FakeAxes:
+    def __init__(self):
+        self.xaxis = FakeAxisDirection()
+        self.yaxis = FakeAxisDirection()
+        self.xlim = None
+        self.ylim = None
+
+    def autoscale(self) -> None:
+        pass
+
+    def autoscale_view(self) -> None:
+        pass
+
+    def relim(self) -> None:
+        pass
+
+    def set_xlim(self, xmin=None, xmax=None) -> None:
+        self.xlim = (xmin, xmax)
+
+    def set_ylim(self, ymin=None, ymax=None) -> None:
+        self.ylim = (ymin, ymax)
 
 
 class FakeBeadRoiBuffer:
@@ -896,11 +941,11 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     assert fake_viewer.plot_args is None
 
     tracks = np.array([
-        [0, 50.0, 100.0],
-        [1, 100.0, 150.0],
         [2, 300.0, 450.0],
-        [2, 350.0, 500.0],
+        [0, 50.0, 100.0],
         [np.nan, 999.0, 999.0],
+        [2, 350.0, 500.0],
+        [1, 100.0, 150.0],
     ])
     ui_manager.tracks_buffer = FakeTracksBuffer(tracks)
     ui_manager.beads_in_view_on = True
@@ -916,6 +961,38 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     np.testing.assert_allclose(plotted_x, expected_x)
     np.testing.assert_allclose(plotted_y, expected_y)
     assert marker_size == ui_manager.beads_in_view_marker_size
+
+
+def test_tracks_time_series_plot_sorts_unsorted_timestamps_before_plotting():
+    plot = TracksTimeSeriesPlot('X')
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [3.0, 30.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [1.0, 10.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [2.0, 20.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=7,
+        reference_bead=None,
+        limits={},
+        time_mode='absolute',
+        relative_window_seconds=300,
+    )
+
+    plot.update()
+
+    assert plot.line.xdata == [
+        datetime.fromtimestamp(1.0),
+        datetime.fromtimestamp(2.0),
+        datetime.fromtimestamp(3.0),
+    ]
+    np.testing.assert_allclose(plot.line.ydata, np.asarray([10.0, 20.0, 30.0]))
 
 
 def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):

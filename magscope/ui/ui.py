@@ -1333,6 +1333,7 @@ class UIManager(ManagerProcessBase):
 
         # Get latest n timepoints
         tracks = self.tracks_buffer.peak_unsorted()
+        tracks = tracks[np.argsort(tracks[:, 0], kind='stable')]
         t = tracks[:, 0]
         unique_t = np.unique(t)
         top_n_t = unique_t[np.isfinite(unique_t)][-n:]

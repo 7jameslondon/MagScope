@@ -256,6 +256,7 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
 
         # Get data from buffer
         data = self.buffer.peak_unsorted()
+        data = data[np.argsort(data[:, 0], kind='stable')]
         t = data[:, 0]
         b = data[:, 4]
         v = data[:, self.axis_index]
