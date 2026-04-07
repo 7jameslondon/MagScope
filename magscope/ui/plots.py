@@ -58,6 +58,7 @@ class PlotWorker(QObject):
 
         self.time_mode = "absolute"
         self.relative_window_seconds: float | None = 300
+        self._tracks_snapshot: np.ndarray | None = None
 
         # Connect internal signal to slot
         self.limits_signal.connect(self._set_limits)
@@ -126,9 +127,17 @@ class PlotWorker(QObject):
         # Check if we need to recreate the figure
         self._recreate_figure_if_needed()
 
+        self._tracks_snapshot = None
+        for plot in self.plots:
+            if isinstance(plot, TracksTimeSeriesPlot):
+                self._tracks_snapshot = plot.buffer.peak_unsorted()
+                break
+
         # Update plots
         for plot in self.plots:
             plot.update()
+
+        self._tracks_snapshot = None
 
         # Render figure to buffer
         self.canvas.draw()
@@ -255,7 +264,9 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
             ref = None
 
         # Get data from buffer
-        data = self.buffer.peak_unsorted()
+        data = self.parent._tracks_snapshot
+        if data is None:
+            data = self.buffer.peak_unsorted()
         data = data[np.argsort(data[:, 0], kind='stable')]
         t = data[:, 0]
         b = data[:, 4]
