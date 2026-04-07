@@ -44,6 +44,6 @@ needs more complex logic.
 ``[timestamp, current_z, target_z, is_at_target]`` and handles the generic
 ``MoveFocusMotorAbsoluteCommand`` IPC command for you.
 
-See ``examples/simulated_focus_motor/focus_motor.py`` for a complete simulated
+See ``examples/focus/simulated_focus_motor.py`` for a complete simulated
 focus motor that follows this pattern and also drives the simulated camera
 focus when ``DummyCameraBeads`` is active.

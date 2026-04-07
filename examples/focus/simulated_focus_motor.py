@@ -245,8 +245,14 @@ if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
     scope.ui_manager.n_windows = 1
 
+    # Add the motor
     scope.add_hardware(SimulatedFocusMotor())
+
+    # Add a GUI to control the Motor
     scope.add_control(FocusMotorControls, column=0)
+
+    # Add a plot of the motor's position/force
     scope.add_timeplot(FocusMotorPlot())
 
+    # Launch the scope
     scope.start()
