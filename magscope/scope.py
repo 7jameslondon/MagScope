@@ -666,6 +666,12 @@ class MagScope(metaclass=SingletonMeta):
             name='TracksBuffer',
             shape=(self._settings['tracks max datapoints'], 7),
         )
+        logger.info(
+            'Creating %s with shape %s and size %s MB',
+            self.tracks_buffer.name,
+            self.tracks_buffer.shape,
+            self.tracks_buffer.nbytes / 1e6,
+        )
         self.video_buffer = VideoBuffer(
             create=True,
             locks=self.locks,

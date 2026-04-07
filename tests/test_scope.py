@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
@@ -52,15 +53,21 @@ def load_scope_with_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "magscope", package)
 
     class StubLogger:
+        def __init__(self):
+            self.info_calls = []
+            self.warning_calls = []
+
         def info(self, *args, **kwargs):
-            pass
+            self.info_calls.append((args, kwargs))
 
         def warning(self, *args, **kwargs):
-            pass
+            self.warning_calls.append((args, kwargs))
+
+    stub_logger = StubLogger()
 
     logging_module = types.ModuleType("magscope._logging")
     logging_module.configure_logging = lambda *args, **kwargs: None
-    logging_module.get_logger = lambda *args, **kwargs: StubLogger()
+    logging_module.get_logger = lambda *args, **kwargs: stub_logger
     monkeypatch.setitem(sys.modules, "magscope._logging", logging_module)
 
     class StubSingletonMeta(type):
@@ -131,11 +138,14 @@ def load_scope_with_stubs(monkeypatch):
     class StubCamera:
         width = 1
         height = 1
-        dtype = types.SimpleNamespace(bits=8)
+        dtype = np.uint8
 
     class MatrixBuffer:
         def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
+            self.name = kwargs.get("name", type(self).__name__)
+            self.shape = kwargs.get("shape")
+            self.nbytes = 0 if self.shape is None else self.shape[0] * self.shape[1] * 8
 
     class BeadRoiBuffer:
         def __init__(self, *args, **kwargs):
@@ -546,6 +556,24 @@ def test_collect_processes_includes_zlut_generation_manager(scope_module):
     assert 'ZLUTSweepDataset' in scope.lock_names
 
     scope_module.MagScope._reset_singleton_for_testing()
+
+
+def test_create_shared_buffers_logs_tracks_buffer_size(scope_module):
+    scope = make_scope(scope_module)
+    scope._setup_locks()
+    scope_module.logger.info_calls.clear()
+
+    scope._create_shared_buffers()
+
+    assert (
+        (
+            'Creating %s with shape %s and size %s MB',
+            'TracksBuffer',
+            scope.tracks_buffer.shape,
+            scope.tracks_buffer.nbytes / 1e6,
+        ),
+        {},
+    ) in scope_module.logger.info_calls
 
 
 def test_add_hardware_rejects_multiple_focus_motors(scope_module):
