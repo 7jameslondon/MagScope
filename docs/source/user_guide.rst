@@ -101,6 +101,7 @@ You can **remove** a bead by right-clicking the ROI.
 
 Each bead ROI will be assigned an ID number in the corner of the ROI.
 The ID number always increases to prevent mixing up beads.
+``Reassign IDs`` will reset the ID numbers of each bead without removing any ROIs. This is useful for when ROIs have been manually removed, leaving gaps in ID numbers that reassigning can fill in.
 
 To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
 
