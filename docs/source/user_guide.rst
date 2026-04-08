@@ -229,6 +229,12 @@ It also provides basic information about the current Z-LUT.
    :alt: The Z-LUT selection panel
    :align: center
 
+Z-LUT Generation
+----------------
+You can generate a Z-LUT using a focus motor. A simulated focus motor can be found in the examples folder.
+Select a bead ROI, then input the target start, step, and stop focus positions, as well as how many measurements should be taken at each step and take the average of.
+Clicking generate opens a dialog window that shows a preview of the raw sweep as the Z-LUT is created. After finishing, it can then be saved as a .txt file
+
 XY-Lock
 -------
 **Once:** Keeping your beads in the center of the ROI improves tracking accuracy.
