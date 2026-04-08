@@ -85,7 +85,7 @@ The interface can be reset to the default arrangement by clicking the "Reset the
 
 Bead Selection
 --------------
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v2.gif
    :alt: Demonstration of beads being added, moved and removed
    :align: center
 
@@ -118,15 +118,16 @@ See the :doc:`connect_hardware` guide for details.
    :align: center
 
 You can set limits on any axis using the min and max limits in the "Plot Settings" panel.
-By default the min and max values are automatically calculated. Times should be specified with a 24-hour clock.
+By default the min and max values are automatically calculated. The default time axis setting is ``Absolute`` times which are specified with a 24-hour clock.
 Such as "14:20:45" for 14 hours, 20 minutes, and 45 seconds. Or "14.12.45" will work the same. Or "14" for 14 hours, 0 minutes, and 0 seconds.
+The alternative ``Relative`` time mode uses the same 24-hour clock and displays the most recent data for the specified interval. For example "00.05.00" will plot the last 5 minutes of data.
 
-You can control which bead is plotted and which bead is selected with the "Plot Settings" panel.
+You can control which bead is selected and plotted within the "Plot Settings" panel.
 You can also set a reference bead who values will be subtracted from the other beads.
-Changing the plot setting does not affect how any of the data is saved.
-The raw tracks are always saved.
+Changing the plot settings does not affect how any of the data is saved.
+The raw tracking data is always saved.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plot_Settings_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plot_Settings_Panel_v2.jpg
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
@@ -134,7 +135,7 @@ The selected bead's ROI will be highlighted in red.
 The reference bead's ROI will be highlighted in green.
 All other bead ROIs will be highlighted in blue.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selected_Bead_for_Plot_Setting_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selected_Bead_for_Plot_Setting_Panel_v2.jpg
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
@@ -180,7 +181,7 @@ Acquisition (Saving Data)
 -------------------------
 The "Acquire" checkbox enables data processing in general.
 If this is disabled no video will be sent for processing.
-These is almost never a reason to disable this.
+There is almost never a reason to disable this.
 
 The "Save" checkbox enabled saving data to the disk.
 The data will be saved to the directory selected with the "Select Directory to Save To" button.
