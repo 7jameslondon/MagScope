@@ -182,6 +182,12 @@ def decode_warning_mask(mask: int) -> list[str]:
 
 
 def parse_firmware_version(version: object) -> tuple[int, int, int]:
+    if all(hasattr(version, attr) for attr in ("major", "minor", "build")):
+        try:
+            return int(version.major), int(version.minor), int(version.build)
+        except (TypeError, ValueError):
+            pass
+
     text = str(version)
     parts = text.split(".")
     numbers = []
