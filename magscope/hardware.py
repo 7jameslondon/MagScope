@@ -66,8 +66,8 @@ class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
     is encoded as ``0.0`` or ``1.0``.
     """
 
-    # 1 nm is a typical settling tolerance for this class of focus hardware.
-    at_target_tolerance = 1
+    # 10 nm is a typical settling tolerance for this class of focus hardware.
+    at_target_tolerance = 10
 
     def __init__(self):
         super().__init__()

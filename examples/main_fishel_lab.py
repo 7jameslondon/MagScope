@@ -13,6 +13,7 @@ import magscope
 from cameras.camera_egrabber import EGrabberCamera
 from motors.zaber_lsq import ZaberLsqMotor, ZaberLsqControls, ZaberLsqPositionPlot
 from motors.zaber_nms import ZaberNmsMotor, ZaberNmsControls, ZaberNmsPositionPlot
+from focus.pi_e709 import PiE709FocusMotor, PiE709Controls, PiE709FocusPlot
 
 if __name__ == "__main__":
     scope = magscope.MagScope()
@@ -29,5 +30,10 @@ if __name__ == "__main__":
     scope.add_hardware(ZaberNmsMotor())
     scope.add_control(ZaberNmsControls, column=3)
     scope.add_timeplot(ZaberNmsPositionPlot())
+
+    # Fishel Lab PI E709 Focus (Objective Focus)
+    scope.add_hardware(PiE709FocusMotor())
+    scope.add_control(PiE709Controls, column=3)
+    scope.add_timeplot(PiE709FocusPlot())
 
     scope.start()
