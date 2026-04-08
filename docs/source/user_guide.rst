@@ -15,7 +15,7 @@ MagScope includes a simulated camera so the interface can be explored without la
 
 This creates the default window layout and begins streaming data from the built-in demo pipeline.
 
-You can only launch MagScope once. Test
+You can only launch MagScope once.
 After launching it if you want to start again you must close it and delete the instance (delete ``scope`` in the example).
 
 To close MagScope you can close any of the windows, you might need to wait up to a couple of minutes for it to finish.
