@@ -91,10 +91,11 @@ Bead Selection
 
 Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
 To **add** a bead ROI click on the live video feed. A bead ROI will be created centered on your cursor.
-You can **move** the ROI by dragging the ROI.
+The first ROI added is automatically highlighted as the selected bead, click on an existing ROI to select a different bead.
+To **move** a bead ROI, first select it by clicking then dragging the ROI.
 You can **remove** a bead by right-clicking the ROI.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v2.jpg
    :alt: The bead selection panel
    :align: center
 
@@ -104,11 +105,6 @@ The ID number always increases to prevent mixing up beads.
 To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
 
 You can also click ``Auto Bead Selection`` to freeze one recent live image, choose a seed bead, and preview matching bead ROIs before adding them. The dialog shows the frozen image, the current bead ROIs, a score threshold control for the proposed matches, and the match score next to each proposed ROI. Click ``Accept Proposed Beads`` to add the visible proposals through the normal bead creation path, or ``Cancel`` to leave the confirmed bead list unchanged.
-
-During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
-You can do this by click the 🔓 button on the "Bead Selection" panel.
-This will only affect user interactions (it will not effect the XY-Lock).
-You can click the button again to unlock.
 
 Live Plots
 ----------
