@@ -10,15 +10,12 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QDoubleValidator
 from PyQt6.QtWidgets import (
     QDialog,
-    QDoubleSpinBox,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QSpacerItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -36,17 +33,18 @@ from zaber_motion.ascii.warning_flags import WarningFlags
 from zaber_motion.dto.ascii.device_identity import DeviceIdentity
 
 
-EXPECTED_MODEL = "X-LSQ075A-E01"
-POSITION_UNIT = Units.LENGTH_MILLIMETRES
-VELOCITY_UNIT = Units.VELOCITY_MILLIMETRES_PER_SECOND
+EXPECTED_MODEL = "X-NMS17-E01"
+POSITION_UNIT = Units.ANGLE_DEGREES
+VELOCITY_UNIT = Units.ANGULAR_VELOCITY_DEGREES_PER_SECOND
 FETCH_INTERVAL_S = 0.05
 DEFAULT_POSITION_UI_MAX = 1_000_000.0
 DEFAULT_SPEED_UI_MAX = 1_000_000.0
+DEGREES_PER_TURN = 360.0
 
 WARNING_FLAG_NAMES = sorted(name for name in dir(WarningFlags) if name.isupper())
 WARNING_FLAG_INDEX = {name: index for index, name in enumerate(WARNING_FLAG_NAMES)}
 
-BUFFER_NAME = "ZaberLsqMotor"
+BUFFER_NAME = "ZaberNmsMotor"
 
 COL_TIMESTAMP = 0
 COL_POSITION = 1
@@ -63,7 +61,7 @@ COL_DEVICE_ID = 11
 COL_AXIS_COUNT = 12
 COL_AXIS_NUMBER = 13
 COL_DEVICE_ADDRESS = 14
-COL_THEORETICAL_RESOLUTION_MM = 15
+COL_THEORETICAL_RESOLUTION_TURNS = 15
 COL_PORT_NUMBER = 16
 COL_FIRMWARE_MAJOR = 17
 COL_FIRMWARE_MINOR = 18
@@ -100,55 +98,61 @@ STOP_BUTTON_STYLE = (
     "QPushButton:pressed { background: #61393f; }"
 )
 
+
 @dataclass(frozen=True)
-class ConnectZaberLsqCommand(Command):
+class ConnectZaberNmsCommand(Command):
     pass
 
 
 @dataclass(frozen=True)
-class DisconnectZaberLsqCommand(Command):
+class DisconnectZaberNmsCommand(Command):
     pass
 
 
 @dataclass(frozen=True)
-class HomeZaberLsqCommand(Command):
+class HomeZaberNmsCommand(Command):
     pass
 
 
 @dataclass(frozen=True)
-class StopZaberLsqCommand(Command):
+class StopZaberNmsCommand(Command):
     pass
 
 
 @dataclass(frozen=True)
-class MoveZaberLsqAbsoluteCommand(Command):
-    target_mm: float | None = None
-    speed_mm_s: float | None = None
+class MoveZaberNmsAbsoluteCommand(Command):
+    target_turns: float | None = None
+    speed_turns_s: float | None = None
 
 
 @dataclass(frozen=True)
-class JogZaberLsqRelativeCommand(Command):
-    delta_mm: float | None = None
-    speed_mm_s: float | None = None
+class JogZaberNmsRelativeCommand(Command):
+    delta_turns: float | None = None
+    speed_turns_s: float | None = None
 
 
 @dataclass(frozen=True)
-class MoveZaberLsqMinCommand(Command):
-    speed_mm_s: float | None = None
+class MoveZaberNmsMinCommand(Command):
+    speed_turns_s: float | None = None
 
 
 @dataclass(frozen=True)
-class MoveZaberLsqMaxCommand(Command):
-    speed_mm_s: float | None = None
+class MoveZaberNmsMaxCommand(Command):
+    speed_turns_s: float | None = None
 
 
 @dataclass(frozen=True)
-class SetZaberLsqMaxLimitCommand(Command):
-    limit_mm: float | None = None
+class SetZaberNmsMaxLimitCommand(Command):
+    limit_turns: float | None = None
 
 
 @dataclass(frozen=True)
-class UseDefaultZaberLsqMaxLimitCommand(Command):
+class UseDefaultZaberNmsMaxLimitCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
+class ZeroZaberNmsPositionCommand(Command):
     pass
 
 
@@ -201,25 +205,6 @@ def parse_firmware_version(version: object) -> tuple[int, int, int]:
     return numbers[0], numbers[1], numbers[2]
 
 
-def make_card(title: str) -> tuple[QGroupBox, QGridLayout]:
-    card = QGroupBox(title)
-    layout = QGridLayout()
-    layout.setHorizontalSpacing(12)
-    layout.setVerticalSpacing(10)
-    card.setLayout(layout)
-    return card, layout
-
-
-def make_spin(value: float, minimum: float, maximum: float, suffix: str) -> QDoubleSpinBox:
-    spin = QDoubleSpinBox()
-    spin.setDecimals(3)
-    spin.setRange(minimum, maximum)
-    spin.setValue(value)
-    spin.setSuffix(suffix)
-    spin.setSingleStep(0.1 if maximum > 1 else 0.01)
-    return spin
-
-
 def make_numeric_lineedit(text: str, validator: QDoubleValidator) -> QLineEdit:
     lineedit = QLineEdit(text)
     lineedit.setValidator(validator)
@@ -232,7 +217,15 @@ def clamp_button_to_text(button: QPushButton, *, extra_width: int = 16) -> None:
     button.setFixedWidth(text_width + extra_width)
 
 
-class ZaberLsqMotor(HardwareManagerBase):
+def turns_to_degrees(value: float) -> float:
+    return value * DEGREES_PER_TURN
+
+
+def degrees_to_turns(value: float) -> float:
+    return value / DEGREES_PER_TURN
+
+
+class ZaberNmsMotor(HardwareManagerBase):
     position_min_max = (0.0, DEFAULT_POSITION_UI_MAX)
     speed_min_max = (0.001, DEFAULT_SPEED_UI_MAX)
 
@@ -245,21 +238,21 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._axis: Axis | None = None
         self._identity: DeviceIdentity | None = None
         self._port_name: str | None = None
-        self._target_mm = np.nan
-        self._speed_mm_s = 1.0
+        self._target_turns = np.nan
+        self._speed_turns_s = 1.0
         self._last_fetch = 0.0
         self._command_error = COMMAND_ERROR_NONE
         self._last_state: tuple[float, ...] | None = None
 
-        self._limit_max_mm = np.nan
-        self._speed_max_mm_s = np.nan
+        self._limit_max_turns = np.nan
+        self._speed_max_turns_s = np.nan
         self._warning_mask = 0
         self._serial = np.nan
         self._device_id = np.nan
         self._axis_count = np.nan
         self._axis_number = np.nan
         self._device_address = np.nan
-        self._theoretical_resolution_mm = np.nan
+        self._theoretical_resolution_turns = np.nan
         self._port_number = np.nan
         self._firmware_major = np.nan
         self._firmware_minor = np.nan
@@ -288,7 +281,8 @@ class ZaberLsqMotor(HardwareManagerBase):
                         self._is_connected = True
                         self._command_error = COMMAND_ERROR_NONE
                         self._refresh_metadata()
-                        self._target_mm = float(self._axis.get_position(POSITION_UNIT))
+                        current_degrees = float(self._axis.get_position(POSITION_UNIT))
+                        self._target_turns = degrees_to_turns(current_degrees)
                         return
                 connection.close()
             except MotionLibException:
@@ -312,7 +306,7 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._identity = None
         self._port_name = None
         self._is_connected = False
-        self._target_mm = np.nan
+        self._target_turns = np.nan
         self._warning_mask = 0
         self._reset_metadata()
 
@@ -335,10 +329,11 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._last_fetch = now
 
         try:
-            if np.isnan(self._target_mm):
-                self._target_mm = float(self._axis.get_position(POSITION_UNIT))
+            if np.isnan(self._target_turns):
+                self._target_turns = degrees_to_turns(float(self._axis.get_position(POSITION_UNIT)))
             self._refresh_metadata()
-            self._command_error = COMMAND_ERROR_NONE if self._command_error == COMMAND_ERROR_POLL else self._command_error
+            if self._command_error == COMMAND_ERROR_POLL:
+                self._command_error = COMMAND_ERROR_NONE
         except MotionLibException:
             self._command_error = COMMAND_ERROR_POLL
         finally:
@@ -348,18 +343,20 @@ class ZaberLsqMotor(HardwareManagerBase):
         if self._axis is None or self._identity is None or self._port_name is None:
             return
 
-        self._limit_max_mm = float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT))
-        self._speed_max_mm_s = float(self._axis.settings.get(SettingConstants.MAXSPEED_MAX, VELOCITY_UNIT))
+        limit_max_degrees = float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT))
+        speed_max_degrees_s = float(self._axis.settings.get(SettingConstants.MAXSPEED_MAX, VELOCITY_UNIT))
         warning_flags = self._axis.warnings.get_flags() | self._axis.device.warnings.get_flags()
-        self._warning_mask = encode_warning_mask(warning_flags)
 
+        self._limit_max_turns = degrees_to_turns(limit_max_degrees)
+        self._speed_max_turns_s = degrees_to_turns(speed_max_degrees_s)
+        self._warning_mask = encode_warning_mask(warning_flags)
         self._serial = float(self._identity.serial_number)
         self._device_id = float(self._identity.device_id)
         self._axis_count = float(self._identity.axis_count)
         self._axis_number = float(self._axis.axis_number)
         self._device_address = float(self._axis.device.device_address)
-        descriptor = self._axis.settings.get_unit_conversion_descriptor("pos")
-        self._theoretical_resolution_mm = 1000.0 / (descriptor.scale * descriptor.resolution)
+        one_native_step_degrees = float(self._axis.settings.convert_from_native_units("pos", 1.0, POSITION_UNIT))
+        self._theoretical_resolution_turns = degrees_to_turns(one_native_step_degrees)
         self._port_number = float(int(self._port_name[3:]))
         firmware_major, firmware_minor, firmware_build = parse_firmware_version(self._identity.firmware_version)
         self._firmware_major = float(firmware_major)
@@ -367,14 +364,14 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._firmware_build = float(firmware_build)
 
     def _reset_metadata(self) -> None:
-        self._limit_max_mm = np.nan
-        self._speed_max_mm_s = np.nan
+        self._limit_max_turns = np.nan
+        self._speed_max_turns_s = np.nan
         self._serial = np.nan
         self._device_id = np.nan
         self._axis_count = np.nan
         self._axis_number = np.nan
         self._device_address = np.nan
-        self._theoretical_resolution_mm = np.nan
+        self._theoretical_resolution_turns = np.nan
         self._port_number = np.nan
         self._firmware_major = np.nan
         self._firmware_minor = np.nan
@@ -387,27 +384,27 @@ class ZaberLsqMotor(HardwareManagerBase):
         timestamp = time()
         if self._is_connected and self._axis is not None:
             try:
-                position_mm = float(self._axis.get_position(POSITION_UNIT))
+                position_turns = degrees_to_turns(float(self._axis.get_position(POSITION_UNIT)))
                 busy = float(self._axis.is_busy())
                 homed = float(self._axis.is_homed())
             except MotionLibException:
-                position_mm = np.nan
+                position_turns = np.nan
                 busy = 0.0
                 homed = 0.0
         else:
-            position_mm = np.nan
+            position_turns = np.nan
             busy = 0.0
             homed = 0.0
 
         row_values = (
             timestamp,
-            position_mm,
-            self._target_mm,
-            self._speed_mm_s,
+            position_turns,
+            self._target_turns,
+            self._speed_turns_s,
             busy,
             homed,
-            self._limit_max_mm,
-            self._speed_max_mm_s,
+            self._limit_max_turns,
+            self._speed_max_turns_s,
             float(self._warning_mask),
             float(self._is_connected),
             self._serial,
@@ -415,13 +412,14 @@ class ZaberLsqMotor(HardwareManagerBase):
             self._axis_count,
             self._axis_number,
             self._device_address,
-            self._theoretical_resolution_mm,
+            self._theoretical_resolution_turns,
             self._port_number,
             self._firmware_major,
             self._firmware_minor,
             self._firmware_build,
             float(self._command_error),
         )
+
         if not force and self._last_state == row_values:
             return
 
@@ -429,28 +427,17 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._buffer.write(row)
         self._last_state = row_values
 
-    @register_ipc_command(ConnectZaberLsqCommand)
+    @register_ipc_command(ConnectZaberNmsCommand)
     def handle_connect(self) -> None:
         self.connect()
         self._write_state(force=True)
 
-    @register_ipc_command(DisconnectZaberLsqCommand)
+    @register_ipc_command(DisconnectZaberNmsCommand)
     def handle_disconnect(self) -> None:
         self.disconnect()
         self._write_state(force=True)
 
-    @register_ipc_command(HomeZaberLsqCommand)
-    def handle_home(self) -> None:
-        if self._axis is None:
-            return
-        try:
-            self._axis.home(wait_until_idle=False)
-            self._command_error = COMMAND_ERROR_NONE
-        except MotionLibException:
-            self._command_error = COMMAND_ERROR_HOME
-        self._write_state(force=True)
-
-    @register_ipc_command(StopZaberLsqCommand)
+    @register_ipc_command(StopZaberNmsCommand)
     def handle_stop(self) -> None:
         if self._axis is None:
             return
@@ -461,19 +448,19 @@ class ZaberLsqMotor(HardwareManagerBase):
             self._command_error = COMMAND_ERROR_STOP
         self._write_state(force=True)
 
-    @register_ipc_command(MoveZaberLsqAbsoluteCommand)
-    def handle_move_absolute(self, target_mm: float | None = None, speed_mm_s: float | None = None) -> None:
-        if self._axis is None or target_mm is None:
+    @register_ipc_command(MoveZaberNmsAbsoluteCommand)
+    def handle_move_absolute(self, target_turns: float | None = None, speed_turns_s: float | None = None) -> None:
+        if self._axis is None or target_turns is None:
             return
         try:
-            clipped_speed = None if speed_mm_s is None else float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
-            self._target_mm = float(np.clip(target_mm, 0.0, self._limit_max_mm))
-            self._speed_mm_s = clipped_speed if clipped_speed is not None else self._speed_mm_s
+            clipped_speed_turns = None if speed_turns_s is None else float(np.clip(speed_turns_s, 0.001, self._speed_max_turns_s))
+            self._target_turns = float(np.clip(target_turns, 0.0, self._limit_max_turns))
+            self._speed_turns_s = clipped_speed_turns if clipped_speed_turns is not None else self._speed_turns_s
             self._axis.move_absolute(
-                self._target_mm,
+                turns_to_degrees(self._target_turns),
                 POSITION_UNIT,
                 wait_until_idle=False,
-                velocity=self._speed_mm_s,
+                velocity=turns_to_degrees(self._speed_turns_s),
                 velocity_unit=VELOCITY_UNIT,
             )
             self._command_error = COMMAND_ERROR_NONE
@@ -481,20 +468,20 @@ class ZaberLsqMotor(HardwareManagerBase):
             self._command_error = COMMAND_ERROR_MOVE
         self._write_state(force=True)
 
-    @register_ipc_command(JogZaberLsqRelativeCommand)
-    def handle_jog_relative(self, delta_mm: float | None = None, speed_mm_s: float | None = None) -> None:
-        if self._axis is None or delta_mm is None:
+    @register_ipc_command(JogZaberNmsRelativeCommand)
+    def handle_jog_relative(self, delta_turns: float | None = None, speed_turns_s: float | None = None) -> None:
+        if self._axis is None or delta_turns is None:
             return
         try:
-            clipped_speed = None if speed_mm_s is None else float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
-            current_position = float(self._axis.get_position(POSITION_UNIT))
-            self._target_mm = float(np.clip(current_position + delta_mm, 0.0, self._limit_max_mm))
-            self._speed_mm_s = clipped_speed if clipped_speed is not None else self._speed_mm_s
+            clipped_speed_turns = None if speed_turns_s is None else float(np.clip(speed_turns_s, 0.001, self._speed_max_turns_s))
+            current_turns = degrees_to_turns(float(self._axis.get_position(POSITION_UNIT)))
+            self._target_turns = float(np.clip(current_turns + delta_turns, 0.0, self._limit_max_turns))
+            self._speed_turns_s = clipped_speed_turns if clipped_speed_turns is not None else self._speed_turns_s
             self._axis.move_relative(
-                delta_mm,
+                turns_to_degrees(delta_turns),
                 POSITION_UNIT,
                 wait_until_idle=False,
-                velocity=self._speed_mm_s,
+                velocity=turns_to_degrees(self._speed_turns_s),
                 velocity_unit=VELOCITY_UNIT,
             )
             self._command_error = COMMAND_ERROR_NONE
@@ -502,55 +489,40 @@ class ZaberLsqMotor(HardwareManagerBase):
             self._command_error = COMMAND_ERROR_JOG
         self._write_state(force=True)
 
-    @register_ipc_command(MoveZaberLsqMinCommand)
-    def handle_move_min(self, speed_mm_s: float | None = None) -> None:
-        if self._axis is None:
+    @register_ipc_command(SetZaberNmsMaxLimitCommand)
+    def handle_set_max_limit(self, limit_turns: float | None = None) -> None:
+        if self._axis is None or limit_turns is None:
             return
         try:
-            clipped_speed = None if speed_mm_s is None else float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
-            self._target_mm = 0.0
-            self._speed_mm_s = clipped_speed if clipped_speed is not None else self._speed_mm_s
-            self._axis.move_min(wait_until_idle=False, velocity=self._speed_mm_s, velocity_unit=VELOCITY_UNIT)
-            self._command_error = COMMAND_ERROR_NONE
-        except MotionLibException:
-            self._command_error = COMMAND_ERROR_MOVE_MIN
-        self._write_state(force=True)
-
-    @register_ipc_command(MoveZaberLsqMaxCommand)
-    def handle_move_max(self, speed_mm_s: float | None = None) -> None:
-        if self._axis is None:
-            return
-        try:
-            clipped_speed = None if speed_mm_s is None else float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
-            self._target_mm = self._limit_max_mm
-            self._speed_mm_s = clipped_speed if clipped_speed is not None else self._speed_mm_s
-            self._axis.move_max(wait_until_idle=False, velocity=self._speed_mm_s, velocity_unit=VELOCITY_UNIT)
-            self._command_error = COMMAND_ERROR_NONE
-        except MotionLibException:
-            self._command_error = COMMAND_ERROR_MOVE_MAX
-        self._write_state(force=True)
-
-    @register_ipc_command(SetZaberLsqMaxLimitCommand)
-    def handle_set_max_limit(self, limit_mm: float | None = None) -> None:
-        if self._axis is None or limit_mm is None:
-            return
-        try:
-            self._axis.settings.set(SettingConstants.LIMIT_MAX, float(limit_mm), POSITION_UNIT)
-            self._limit_max_mm = float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT))
+            self._axis.settings.set(SettingConstants.LIMIT_MAX, turns_to_degrees(limit_turns), POSITION_UNIT)
+            self._limit_max_turns = degrees_to_turns(float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT)))
             self._command_error = COMMAND_ERROR_NONE
         except MotionLibException:
             self._command_error = COMMAND_ERROR_SET_LIMIT
         self._write_state(force=True)
 
-    @register_ipc_command(UseDefaultZaberLsqMaxLimitCommand)
+    @register_ipc_command(UseDefaultZaberNmsMaxLimitCommand)
     def handle_use_default_max_limit(self) -> None:
         if self._axis is None:
             return
         try:
-            default_limit = float(self._axis.settings.get_default(SettingConstants.LIMIT_MAX, POSITION_UNIT))
-            self._axis.settings.set(SettingConstants.LIMIT_MAX, default_limit, POSITION_UNIT)
-            self._limit_max_mm = float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT))
+            default_limit_degrees = float(self._axis.settings.get_default(SettingConstants.LIMIT_MAX, POSITION_UNIT))
+            self._axis.settings.set(SettingConstants.LIMIT_MAX, default_limit_degrees, POSITION_UNIT)
+            self._limit_max_turns = degrees_to_turns(float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT)))
             self._command_error = COMMAND_ERROR_NONE
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_SET_LIMIT
+        self._write_state(force=True)
+
+    @register_ipc_command(ZeroZaberNmsPositionCommand)
+    def handle_zero_position(self) -> None:
+        if self._axis is None:
+            return
+        try:
+            self._axis.settings.set("pos", 0.0, POSITION_UNIT)
+            self._target_turns = 0.0
+            self._command_error = COMMAND_ERROR_NONE
+            self._refresh_metadata()
         except MotionLibException:
             self._command_error = COMMAND_ERROR_SET_LIMIT
         self._write_state(force=True)
@@ -600,7 +572,7 @@ class DeviceInfoDialog(QDialog):
         axis.addWidget(QLabel(f"{int(latest_row[COL_AXIS_NUMBER])}" if not np.isnan(latest_row[COL_AXIS_NUMBER]) else "-"), 2, 1)
         axis.addWidget(QLabel("Theoretical Resolution"), 3, 0)
         axis.addWidget(
-            QLabel(f"{latest_row[COL_THEORETICAL_RESOLUTION_MM]:.9f} mm" if not np.isnan(latest_row[COL_THEORETICAL_RESOLUTION_MM]) else "-"),
+            QLabel(f"{latest_row[COL_THEORETICAL_RESOLUTION_TURNS]:.9f} turns" if not np.isnan(latest_row[COL_THEORETICAL_RESOLUTION_TURNS]) else "-"),
             3,
             1,
         )
@@ -620,39 +592,18 @@ class AdvancedControlsDialog(QDialog):
         self.setWindowTitle("Advanced Controls")
         self.setModal(True)
 
-        max_limit_value = 0.0 if np.isnan(latest_row[COL_LIMIT_MAX]) else float(latest_row[COL_LIMIT_MAX])
-        max_limit_max = max(max_limit_value, 1.0)
-
-        self.max_limit_validator = QDoubleValidator(0.0, max_limit_max, 3, self)
-        self.max_limit_input = make_numeric_lineedit(f"{max_limit_value:.3f}", self.max_limit_validator)
-
-        set_button = QPushButton("Set")
-        set_button.clicked.connect(self._send_set)
-        default_button = QPushButton("Default")
-        default_button.clicked.connect(self._send_default)
+        zero_button = QPushButton("Zero Position")
+        zero_button.clicked.connect(self._send_zero_position)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
 
         layout = QGridLayout()
-        layout.addWidget(QLabel("Max Limit"), 0, 0)
-        layout.addWidget(self.max_limit_input, 0, 1)
-        layout.addWidget(set_button, 0, 2)
-        layout.addWidget(default_button, 0, 3)
-        layout.addWidget(close_button, 1, 3)
+        layout.addWidget(zero_button, 0, 0, 1, 2)
+        layout.addWidget(close_button, 1, 1)
         self.setLayout(layout)
 
-    def _send_set(self) -> None:
-        text = self.max_limit_input.text().strip()
-        if not text:
-            return
-        try:
-            limit_mm = float(text)
-        except ValueError:
-            return
-        self.manager.send_ipc(SetZaberLsqMaxLimitCommand(limit_mm=limit_mm))
-
-    def _send_default(self) -> None:
-        self.manager.send_ipc(UseDefaultZaberLsqMaxLimitCommand())
+    def _send_zero_position(self) -> None:
+        self.manager.send_ipc(ZeroZaberNmsPositionCommand())
 
 
 class WarningDetailsDialog(QDialog):
@@ -674,9 +625,9 @@ class WarningDetailsDialog(QDialog):
         self.setLayout(layout)
 
 
-class ZaberLsqControls(magscope.ControlPanelBase):
+class ZaberNmsControls(magscope.ControlPanelBase):
     def __init__(self, manager: magscope.UIManager):
-        super().__init__(title="Zaber LSQ (Linear Magnet Motor)", manager=manager)
+        super().__init__(title="Zaber NMS (Rotary Magnet Motor)", manager=manager)
 
         self._buffer = MatrixBuffer(create=False, locks=self.manager.locks, name=BUFFER_NAME)
         self.active_warning_lines: list[str] = []
@@ -708,13 +659,11 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         self.homed_value.setFixedWidth(35)
 
         self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(lambda: self.manager.send_ipc(ConnectZaberLsqCommand()))
+        self.connect_button.clicked.connect(lambda: self.manager.send_ipc(ConnectZaberNmsCommand()))
         self.disconnect_button = QPushButton("Disconnect")
-        self.disconnect_button.clicked.connect(lambda: self.manager.send_ipc(DisconnectZaberLsqCommand()))
-        self.home_button = QPushButton("Home")
-        self.home_button.clicked.connect(lambda: self.manager.send_ipc(HomeZaberLsqCommand()))
+        self.disconnect_button.clicked.connect(lambda: self.manager.send_ipc(DisconnectZaberNmsCommand()))
         self.stop_button = QPushButton("Stop")
-        self.stop_button.clicked.connect(lambda: self.manager.send_ipc(StopZaberLsqCommand()))
+        self.stop_button.clicked.connect(lambda: self.manager.send_ipc(StopZaberNmsCommand()))
         self.stop_button.setStyleSheet(STOP_BUTTON_STYLE)
         self.device_info_button = QPushButton("Info")
         self.device_info_button.clicked.connect(self.show_device_info)
@@ -729,7 +678,7 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         self.jog_step_input = make_numeric_lineedit("1.000", self.jog_step_validator)
         self.speed_input = make_numeric_lineedit("1.000", self.speed_validator)
         self.move_to_input = make_numeric_lineedit("0.000", self.move_to_validator)
-        self.motion_limits_value = QLabel()
+        self.max_speed_value = QLabel()
         self.update_limit_labels()
 
         self.jog_minus_button = QPushButton("-")
@@ -738,17 +687,10 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         self.jog_plus_button.clicked.connect(lambda: self.send_jog(1.0))
         self.move_to_button = QPushButton("Move")
         self.move_to_button.clicked.connect(self.send_move_to)
-        self.go_to_min_button = QPushButton("Min")
-        self.go_to_min_button.clicked.connect(self.send_move_min)
-        self.go_to_max_button = QPushButton("Max")
-        self.go_to_max_button.clicked.connect(self.send_move_max)
 
         clamp_button_to_text(self.stop_button)
-        clamp_button_to_text(self.home_button)
         clamp_button_to_text(self.device_info_button)
         clamp_button_to_text(self.advanced_controls_button)
-        clamp_button_to_text(self.go_to_min_button)
-        clamp_button_to_text(self.go_to_max_button)
 
         outer = self.layout()
 
@@ -805,19 +747,13 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         motion.addWidget(QLabel("Move"), 0, 0)
         motion.addWidget(self.move_to_input, 0, 1)
         motion.addWidget(self.move_to_button, 0, 2)
-        min_max_buttons = QHBoxLayout()
-        min_max_buttons.setContentsMargins(0, 0, 0, 0)
-        min_max_buttons.setSpacing(4)
-        min_max_buttons.addWidget(self.go_to_min_button)
-        min_max_buttons.addWidget(self.go_to_max_button)
-        motion.addLayout(min_max_buttons, 0, 3)
         motion.addWidget(QLabel("Jog"), 1, 0)
         motion.addWidget(self.jog_step_input, 1, 1)
         motion.addWidget(self.jog_minus_button, 1, 2)
         motion.addWidget(self.jog_plus_button, 1, 3)
         motion.addWidget(QLabel("Speed"), 2, 0)
         motion.addWidget(self.speed_input, 2, 1)
-        motion.addWidget(self.motion_limits_value, 3, 0, 1, 4)
+        motion.addWidget(self.max_speed_value, 3, 0, 1, 4)
         outer.addLayout(motion)
 
         motion_divider = QFrame()
@@ -827,7 +763,6 @@ class ZaberLsqControls(magscope.ControlPanelBase):
 
         footer = QHBoxLayout()
         footer.addWidget(self.stop_button)
-        footer.addWidget(self.home_button)
         footer.addStretch(1)
         footer.addWidget(self.device_info_button)
         footer.addWidget(self.advanced_controls_button)
@@ -853,7 +788,7 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         connected = bool(round(latest[COL_CONNECTED])) if np.isfinite(latest[COL_CONNECTED]) else False
         busy = bool(round(latest[COL_BUSY])) if np.isfinite(latest[COL_BUSY]) else False
         homed = bool(round(latest[COL_HOMED])) if np.isfinite(latest[COL_HOMED]) else False
-        position_text = "-" if np.isnan(latest[COL_POSITION]) else f"{latest[COL_POSITION]:.3f} mm"
+        position_text = "-" if np.isnan(latest[COL_POSITION]) else f"{latest[COL_POSITION]:.3f} turns"
 
         self.position_value.setText(position_text)
         self.busy_value.setText("Yes" if busy else "No")
@@ -864,15 +799,12 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         self.update_warning_state(latest, homed)
 
         self.disconnect_button.setEnabled(connected)
-        self.home_button.setEnabled(connected)
         self.stop_button.setEnabled(connected)
         self.device_info_button.setEnabled(connected)
         self.advanced_controls_button.setEnabled(connected)
         self.jog_minus_button.setEnabled(connected)
         self.jog_plus_button.setEnabled(connected)
         self.move_to_button.setEnabled(connected)
-        self.go_to_min_button.setEnabled(connected)
-        self.go_to_max_button.setEnabled(connected)
 
     def update_limits_from_row(self, row: np.ndarray) -> None:
         if np.isfinite(row[COL_LIMIT_MAX]):
@@ -894,10 +826,7 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         self.update_limit_labels()
 
     def update_limit_labels(self) -> None:
-        self.motion_limits_value.setText(
-            f"Max Position: {self.position_limit_max:.3f} mm | "
-            f"Max Speed: {self.speed_limit_max:.3f} mm/s"
-        )
+        self.max_speed_value.setText(f"Max Speed: {self.speed_limit_max:.3f} turns/s")
 
     def _parse_lineedit_float(self, lineedit: QLineEdit) -> float | None:
         text = lineedit.text().strip()
@@ -932,42 +861,26 @@ class ZaberLsqControls(magscope.ControlPanelBase):
     def send_jog(self, direction: float) -> None:
         jog_step = self._parse_lineedit_float(self.jog_step_input)
         speed = self._parse_lineedit_float(self.speed_input)
-        if jog_step is None:
-            return
-        if speed is None:
+        if jog_step is None or speed is None:
             return
         self.manager.send_ipc(
-            JogZaberLsqRelativeCommand(
-                delta_mm=direction * jog_step,
-                speed_mm_s=speed,
+            JogZaberNmsRelativeCommand(
+                delta_turns=direction * jog_step,
+                speed_turns_s=speed,
             )
         )
 
     def send_move_to(self) -> None:
         target = self._parse_lineedit_float(self.move_to_input)
         speed = self._parse_lineedit_float(self.speed_input)
-        if target is None:
-            return
-        if speed is None:
+        if target is None or speed is None:
             return
         self.manager.send_ipc(
-            MoveZaberLsqAbsoluteCommand(
-                target_mm=target,
-                speed_mm_s=speed,
+            MoveZaberNmsAbsoluteCommand(
+                target_turns=target,
+                speed_turns_s=speed,
             )
         )
-
-    def send_move_min(self) -> None:
-        speed = self._parse_lineedit_float(self.speed_input)
-        if speed is None:
-            return
-        self.manager.send_ipc(MoveZaberLsqMinCommand(speed_mm_s=speed))
-
-    def send_move_max(self) -> None:
-        speed = self._parse_lineedit_float(self.speed_input)
-        if speed is None:
-            return
-        self.manager.send_ipc(MoveZaberLsqMaxCommand(speed_mm_s=speed))
 
     def show_device_info(self) -> None:
         if not np.isfinite(self.latest_row[COL_TIMESTAMP]):
@@ -988,16 +901,15 @@ class ZaberLsqControls(magscope.ControlPanelBase):
         dialog.exec()
 
 
-class ZaberLsqPositionPlot(magscope.TimeSeriesPlotBase):
+class ZaberNmsPositionPlot(magscope.TimeSeriesPlotBase):
     def __init__(self, buffer_name: str = BUFFER_NAME):
-        super().__init__(buffer_name, "Linear Motor (mm)")
+        super().__init__(buffer_name, "Rotary Motor (turns)")
         self.position_line = None
         self.target_line = None
 
     def setup(self):
         super().setup()
         self.position_line, self.target_line = self.axes.plot([], [], "c", [], [], "y")
-        self.axes.invert_yaxis()
 
     def update(self):
         data = self.buffer.peak_unsorted()
@@ -1007,7 +919,6 @@ class ZaberLsqPositionPlot(magscope.TimeSeriesPlotBase):
         t = data[:, COL_TIMESTAMP]
         position = data[:, COL_POSITION]
         target = data[:, COL_TARGET]
-
         selection = np.isfinite(t) & np.isfinite(position)
         if not np.any(selection):
             return
@@ -1015,7 +926,6 @@ class ZaberLsqPositionPlot(magscope.TimeSeriesPlotBase):
         t = t[selection]
         position = position[selection]
         target = target[selection]
-
         sort_index = np.argsort(t)
         t = t[sort_index]
         position = position[sort_index]
@@ -1023,7 +933,6 @@ class ZaberLsqPositionPlot(magscope.TimeSeriesPlotBase):
 
         xmin, xmax = self.parent.limits.get("Time", (None, None))
         ymin, ymax = self.parent.limits.get(self.ylabel, (None, None))
-
         selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf))
         t = t[selection]
         position = position[selection]
@@ -1047,8 +956,8 @@ if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
     scope.ui_manager.n_windows = 1
 
-    scope.add_hardware(ZaberLsqMotor())
-    scope.add_control(ZaberLsqControls, column=0)
-    scope.add_timeplot(ZaberLsqPositionPlot())
+    scope.add_hardware(ZaberNmsMotor())
+    scope.add_control(ZaberNmsControls, column=0)
+    scope.add_timeplot(ZaberNmsPositionPlot())
 
     scope.start()
