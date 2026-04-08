@@ -983,6 +983,7 @@ def test_tracks_time_series_plot_sorts_unsorted_timestamps_before_plotting():
         limits={},
         time_mode='absolute',
         relative_window_seconds=300,
+        _tracks_snapshot=None,
     )
 
     plot.update()
@@ -993,6 +994,42 @@ def test_tracks_time_series_plot_sorts_unsorted_timestamps_before_plotting():
         datetime.fromtimestamp(3.0),
     ]
     np.testing.assert_allclose(plot.line.ydata, np.asarray([10.0, 20.0, 30.0]))
+
+
+def test_tracks_time_series_plot_skips_reference_plotting_on_alignment_error(monkeypatch):
+    plot = TracksTimeSeriesPlot('X')
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [1.0, 10.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [1.0, 11.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [1.0, 4.0, 0.0, 0.0, 8.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=7,
+        reference_bead=8,
+        limits={},
+        time_mode='absolute',
+        relative_window_seconds=300,
+        _tracks_snapshot=None,
+    )
+
+    def bad_intersect1d(*args, **kwargs):
+        return np.asarray([1.0]), np.asarray([10]), np.asarray([0])
+
+    monkeypatch.setattr(np, 'intersect1d', bad_intersect1d)
+
+    with pytest.warns(RuntimeWarning, match='Duplicate timestamps detected'):
+        with pytest.warns(RuntimeWarning, match='Skipping referenced bead track plot update'):
+            plot.update()
+
+    assert plot.line.xdata == []
+    assert plot.line.ydata == []
 
 
 def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):

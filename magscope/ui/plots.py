@@ -4,6 +4,7 @@ from abc import ABCMeta, abstractmethod
 from datetime import datetime
 from time import sleep, time
 from typing import TYPE_CHECKING
+import warnings
 
 import matplotlib
 import matplotlib.dates as mdates
@@ -287,9 +288,33 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
             t_ref = t[selection]
             v_ref = v[selection]
 
-            # Get values where selected bead and reference bead share the same timepoints
-            t, index_sel, index_ref = np.intersect1d(t_sel, t_ref, assume_unique=True, return_indices=True)
-            v = v_sel[index_sel] - v_ref[index_ref]
+            if np.unique(t_sel).size != t_sel.size or np.unique(t_ref).size != t_ref.size:
+                warnings.warn(
+                    'Duplicate timestamps detected while plotting referenced bead tracks.',
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+            try:
+                # Get values where selected bead and reference bead share the same timepoints.
+                t, index_sel, index_ref = np.intersect1d(
+                    t_sel,
+                    t_ref,
+                    assume_unique=True,
+                    return_indices=True,
+                )
+                v = v_sel[index_sel] - v_ref[index_ref]
+            except Exception as exc:
+                warnings.warn(
+                    f'Skipping referenced bead track plot update: {exc}',
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self.line.set_xdata([])
+                self.line.set_ydata([])
+                self.axes.relim()
+                self.axes.autoscale_view()
+                return
 
             # Correct for ZLUT upsidedown order
             if self.axis_name == 'Z':

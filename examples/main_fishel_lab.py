@@ -16,7 +16,7 @@ from motors.zaber_nms import ZaberNmsMotor, ZaberNmsControls, ZaberNmsPositionPl
 from focus.pi_e709 import PiE709FocusMotor, PiE709Controls, PiE709FocusPlot
 
 if __name__ == "__main__":
-    scope = magscope.MagScope()
+    scope = magscope.MagScope(verbose=True)
 
     # Fishel Lab Camera
     scope.camera_manager.camera = EGrabberCamera()
