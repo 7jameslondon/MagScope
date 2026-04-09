@@ -15,6 +15,7 @@ import tifffile
 
 from magscope._logging import get_logger
 from magscope.datatypes import (
+    BufferUnderflow,
     DatasetNotReadyError,
     LiveProfileBuffer,
     MatrixBuffer,
@@ -499,13 +500,24 @@ class VideoWorker(Process):
                 self._busy_count.value += 1
             try:
                 self.process(task)
+            except BufferUnderflow:
+                logger.debug('Skipping video processing task because the video buffer no longer holds a full stack')
+                if isinstance(task, dict):
+                    self._report_zlut_capture_task_retry(task.get('zlut_capture'))
             except Exception as e:
                 logger.exception('Error in video processing: %s', e)
                 self._report_zlut_capture_task_failure(task, e)
-            with self._busy_count.get_lock():
-                self._busy_count.value -= 1
+            finally:
+                self._reset_processing_slot_if_abandoned()
+                with self._busy_count.get_lock():
+                    self._busy_count.value -= 1
         if self._zlut_sweep_dataset is not None:
             self._zlut_sweep_dataset.close()
+
+    def _reset_processing_slot_if_abandoned(self) -> None:
+        if self._video_flag is None or self._video_flag.value != PoolVideoFlag.RUNNING:
+            return
+        self._video_flag.value = PoolVideoFlag.READY
 
     def _report_zlut_capture_task_failure(self, task: dict | None, exc: Exception) -> None:
         if self._zlut_capture_complete_queue is None or not isinstance(task, dict):

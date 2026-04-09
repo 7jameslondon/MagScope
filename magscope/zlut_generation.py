@@ -229,6 +229,10 @@ class ZLUTGenerationManager(ManagerProcessBase):
             self._fail_session(error)
             return
         if written_count <= 0:
+            logger.debug(
+                'Retrying Z-LUT capture for step %d after no fresh processed profiles were available',
+                self._current_step_index,
+            )
             self.send_ipc(
                 ArmZLUTSweepCaptureCommand(
                     step_index=self._current_step_index,

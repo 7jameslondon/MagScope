@@ -9,6 +9,7 @@ import egrabber
 import egrabber.generated
 import numpy as np
 
+import magscope
 from magscope.camera import CameraBase
 
 
@@ -166,3 +167,10 @@ class EGrabberCamera(CameraBase):
     @staticmethod
     def convert_timestamp(timestamp, offset):
         return ((timestamp + 0.0) / 1e6) + offset
+
+if __name__ == "__main__":
+    scope = magscope.MagScope(verbose=True)
+
+    scope.camera_manager.camera = EGrabberCamera()
+
+    scope.start()

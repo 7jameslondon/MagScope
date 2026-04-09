@@ -71,6 +71,8 @@ videoprocessing_spec.loader.exec_module(videoprocessing)
 
 VideoProcessorManager = videoprocessing.VideoProcessorManager
 VideoWorker = videoprocessing.VideoWorker
+PoolVideoFlag = videoprocessing.PoolVideoFlag
+BufferUnderflow = videoprocessing.BufferUnderflow
 
 
 class DummyQueue:
@@ -79,6 +81,30 @@ class DummyQueue:
 
     def put_nowait(self, item):
         self.items.append(item)
+
+
+class DummyLock:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class DummyValue:
+    def __init__(self, value=0):
+        self.value = value
+
+    def get_lock(self):
+        return DummyLock()
+
+
+class DummyTaskQueue:
+    def __init__(self, items):
+        self._items = list(items)
+
+    def get(self):
+        return self._items.pop(0)
 
 
 @pytest.fixture
@@ -211,6 +237,37 @@ def test_worker_reports_zlut_capture_retry_when_dataset_is_not_ready():
     worker._report_zlut_capture_task_retry({'step_index': 4})
 
     assert queue.items == [(4, 0, 0, None)]
+
+
+def test_worker_recovers_from_buffer_underflow_and_retries_zlut_capture(monkeypatch):
+    task = {'zlut_capture': {'step_index': 4}}
+    completion_queue = DummyQueue()
+    video_flag = DummyValue(PoolVideoFlag.RUNNING)
+    busy_count = DummyValue(0)
+    worker = VideoWorker(
+        tasks=DummyTaskQueue([task, None]),
+        locks={},
+        video_flag=video_flag,
+        busy_count=busy_count,
+        gpu_lock=None,
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=completion_queue,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=None,
+        live_profile_bead=None,
+    )
+
+    monkeypatch.setattr(videoprocessing, 'LiveProfileBuffer', lambda create, locks: object())
+    monkeypatch.setattr(videoprocessing, 'MatrixBuffer', lambda create, name, locks: object())
+    monkeypatch.setattr(videoprocessing, 'VideoBuffer', lambda create, locks: object())
+    monkeypatch.setattr(worker, 'process', lambda current_task: (_ for _ in ()).throw(BufferUnderflow('BufferUnderflow')))
+
+    worker.run()
+
+    assert completion_queue.items == [(4, 0, 0, None)]
+    assert video_flag.value == PoolVideoFlag.READY
+    assert busy_count.value == 0
 
 
 def test_extract_zlut_metadata_allows_nan_profile_values():
