@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, ABCMeta, abstractmethod
-from ctypes import c_int, c_uint8
+from ctypes import c_double, c_int, c_uint32, c_uint64, c_uint8
 from multiprocessing import Event, Process, Value
 import sys
 import traceback
@@ -39,6 +39,10 @@ class InterprocessValues:
         self.video_process_flag: ValueTypeUI8 = Value(c_uint8, 0)
         self.live_profile_enabled: ValueTypeUI8 = Value(c_uint8, 0)
         self.live_profile_bead: Value[c_int] = Value(c_int, 0)
+        self.camera_total_frames: Value[c_uint64] = Value(c_uint64, 0)
+        self.camera_consecutive_timeouts: Value[c_uint32] = Value(c_uint32, 0)
+        self.camera_queue_full_events: Value[c_uint64] = Value(c_uint64, 0)
+        self.camera_last_frame_timestamp: Value[c_double] = Value(c_double, 0.0)
 
 
 class SingletonMeta(type):

@@ -114,9 +114,11 @@ class EGrabberCamera(CameraBase):
 
             # Store timestamp
             self.video_buffer.write_timestamp(timestamp)
+            self.report_frame_received(timestamp)
         except egrabber.generated.errors.TimeoutException:
-            pass
+            self.report_timeout()
         except queue.Full:
+            self.report_queue_full()
             buffer.push()
 
     def release(self):

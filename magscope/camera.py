@@ -50,6 +50,10 @@ class CameraManager(ManagerProcessBase):
         """
         # Attempt to connect to the camera
         try:
+            if self.shared_values is None:
+                raise RuntimeError('CameraManager has no shared_values')
+            self.camera.shared_values = self.shared_values
+            self.camera.reset_health_counters()
             self.camera.connect(self.video_buffer)
         except Exception as e:
             warn(f"Could not connect to camera: {e}")
@@ -178,6 +182,7 @@ class CameraBase(metaclass=ABCMeta):
 
     def __init__(self):
         self.is_connected = False
+        self.shared_values = None
         self.video_buffer: VideoBuffer | None = None
         self.camera_buffers: queue.Queue | None = None
         if None in (self.width, self.height, self.dtype, self.nm_per_px):
@@ -260,6 +265,31 @@ class CameraBase(metaclass=ABCMeta):
         """ Used to set settings. Example: my_cam['framerate'] = 100.0 """
         self.set_setting(name, value)
 
+    def reset_health_counters(self) -> None:
+        if self.shared_values is None:
+            return
+        self.shared_values.camera_total_frames.value = 0
+        self.shared_values.camera_consecutive_timeouts.value = 0
+        self.shared_values.camera_queue_full_events.value = 0
+        self.shared_values.camera_last_frame_timestamp.value = 0.0
+
+    def report_frame_received(self, timestamp: float) -> None:
+        if self.shared_values is None:
+            return
+        self.shared_values.camera_total_frames.value += 1
+        self.shared_values.camera_consecutive_timeouts.value = 0
+        self.shared_values.camera_last_frame_timestamp.value = float(timestamp)
+
+    def report_timeout(self) -> None:
+        if self.shared_values is None:
+            return
+        self.shared_values.camera_consecutive_timeouts.value += 1
+
+    def report_queue_full(self) -> None:
+        if self.shared_values is None:
+            return
+        self.shared_values.camera_queue_full_events.value += 1
+
 
 class DummyCameraNoise(CameraBase):
     """Noise camera that generates random images at a configurable frame rate."""
@@ -298,6 +328,7 @@ class DummyCameraNoise(CameraBase):
         self.last_time = timestamp
 
         self.video_buffer.write_image_and_timestamp(image, timestamp)
+        self.report_frame_received(timestamp)
 
     def _fake_image(self):
         max_int = np.iinfo(self.dtype).max
@@ -382,6 +413,7 @@ class DummyCameraFastNoise(CameraBase):
         self.last_time = timestamp
 
         self.video_buffer.write_image_and_timestamp(image, timestamp)
+        self.report_frame_received(timestamp)
 
     def get_fake_image(self):
         if self.fake_images is None:
@@ -569,6 +601,7 @@ class DummyCameraBeads(CameraBase):
         max_int = float(np.iinfo(self.dtype).max)
         img_q = (frame * max_int + 0.5).astype(self.dtype)
         self.video_buffer.write_image_and_timestamp(img_q.tobytes(), now)
+        self.report_frame_received(now)
         self.last_time = now
 
     def release(self):

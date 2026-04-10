@@ -150,6 +150,10 @@ class MagScope(metaclass=SingletonMeta):
         self._startup_splash_process: Process | None = None
         self._startup_splash_timeout_seconds: float = 600.0
         self._startup_splash_waiting_for_ui_ready: bool = False
+        self._camera_health_log_interval_seconds: float = 60.0
+        self._next_camera_health_log_deadline: float | None = None
+        self._last_camera_health_sample_time: float | None = None
+        self._last_camera_health_frame_count: int = 0
 
         self.live_profile_buffer: LiveProfileBuffer | None = None
         self.bead_roi_buffer: BeadRoiBuffer | None = None
@@ -483,6 +487,7 @@ class MagScope(metaclass=SingletonMeta):
     def _main_ipc_loop(self) -> None:
         """Forward IPC messages until a quit request is observed."""
         logger.info('MagScope main loop starting ...')
+        self._reset_camera_health_logging_state()
         while self._running:
             self.receive_ipc()
         logger.info('MagScope main loop ended.')
@@ -496,6 +501,7 @@ class MagScope(metaclass=SingletonMeta):
     def receive_ipc(self):
         """Poll every IPC pipe once and relay any commands that arrive."""
         self._check_startup_splash_timeout()
+        self._log_camera_health_if_due()
         handled_command = False
         for pipe in self.pipes.values():
             command = self._read_command(pipe)
@@ -612,6 +618,54 @@ class MagScope(metaclass=SingletonMeta):
 
         self._check_startup_splash_timeout()
         time.sleep(0.001)
+
+    def _reset_camera_health_logging_state(self) -> None:
+        """Start a fresh sampling window for periodic camera health logging."""
+
+        now = time.monotonic()
+        self._last_camera_health_sample_time = now
+        self._next_camera_health_log_deadline = now + self._camera_health_log_interval_seconds
+        self._last_camera_health_frame_count = int(self.shared_values.camera_total_frames.value)
+
+    def _log_camera_health_if_due(self) -> None:
+        """Emit a 1-minute camera health summary while verbose logging is enabled."""
+
+        if not logger.isEnabledFor(logging.INFO):
+            return
+        if self.video_buffer is None:
+            return
+        if self._next_camera_health_log_deadline is None or self._last_camera_health_sample_time is None:
+            self._reset_camera_health_logging_state()
+            return
+
+        now = time.monotonic()
+        if now < self._next_camera_health_log_deadline:
+            return
+
+        total_frames = int(self.shared_values.camera_total_frames.value)
+        elapsed = max(now - self._last_camera_health_sample_time, 1e-9)
+        fps = (total_frames - self._last_camera_health_frame_count) / elapsed
+        last_frame_timestamp = float(self.shared_values.camera_last_frame_timestamp.value)
+        if last_frame_timestamp > 0.0:
+            seconds_since_last_frame = max(time.time() - last_frame_timestamp, 0.0)
+            last_frame_status = f'{seconds_since_last_frame:.2f}s since last frame'
+        else:
+            last_frame_status = 'no frames received yet'
+
+        logger.info(
+            'Camera health: %.2f fps, %d total frames, %s, %d consecutive timeouts, '
+            '%d queue-full events, video buffer %.0f%% full',
+            fps,
+            total_frames,
+            last_frame_status,
+            int(self.shared_values.camera_consecutive_timeouts.value),
+            int(self.shared_values.camera_queue_full_events.value),
+            self.video_buffer.get_level() * 100.0,
+        )
+
+        self._last_camera_health_sample_time = now
+        self._last_camera_health_frame_count = total_frames
+        self._next_camera_health_log_deadline = now + self._camera_health_log_interval_seconds
 
     def _drain_child_pipes_after_quit(self) -> None:
         """Drain child pipes until they acknowledge the quit event."""
