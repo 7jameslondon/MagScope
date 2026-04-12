@@ -164,6 +164,21 @@ class TestVideoBuffer(VideoBufferTestCase):
         self.buffer.read_stack_no_return()
         self.assertFalse(self.buffer.check_read_stack())
 
+    def test_get_unread_stack_count_reports_full_stacks_only(self):
+        width, height = self.buffer.image_shape
+        raw = np.zeros(width * height, dtype=self.buffer.dtype)
+
+        self.assertEqual(self.buffer.get_unread_stack_count(), 0)
+
+        self.buffer.write_image_and_timestamp(raw.tobytes(), 0.0)
+        self.assertEqual(self.buffer.get_unread_stack_count(), 0)
+
+        self.buffer.write_image_and_timestamp(raw.tobytes(), 1.0)
+        self.assertEqual(self.buffer.get_unread_stack_count(), 1)
+
+        self.buffer.read_stack_no_return()
+        self.assertEqual(self.buffer.get_unread_stack_count(), 0)
+
     def test_write_overflow_raises(self):
         image = np.ones(self.buffer.image_shape, dtype=self.buffer.dtype)
         for _ in range(self.buffer.n_total_images):

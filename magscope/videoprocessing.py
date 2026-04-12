@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
@@ -33,8 +34,8 @@ from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, ClearPendingZLUTP
                                    ZLUTSweepCaptureCompleteCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.settings import MagScopeSettings
-from magscope.utils import (AcquisitionMode, PoolVideoFlag, crop_stack_to_rois, date_timestamp_str,
-                            register_script_command)
+from magscope.utils import (AcquisitionMode, crop_stack_to_rois, date_timestamp_str,
+                             register_script_command)
 
 if TYPE_CHECKING:
     from multiprocessing.queues import Queue as QueueType
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
     ValueTypeUI8 = Synchronized[int]
     ValueTypeInt = Synchronized[int]
+    ValueTypeUI32 = Synchronized[int]
+    ValueTypeUI64 = Synchronized[int]
 
 
 logger = get_logger("videoprocessing")
@@ -99,17 +102,20 @@ class VideoProcessorManager(ManagerProcessBase):
 
         # Create the workers
         for _ in range(self._n_workers):
-            worker = VideoWorker(tasks=self._tasks,
-                                 locks=self.locks,
-                                 video_flag=self.shared_values.video_process_flag,
-                                  busy_count=self.shared_values.video_process_busy_count,
-                                  gpu_lock=self._gpu_lock,
-                                 profile_length_queue=self._profile_length_queue,
-                                  warning_queue=self._warning_queue,
-                                  zlut_capture_complete_queue=self._zlut_capture_complete_queue,
-                                  zlut_profile_length_queue=self._zlut_profile_length_queue,
-                                   live_profile_enabled=self.shared_values.live_profile_enabled,
-                                   live_profile_bead=self.shared_values.live_profile_bead)
+            worker = VideoWorker(
+                tasks=self._tasks,
+                locks=self.locks,
+                reserved_stacks=self.shared_values.video_process_reserved_stacks,
+                completed_stacks=self.shared_values.video_process_completed_stacks,
+                busy_count=self.shared_values.video_process_busy_count,
+                gpu_lock=self._gpu_lock,
+                profile_length_queue=self._profile_length_queue,
+                warning_queue=self._warning_queue,
+                zlut_capture_complete_queue=self._zlut_capture_complete_queue,
+                zlut_profile_length_queue=self._zlut_profile_length_queue,
+                live_profile_enabled=self.shared_values.live_profile_enabled,
+                live_profile_bead=self.shared_values.live_profile_bead,
+            )
             self._workers.append(worker)
 
         # Start the workers
@@ -128,10 +134,30 @@ class VideoProcessorManager(ManagerProcessBase):
 
         # Check if images are ready for image processing
         if self._acquisition_on:
-            if self.shared_values.video_process_flag.value == PoolVideoFlag.READY:
-                if self.video_buffer.check_read_stack():
-                    if self._add_task():
-                        self.shared_values.video_process_flag.value = PoolVideoFlag.RUNNING
+            if self.video_buffer.check_read_stack() and self._try_reserve_processing_stack():
+                if not self._add_task():
+                    self._release_reserved_processing_stack()
+
+    def _try_reserve_processing_stack(self) -> bool:
+        reserved_stacks = self.shared_values.video_process_reserved_stacks
+        with self._stack_coordination_lock():
+            with reserved_stacks.get_lock():
+                if reserved_stacks.value != 0:
+                    return False
+                reserved_stacks.value = 1
+        return True
+
+    def _release_reserved_processing_stack(self) -> None:
+        reserved_stacks = self.shared_values.video_process_reserved_stacks
+        with self._stack_coordination_lock():
+            with reserved_stacks.get_lock():
+                if reserved_stacks.value > 0:
+                    reserved_stacks.value -= 1
+
+    def _stack_coordination_lock(self):
+        if self.locks is None:
+            return nullcontext()
+        return self.locks.get('VideoProcessingReservation', nullcontext())
 
     def quit(self):
         super().quit()
@@ -452,7 +478,8 @@ class VideoWorker(Process):
     def __init__(self,
                  tasks: QueueType,
                  locks: dict[str, LockType],
-                 video_flag: ValueTypeUI8,
+                 reserved_stacks: ValueTypeUI32,
+                 completed_stacks: ValueTypeUI64,
                  busy_count: ValueTypeUI8,
                  gpu_lock: Lock,
                  profile_length_queue: QueueType | None,
@@ -465,7 +492,8 @@ class VideoWorker(Process):
         self._gpu_lock: Lock = gpu_lock
         self._tasks: QueueType = tasks
         self._locks: dict[str, LockType] = locks
-        self._video_flag: ValueTypeUI8 = video_flag
+        self._reserved_stacks: ValueTypeUI32 = reserved_stacks
+        self._completed_stacks: ValueTypeUI64 = completed_stacks
         self._busy_count: ValueTypeUI8 = busy_count
         self._profile_length_queue: QueueType | None = profile_length_queue
         self._warning_queue: QueueType | None = warning_queue
@@ -475,6 +503,7 @@ class VideoWorker(Process):
         self._live_profile_bead = live_profile_bead
         self._video_buffer: VideoBuffer | None = None
         self._tracks_buffer: MatrixBuffer | None = None
+        self._task_owes_reserved_stack = False
         self._zlut_sweep_dataset: ZLUTSweepDataset | None = None
 
     def run(self):
@@ -496,6 +525,7 @@ class VideoWorker(Process):
             task = self._tasks.get()
             if task is None: # Signal to close
                 break
+            self._task_owes_reserved_stack = True
             with self._busy_count.get_lock():
                 self._busy_count.value += 1
             try:
@@ -508,16 +538,23 @@ class VideoWorker(Process):
                 logger.exception('Error in video processing: %s', e)
                 self._report_zlut_capture_task_failure(task, e)
             finally:
-                self._reset_processing_slot_if_abandoned()
+                self._release_reserved_stack_if_pending()
                 with self._busy_count.get_lock():
                     self._busy_count.value -= 1
         if self._zlut_sweep_dataset is not None:
             self._zlut_sweep_dataset.close()
 
-    def _reset_processing_slot_if_abandoned(self) -> None:
-        if self._video_flag is None or self._video_flag.value != PoolVideoFlag.RUNNING:
+    def _release_reserved_stack_if_pending(self) -> None:
+        if not self._task_owes_reserved_stack:
             return
-        self._video_flag.value = PoolVideoFlag.READY
+        with self._stack_coordination_lock():
+            with self._reserved_stacks.get_lock():
+                if self._reserved_stacks.value > 0:
+                    self._reserved_stacks.value -= 1
+        self._task_owes_reserved_stack = False
+
+    def _stack_coordination_lock(self):
+        return self._locks.get('VideoProcessingReservation', nullcontext())
 
     def _report_zlut_capture_task_failure(self, task: dict | None, exc: Exception) -> None:
         if self._zlut_capture_complete_queue is None or not isinstance(task, dict):
@@ -934,7 +971,11 @@ class VideoWorker(Process):
                 break
 
     def _release_stack(self):
-        self._video_buffer.read_stack_no_return()
-
-        # Allow a new pool process to start
-        self._video_flag.value = PoolVideoFlag.FINISHED
+        with self._stack_coordination_lock():
+            self._video_buffer.read_stack_no_return()
+            with self._completed_stacks.get_lock():
+                self._completed_stacks.value += 1
+            with self._reserved_stacks.get_lock():
+                if self._task_owes_reserved_stack and self._reserved_stacks.value > 0:
+                    self._reserved_stacks.value -= 1
+            self._task_owes_reserved_stack = False

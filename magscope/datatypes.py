@@ -179,6 +179,11 @@ class VideoBuffer:
         with self.lock:
             return self._get_count_index() / self.n_total_images
 
+    def get_unread_stack_count(self):
+        """Return the number of full unread stacks currently buffered."""
+        with self.lock:
+            return self._get_count_index() // self.n_images
+
     def check_read_stack(self):
         """Return ``True`` when at least one full stack can be read.
 

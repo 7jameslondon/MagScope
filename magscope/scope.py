@@ -128,6 +128,7 @@ class MagScope(metaclass=SingletonMeta):
             'LiveProfileBuffer',
             'TracksBuffer',
             'VideoBuffer',
+            'VideoProcessingReservation',
             'ZLUTSweepDataset',
         ]
         self.pipes: dict[str, Connection] = {}

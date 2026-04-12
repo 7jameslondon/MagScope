@@ -1,6 +1,10 @@
 # Scope
    These guidelines apply to every file within this repository unless overridden by a more specific `AGENTS.md` file in a subdirectory.
 
+# Tests and validation ( IMPORTANT ):
+   - Check if there is a .venv if so use that as the enviorment unless told otherwise.
+   - If the environment allows, run pytest after making changes and report the results. Do not treat the tests as exhaustive; also reason about correctness and performance.
+
 # Import Guidelines
    To ensure consistency across the repository, please order and format imports as follows:
    1. **Grouping**
@@ -40,9 +44,6 @@
    - Improve docstrings and comments where they clarify responsibilities, invariants, performance constraints, or cross-process interactions.
    - Keep formatting consistent and easy to read. Prefer to follow the existing style; do not introduce a different formatter style unless explicitly requested.
 
-# Tests and validation:
-   - Check if there is a .venv if so use that as the enviorment unless told otherwise.
-   - If the environment allows, run pytest after making changes and report the results. Do not treat the tests as exhaustive; also reason about correctness and performance.
 
 # Tecnical infomration
    - MagScope class instances are a singleton. They can only be started once.

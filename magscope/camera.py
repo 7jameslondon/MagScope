@@ -9,6 +9,7 @@ states change.
 """
 
 from abc import ABCMeta, abstractmethod
+from contextlib import nullcontext
 from functools import lru_cache
 import queue
 from time import time
@@ -20,10 +21,9 @@ from magtrack.simulation import simulate_beads
 from magscope.datatypes import BufferUnderflow, VideoBuffer
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (GetCameraSettingCommand, SetCameraSettingCommand,
-                                   SetSimulatedFocusCommand, UpdateCameraSettingCommand,
-                                   UpdateVideoBufferPurgeCommand)
+                                    SetSimulatedFocusCommand, UpdateCameraSettingCommand,
+                                    UpdateVideoBufferPurgeCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.utils import PoolVideoFlag
 
 
 class CameraManager(ManagerProcessBase):
@@ -39,6 +39,7 @@ class CameraManager(ManagerProcessBase):
     def __init__(self):
         super().__init__()
         self.camera: CameraBase = DummyCameraBeads()
+        self._released_completed_stacks = 0
 
     def setup(self):
         """Connect to the camera and publish its current settings.
@@ -66,32 +67,22 @@ class CameraManager(ManagerProcessBase):
     def do_main_loop(self):
         """Main process loop handling buffer lifecycle and fetching frames.
 
-        The video processor signals completion through ``video_process_flag``.
-        When processing finishes, return the pooled buffers to the camera and
-        flip the flag back to ``READY``. During acquisition pauses, buffers not
-        attached to a pool slot are released to avoid leaks. The method also
-        guards against video buffer overflows by purging frames when the
-        available capacity falls below roughly one frame.
+        The video processor reports consumed stacks through shared completion
+        counters. This manager drains those completions into camera buffer
+        releases, returns unreserved stacks while acquisition is paused, and
+        purges excess buffered data when capacity gets too low.
         """
-        # Check if images are done processing
-        if self._acquisition_on:
-            if self.shared_values.video_process_flag.value == PoolVideoFlag.FINISHED:
-                self._release_pool_buffers()
-                self.shared_values.video_process_flag.value = PoolVideoFlag.READY
-        else:
-            if self.shared_values.video_process_flag.value == PoolVideoFlag.READY:
-                self._release_unattached_buffers()
-            elif self.shared_values.video_process_flag.value == PoolVideoFlag.FINISHED:
-                self._release_pool_buffers()
-                self.shared_values.video_process_flag.value = PoolVideoFlag.READY
+        self._release_completed_pool_buffers()
 
-            # Check if the video buffer is about to overflow
+        if not self._acquisition_on:
+            self._release_unattached_buffers()
+
         fraction_available = (1 - self.video_buffer.get_level())
         frames_available = fraction_available * self.video_buffer.n_total_images
         if frames_available <= 1:
-            self._purge_buffers()
-            command = UpdateVideoBufferPurgeCommand(t=time())
-            self.send_ipc(command)
+            if self._purge_buffers() > 0:
+                command = UpdateVideoBufferPurgeCommand(t=time())
+                self.send_ipc(command)
 
         # Check for new images from the camera
         if self.camera.is_connected:
@@ -102,35 +93,57 @@ class CameraManager(ManagerProcessBase):
         if self.video_buffer is None:
             return
 
-        try:
-            self.video_buffer.read_stack_no_return()
+        while self._take_unreserved_stack():
             for _ in range(self.video_buffer.n_images):
                 self.camera.release()
-        except BufferUnderflow:
-            pass
 
     def _purge_buffers(self):
         """Drain video buffer contents until at least 30% capacity is free."""
         if self.video_buffer is None:
-            return
+            return 0
 
+        purged_stacks = 0
         while True:
-            try:
-                self.video_buffer.read_stack_no_return()
-                for _ in range(self.video_buffer.n_images):
-                    self.camera.release()
-            except BufferUnderflow:
+            if not self._take_unreserved_stack():
                 break
+            for _ in range(self.video_buffer.n_images):
+                self.camera.release()
+            purged_stacks += 1
             if self.video_buffer.get_level() <= 0.3:
                 break
+        return purged_stacks
 
-    def _release_pool_buffers(self):
-        """Release buffers that were handed to the video processing pool."""
+    def _release_completed_pool_buffers(self):
+        """Release camera buffers for stacks already consumed by workers."""
         if self.video_buffer is None:
             return
 
-        for _ in range(self.video_buffer.stack_shape[2]):
+        completed_stacks = self.shared_values.video_process_completed_stacks.value
+        delta = completed_stacks - self._released_completed_stacks
+        if delta <= 0:
+            return
+        for _ in range(delta * self.video_buffer.stack_shape[2]):
             self.camera.release()
+        self._released_completed_stacks = completed_stacks
+
+    def _take_unreserved_stack(self) -> bool:
+        if self.video_buffer is None:
+            return False
+        with self._stack_coordination_lock():
+            reserved_stacks = self.shared_values.video_process_reserved_stacks.value
+            unread_stacks = self.video_buffer.get_unread_stack_count()
+            if unread_stacks <= reserved_stacks:
+                return False
+            try:
+                self.video_buffer.read_stack_no_return()
+            except BufferUnderflow:
+                return False
+        return True
+
+    def _stack_coordination_lock(self):
+        if self.locks is None:
+            return nullcontext()
+        return self.locks.get('VideoProcessingReservation', nullcontext())
 
     @register_ipc_command(GetCameraSettingCommand)
     def get_camera_setting(self, name: str):

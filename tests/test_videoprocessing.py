@@ -2,9 +2,10 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 
 from magscope.ipc_commands import ShowMessageCommand, UpdateZLUTMetadataCommand
 
@@ -57,10 +58,13 @@ sys.modules.setdefault("PyQt6.QtCore", qt_core_module)
 
 magtrack_module = types.ModuleType("magtrack")
 magtrack_cupy_module = types.ModuleType("magtrack._cupy")
+magtrack_simulation_module = types.ModuleType("magtrack.simulation")
 magtrack_cupy_module.cp = None
 magtrack_cupy_module.is_cupy_available = lambda: False
+magtrack_simulation_module.simulate_beads = lambda *args, **kwargs: None
 sys.modules.setdefault("magtrack", magtrack_module)
 sys.modules.setdefault("magtrack._cupy", magtrack_cupy_module)
+sys.modules.setdefault("magtrack.simulation", magtrack_simulation_module)
 
 videoprocessing_spec = importlib.util.spec_from_file_location(
     "magscope.videoprocessing", ROOT / "magscope" / "videoprocessing.py"
@@ -69,10 +73,17 @@ videoprocessing = importlib.util.module_from_spec(videoprocessing_spec)
 sys.modules["magscope.videoprocessing"] = videoprocessing
 videoprocessing_spec.loader.exec_module(videoprocessing)
 
+camera_spec = importlib.util.spec_from_file_location(
+    "magscope.camera", ROOT / "magscope" / "camera.py"
+)
+camera = importlib.util.module_from_spec(camera_spec)
+sys.modules["magscope.camera"] = camera
+camera_spec.loader.exec_module(camera)
+
 VideoProcessorManager = videoprocessing.VideoProcessorManager
 VideoWorker = videoprocessing.VideoWorker
-PoolVideoFlag = videoprocessing.PoolVideoFlag
 BufferUnderflow = videoprocessing.BufferUnderflow
+CameraManager = camera.CameraManager
 
 
 class DummyQueue:
@@ -107,6 +118,39 @@ class DummyTaskQueue:
         return self._items.pop(0)
 
 
+class DummyVideoBuffer:
+    def __init__(self):
+        self.read_calls = 0
+
+    def read_stack_no_return(self):
+        self.read_calls += 1
+
+
+class DummyReadableVideoBuffer:
+    def __init__(self, *, unread_stacks: int, n_images: int = 5, level: float = 0.0):
+        self.unread_stacks = unread_stacks
+        self.n_images = n_images
+        self.stack_shape = (1, 1, n_images)
+        self.n_total_images = unread_stacks * n_images if unread_stacks > 0 else n_images
+        self.read_calls = 0
+        self._level = level
+
+    def check_read_stack(self):
+        return self.unread_stacks > 0
+
+    def get_unread_stack_count(self):
+        return self.unread_stacks
+
+    def read_stack_no_return(self):
+        if self.unread_stacks <= 0:
+            raise BufferUnderflow('BufferUnderflow')
+        self.unread_stacks -= 1
+        self.read_calls += 1
+
+    def get_level(self):
+        return self._level
+
+
 @pytest.fixture
 def manager():
     type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
@@ -121,6 +165,17 @@ def manager():
     manager._zlut = None
     manager._bead_roi_ids = []
     manager._bead_roi_values = []
+    return manager
+
+
+@pytest.fixture
+def camera_manager():
+    type(CameraManager)._instances.pop(CameraManager, None)
+    manager = CameraManager()
+    manager.shared_values = SimpleNamespace(
+        video_process_reserved_stacks=DummyValue(0),
+        video_process_completed_stacks=DummyValue(0),
+    )
     return manager
 
 
@@ -190,12 +245,54 @@ def test_clear_pending_zlut_profile_length_request_resets_frozen_rois(manager):
     assert manager._should_use_frozen_zlut_rois() is False
 
 
+def test_do_main_loop_reserves_stack_before_enqueue(manager):
+    manager._acquisition_on = True
+    manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    manager.shared_values = SimpleNamespace(video_process_reserved_stacks=DummyValue(0))
+    reserved_during_enqueue = []
+
+    def fake_add_task():
+        reserved_during_enqueue.append(manager.shared_values.video_process_reserved_stacks.value)
+        return True
+
+    manager._add_task = fake_add_task
+
+    manager.do_main_loop()
+
+    assert reserved_during_enqueue == [1]
+    assert manager.shared_values.video_process_reserved_stacks.value == 1
+
+
+def test_do_main_loop_releases_reservation_when_enqueue_fails(manager):
+    manager._acquisition_on = True
+    manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    manager.shared_values = SimpleNamespace(video_process_reserved_stacks=DummyValue(0))
+    manager._add_task = lambda: False
+
+    manager.do_main_loop()
+
+    assert manager.shared_values.video_process_reserved_stacks.value == 0
+
+
+def test_do_main_loop_skips_enqueue_when_stack_already_reserved(manager):
+    manager._acquisition_on = True
+    manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    manager.shared_values = SimpleNamespace(video_process_reserved_stacks=DummyValue(1))
+    calls = []
+    manager._add_task = lambda: calls.append(True)
+
+    manager.do_main_loop()
+
+    assert calls == []
+
+
 def test_worker_reports_zlut_capture_failure_to_manager():
     queue = DummyQueue()
     worker = VideoWorker(
         tasks=queue,
         locks={},
-        video_flag=None,
+        reserved_stacks=DummyValue(0),
+        completed_stacks=DummyValue(0),
         busy_count=None,
         gpu_lock=None,
         profile_length_queue=None,
@@ -223,7 +320,8 @@ def test_worker_reports_zlut_capture_retry_when_dataset_is_not_ready():
     worker = VideoWorker(
         tasks=queue,
         locks={},
-        video_flag=None,
+        reserved_stacks=DummyValue(0),
+        completed_stacks=DummyValue(0),
         busy_count=None,
         gpu_lock=None,
         profile_length_queue=None,
@@ -242,12 +340,14 @@ def test_worker_reports_zlut_capture_retry_when_dataset_is_not_ready():
 def test_worker_recovers_from_buffer_underflow_and_retries_zlut_capture(monkeypatch):
     task = {'zlut_capture': {'step_index': 4}}
     completion_queue = DummyQueue()
-    video_flag = DummyValue(PoolVideoFlag.RUNNING)
+    reserved_stacks = DummyValue(1)
+    completed_stacks = DummyValue(0)
     busy_count = DummyValue(0)
     worker = VideoWorker(
         tasks=DummyTaskQueue([task, None]),
         locks={},
-        video_flag=video_flag,
+        reserved_stacks=reserved_stacks,
+        completed_stacks=completed_stacks,
         busy_count=busy_count,
         gpu_lock=None,
         profile_length_queue=None,
@@ -266,8 +366,73 @@ def test_worker_recovers_from_buffer_underflow_and_retries_zlut_capture(monkeypa
     worker.run()
 
     assert completion_queue.items == [(4, 0, 0, None)]
-    assert video_flag.value == PoolVideoFlag.READY
+    assert reserved_stacks.value == 0
+    assert completed_stacks.value == 0
     assert busy_count.value == 0
+
+
+def test_release_stack_marks_completion_and_clears_reservation():
+    worker = VideoWorker(
+        tasks=DummyQueue(),
+        locks={},
+        reserved_stacks=DummyValue(1),
+        completed_stacks=DummyValue(0),
+        busy_count=DummyValue(0),
+        gpu_lock=None,
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=None,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=None,
+        live_profile_bead=None,
+    )
+    worker._video_buffer = DummyVideoBuffer()
+    worker._task_owes_reserved_stack = True
+
+    worker._release_stack()
+
+    assert worker._video_buffer.read_calls == 1
+    assert worker._completed_stacks.value == 1
+    assert worker._reserved_stacks.value == 0
+    assert worker._task_owes_reserved_stack is False
+
+
+def test_camera_manager_releases_only_newly_completed_stacks(camera_manager):
+    releases = []
+    camera_manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=0, n_images=5)
+    camera_manager.camera = SimpleNamespace(release=lambda: releases.append('release'))
+    camera_manager.shared_values.video_process_completed_stacks.value = 2
+
+    camera_manager._release_completed_pool_buffers()
+    camera_manager.shared_values.video_process_completed_stacks.value = 3
+    camera_manager._release_completed_pool_buffers()
+
+    assert len(releases) == 15
+
+
+def test_camera_manager_does_not_release_reserved_unattached_stack(camera_manager):
+    releases = []
+    camera_manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1, n_images=5)
+    camera_manager.camera = SimpleNamespace(release=lambda: releases.append('release'))
+    camera_manager.shared_values.video_process_reserved_stacks.value = 1
+
+    camera_manager._release_unattached_buffers()
+
+    assert camera_manager.video_buffer.read_calls == 0
+    assert releases == []
+
+
+def test_camera_manager_purge_preserves_reserved_stack(camera_manager):
+    releases = []
+    camera_manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=2, n_images=5, level=0.8)
+    camera_manager.camera = SimpleNamespace(release=lambda: releases.append('release'))
+    camera_manager.shared_values.video_process_reserved_stacks.value = 1
+
+    purged = camera_manager._purge_buffers()
+
+    assert purged == 1
+    assert camera_manager.video_buffer.unread_stacks == 1
+    assert len(releases) == 5
 
 
 def test_extract_zlut_metadata_allows_nan_profile_values():

@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 class InterprocessValues:
     def __init__(self):
         self.video_process_busy_count: ValueTypeUI8 = Value(c_uint8, 0)
-        self.video_process_flag: ValueTypeUI8 = Value(c_uint8, 0)
+        self.video_process_reserved_stacks: Value[c_uint32] = Value(c_uint32, 0)
+        self.video_process_completed_stacks: Value[c_uint64] = Value(c_uint64, 0)
         self.live_profile_enabled: ValueTypeUI8 = Value(c_uint8, 0)
         self.live_profile_bead: Value[c_int] = Value(c_int, 0)
         self.camera_total_frames: Value[c_uint64] = Value(c_uint64, 0)
