@@ -57,6 +57,9 @@ def load_scope_with_stubs(monkeypatch):
             self.info_calls = []
             self.warning_calls = []
 
+        def isEnabledFor(self, _level):
+            return True
+
         def info(self, *args, **kwargs):
             self.info_calls.append((args, kwargs))
 

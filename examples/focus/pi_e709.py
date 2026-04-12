@@ -8,7 +8,7 @@ from typing import Final
 import numpy as np
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QDoubleValidator
-from PyQt6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 import magscope
 from magscope.datatypes import MatrixBuffer
