@@ -164,6 +164,11 @@ class UpdateZLockMaxCommand(Command):
 
 
 @dataclass(frozen=True)
+class UpdateZLockWindowCommand(Command):
+    value: int
+
+
+@dataclass(frozen=True)
 class UpdateScriptStatusCommand(Command):
     status: "ScriptStatus"
 
@@ -373,6 +378,11 @@ class SetZLockIntervalCommand(Command):
 @dataclass(frozen=True)
 class SetZLockMaxCommand(Command):
     value: float
+
+
+@dataclass(frozen=True)
+class SetZLockWindowCommand(Command):
+    value: int
 
 
 @dataclass(frozen=True)

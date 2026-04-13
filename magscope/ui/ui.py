@@ -1481,6 +1481,10 @@ class UIManager(ManagerProcessBase):
     def update_z_lock_max(self, value: float):
         self.controls.z_lock_panel.update_max(value)
 
+    @register_ipc_command(UpdateZLockWindowCommand)
+    def update_z_lock_window(self, value: int):
+        self.controls.z_lock_panel.update_window(value)
+
     def request_zlut_file(self, filepath: str) -> None:
         if not filepath:
             return

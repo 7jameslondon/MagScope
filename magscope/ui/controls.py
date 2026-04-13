@@ -65,6 +65,7 @@ from magscope.ipc_commands import (
     SetZLockMaxCommand,
     SetZLockOnCommand,
     SetZLockTargetCommand,
+    SetZLockWindowCommand,
     StartScriptCommand,
     UpdateScriptStepCommand,
     UpdateTrackingOptionsCommand,
@@ -1972,6 +1973,16 @@ class ZLockPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.max)
 
+        # Averaging Window
+        default_window = self.manager.settings.get('z-lock default window', '')
+        self.window = LabeledLineEditWithValue(
+            label_text='Averaging Window',
+            default=f'{default_window} frames',
+            callback=self.window_callback,
+            widths=(75, 100, 0),
+        )
+        self.layout().addWidget(self.window)
+
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
 
@@ -2056,6 +2067,25 @@ class ZLockPanel(ControlPanelBase):
         command = SetZLockMaxCommand(value=max_nm)
         self.manager.send_ipc(command)
 
+    def window_callback(self):
+        # Get value
+        value = self.window.lineedit.text()
+        self.window.lineedit.setText('')
+
+        # Check value
+        try:
+            window_size = int(value)
+        except ValueError:
+            return
+        if window_size <= 0:
+            return
+
+        self.update_window(window_size)
+
+        # Send value
+        command = SetZLockWindowCommand(value=window_size)
+        self.manager.send_ipc(command)
+
     def update_enabled(self, value: bool):
         # Set checkbox
         self.enabled.checkbox.blockSignals(True)
@@ -2084,6 +2114,11 @@ class ZLockPanel(ControlPanelBase):
         if value is None:
             value = ''
         self.max.value_label.setText(f'{value} nm')
+
+    def update_window(self, value: int):
+        if value is None:
+            value = ''
+        self.window.value_label.setText(f'{value} frames')
 
 
 class ZLUTGenerationPanel(ControlPanelBase):

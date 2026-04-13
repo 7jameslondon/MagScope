@@ -158,6 +158,13 @@ class MagScopeSettings(MutableMapping[str, Any]):
             display_name="Z-lock default max",
             minimum=0,
         ),
+        "z-lock default window": SettingSpec(
+            "z-lock default window",
+            value_type=int,
+            default=10,
+            display_name="Z-lock default window",
+            minimum=1,
+        ),
     }
 
     def __init__(
