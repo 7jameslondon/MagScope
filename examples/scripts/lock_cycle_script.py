@@ -5,7 +5,7 @@ from magscope.ipc_commands import *
 
 
 # Update these values for your experiment before loading the script in MagScope.
-BASE_SAVE_DIR = Path(r"C:\Users\magne\Desktop\James Data\2026-04-12 James' XY and Z Lock Comparison v1")
+BASE_SAVE_DIR = Path(r"C:\Users\magne\Desktop\James Data\2026-04-12 James' XY and Z Lock Comparison v2")
 MINUTES_PER_PHASE = 180.
 
 XY_LOCK_INTERVAL_SEC = 10
@@ -13,7 +13,7 @@ XY_LOCK_MAX = 1
 XY_LOCK_WINDOW = 1000
 
 Z_LOCK_BEAD = 0
-Z_LOCK_TARGET = 50000  # Set to a float to force a target, or keep None to auto-latch.
+Z_LOCK_TARGET = 52000  # Set to a float to force a target, or keep None to auto-latch.
 Z_LOCK_INTERVAL_SEC = 5
 Z_LOCK_MAX = 2
 Z_LOCK_WINDOW = 200
@@ -49,16 +49,16 @@ script.append(SetXYLockOnCommand(value=True))
 script.append(SetZLockOnCommand(value=True))
 script.append(SleepCommand(seconds_per_phase))
 
-script.append(SetAcquisitionDirCommand(value=str(phase_directories["xy_only"])))
-script.append(SetAcquisitionDirOnCommand(value=True))
-script.append(SetXYLockOnCommand(value=True))
-script.append(SetZLockOnCommand(value=False))
-script.append(SleepCommand(seconds_per_phase))
-
 script.append(SetAcquisitionDirCommand(value=str(phase_directories["z_only"])))
 script.append(SetAcquisitionDirOnCommand(value=True))
 script.append(SetXYLockOnCommand(value=False))
 script.append(SetZLockOnCommand(value=True))
+script.append(SleepCommand(seconds_per_phase))
+
+script.append(SetAcquisitionDirCommand(value=str(phase_directories["xy_only"])))
+script.append(SetAcquisitionDirOnCommand(value=True))
+script.append(SetXYLockOnCommand(value=True))
+script.append(SetZLockOnCommand(value=False))
 script.append(SleepCommand(seconds_per_phase))
 
 script.append(SetAcquisitionDirCommand(value=str(phase_directories["neither"])))

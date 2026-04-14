@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import copy
 import datetime
+import importlib.util
 import math
 import os
+import sys
 import textwrap
 import time
 from typing import TYPE_CHECKING, Any
@@ -122,6 +124,49 @@ class ControlPanelBase(QWidget):
             )
         else:
             self.groupbox.setStyleSheet("")
+
+
+class ResponsivePlotCanvas(FigureCanvas):
+    """Figure canvas that grows taller when constrained to a narrow panel."""
+
+    def __init__(
+        self,
+        figure: Figure,
+        *,
+        minimum_height: int = 210,
+        maximum_height: int | None = 235,
+        height_for_width: float = 0.72,
+    ):
+        super().__init__(figure)
+        self._minimum_height = minimum_height
+        self._maximum_height = maximum_height
+        self._height_for_width = height_for_width
+        self._preferred_height = minimum_height
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._apply_preferred_height(minimum_height)
+
+    def _apply_preferred_height(self, height: int) -> None:
+        self._preferred_height = height
+        self.setMinimumHeight(height)
+        self.setMaximumHeight(height)
+        self.updateGeometry()
+
+    def _update_preferred_height(self, width: int) -> None:
+        target_height = max(self._minimum_height, int(width * self._height_for_width))
+        if self._maximum_height is not None:
+            target_height = min(target_height, self._maximum_height)
+        if target_height == self._preferred_height:
+            return
+        self._apply_preferred_height(target_height)
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_preferred_height(event.size().width())
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        hint = super().sizeHint()
+        width = self.width() if self.width() > 0 else hint.width()
+        return QSize(width, self._preferred_height)
 
 
 class HelpPanel(QFrame):
@@ -1007,6 +1052,314 @@ class PlotSettingsPanel(ControlPanelBase):
         except ValueError:
             size = 100
         self.manager.beads_in_view_marker_size = size
+
+
+def has_tweezepy_support() -> bool:
+    return importlib.util.find_spec('tweezepy') is not None
+
+
+def load_tweezepy_avar() -> tuple[callable | None, str | None]:
+    cached_allanvar = sys.modules.get('tweezepy.allanvar')
+    if cached_allanvar is not None:
+        avar = getattr(cached_allanvar, 'avar', None)
+        if avar is not None:
+            return avar, None
+
+    try:
+        package_spec = importlib.util.find_spec('tweezepy')
+    except (ImportError, ValueError) as exc:
+        return None, str(exc).strip() or repr(exc)
+    if package_spec is None or package_spec.origin is None:
+        return None, 'tweezepy package not found'
+
+    package_dir = os.path.dirname(package_spec.origin)
+    allanvar_path = os.path.join(package_dir, 'allanvar.py')
+    module_name = 'magscope_optional_tweezepy_allanvar'
+
+    try:
+        module_spec = importlib.util.spec_from_file_location(module_name, allanvar_path)
+        if module_spec is None or module_spec.loader is None:
+            return None, 'could not load tweezepy allanvar module'
+
+        allanvar = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(allanvar)
+    except Exception as exc:
+        return None, str(exc).strip() or repr(exc)
+
+    avar = getattr(allanvar, 'avar', None)
+    if avar is None:
+        return None, 'tweezepy.allanvar.avar is unavailable'
+    return avar, None
+
+
+class AllanDeviationPanel(ControlPanelBase):
+    _SETTINGS_GROUP = 'AllanDeviationPanel'
+
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager=manager, title='Allan Deviation', collapsed_by_default=True)
+
+        refresh_row = QHBoxLayout()
+        self.layout().addLayout(refresh_row)
+
+        refresh_row.addStretch(1)
+        self.refresh_button = QPushButton('Refresh')
+        self.refresh_button.clicked.connect(self.refresh_plot)  # type: ignore
+        refresh_row.addWidget(self.refresh_button)
+        refresh_row.addStretch(1)
+
+        history_row = QHBoxLayout()
+        self.layout().addLayout(history_row)
+
+        history_row.addWidget(QLabel('History window'))
+        self.history_window = QLineEdit(self._load_setting('history_window', '05:00'))
+        self.history_window.setPlaceholderText('SS, MM:SS, or HH:MM:SS')
+        self.history_window.setToolTip('Accepted formats: SS, MM:SS, or HH:MM:SS')
+        history_row.addWidget(self.history_window)
+
+        self.history_window_hint = QLabel('Format: SS, MM:SS, or HH:MM:SS')
+        self.history_window_hint.setStyleSheet('color: #aaaaaa;')
+        self.layout().addWidget(self.history_window_hint)
+
+        taus_row = QHBoxLayout()
+        self.layout().addLayout(taus_row)
+
+        taus_row.addWidget(QLabel('Taus'))
+        self.taus_mode = QComboBox()
+        self.taus_mode.addItems(['Octave', 'Decade'])
+        self.taus_mode.setCurrentText(self._load_setting('taus_mode', 'Octave'))
+        taus_row.addWidget(self.taus_mode)
+
+        self.figure = Figure(dpi=100, facecolor='#1e1e1e', constrained_layout=True)
+        self.canvas = ResponsivePlotCanvas(
+            self.figure,
+            minimum_height=210,
+            maximum_height=235,
+            height_for_width=0.72,
+        )
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.layout().addWidget(self.canvas)
+
+        self.status_label = QLabel('Click Refresh to compute Allan deviation')
+        self.status_label.setWordWrap(True)
+        self.layout().addWidget(self.status_label)
+
+        self._configure_axes()
+        self.history_window.editingFinished.connect(self._persist_controls)  # type: ignore
+        self.taus_mode.currentTextChanged.connect(lambda _value: self._persist_controls())
+
+    def _settings(self) -> QSettings:
+        return QSettings('MagScope', 'MagScope')
+
+    def _setting_key(self, name: str) -> str:
+        return f'{self._SETTINGS_GROUP}/{name}'
+
+    def _load_setting(self, name: str, default: str) -> str:
+        return self._settings().value(self._setting_key(name), default, type=str)
+
+    def _persist_controls(self) -> None:
+        settings = self._settings()
+        settings.setValue(self._setting_key('history_window'), self.history_window.text().strip())
+        settings.setValue(self._setting_key('taus_mode'), self.taus_mode.currentText())
+
+    def _configure_axes(self) -> None:
+        self.axes.clear()
+        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_xlabel('Tau (s)')
+        self.axes.set_ylabel('Allan deviation (nm)')
+        self.axes.set_xscale('log')
+        self.axes.set_yscale('log')
+        self.axes.spines['top'].set_visible(False)
+        self.axes.spines['right'].set_visible(False)
+
+    def refresh_plot(self) -> None:
+        self._persist_controls()
+
+        avar, import_error = load_tweezepy_avar()
+        if avar is None:
+            if not has_tweezepy_support():
+                self.clear('Tweezepy is not installed.')
+                return
+            self.clear(f'Tweezepy import failed: {import_error}')
+            return
+
+        window_seconds = self._parse_window_seconds(self.history_window.text())
+        if window_seconds is None or window_seconds <= 0:
+            self.clear('Enter a positive history window like 30, 05:00, or 01:00:00.')
+            return
+
+        tracks = self.manager.tracks_buffer.peak_unsorted()
+        if tracks is None or not hasattr(tracks, 'size') or tracks.size == 0:
+            self.clear('No track data available yet.')
+            return
+
+        tracks = np.asarray(tracks, dtype=np.float64)
+        tracks = tracks[np.argsort(tracks[:, 0], kind='stable')]
+        selected_bead = self.manager.selected_bead
+        reference_bead = self.manager.reference_bead
+        taus_mode = self.taus_mode.currentText().lower()
+
+        self._configure_axes()
+        plotted_axes: list[str] = []
+        skipped_axes: list[str] = []
+        for axis_name, color in (('X', 'r'), ('Y', 'lime'), ('Z', 'cyan')):
+            timestamps, values = self._extract_axis_series(
+                tracks,
+                axis_name=axis_name,
+                selected_bead=selected_bead,
+                reference_bead=reference_bead,
+            )
+            if timestamps.size < 4 or values.size < 4:
+                skipped_axes.append(f'{axis_name}: insufficient aligned track samples')
+                continue
+
+            windowed_timestamps, windowed_values = self._apply_history_window(
+                timestamps,
+                values,
+                window_seconds,
+            )
+            if windowed_timestamps.size < 4 or windowed_values.size < 4:
+                skipped_axes.append(f'{axis_name}: insufficient recent track samples')
+                continue
+
+            sampling_rate = self._estimate_sampling_rate(windowed_timestamps)
+            if sampling_rate is None:
+                skipped_axes.append(f'{axis_name}: invalid sampling rate')
+                continue
+
+            try:
+                taus, _edfs, variances = avar(
+                    windowed_values,
+                    rate=sampling_rate,
+                    taus=taus_mode,
+                    overlapping=True,
+                )
+            except Exception as exc:
+                skipped_axes.append(f'{axis_name}: Allan deviation calculation failed ({exc})')
+                continue
+
+            taus = np.asarray(taus, dtype=np.float64)
+            deviations = np.sqrt(np.asarray(variances, dtype=np.float64))
+            finite = np.isfinite(taus) & np.isfinite(deviations) & (taus > 0) & (deviations > 0)
+            taus = taus[finite]
+            deviations = deviations[finite]
+            if taus.size == 0 or deviations.size == 0:
+                skipped_axes.append(f'{axis_name}: no finite Allan deviation values')
+                continue
+
+            self.axes.plot(taus, deviations, color=color, label=axis_name)
+            plotted_axes.append(axis_name)
+
+        if not plotted_axes:
+            self.canvas.draw()
+            self.status_label.setText(
+                'Could not plot Allan deviation. ' + ' '.join(f'Skipped {reason}.' for reason in skipped_axes)
+            )
+            return
+
+        self.axes.legend(
+            loc='upper right',
+            frameon=False,
+        )
+        self.canvas.draw()
+
+        if reference_bead is None:
+            source_text = f'selected bead {selected_bead}'
+        else:
+            source_text = f'selected bead {selected_bead} minus reference bead {reference_bead}'
+        status_message = f'Refreshed Allan deviation for {", ".join(plotted_axes)} using {source_text}.'
+        if skipped_axes:
+            status_message += ' ' + ' '.join(f'Skipped {reason}.' for reason in skipped_axes)
+        self.status_label.setText(status_message)
+
+    def clear(self, message: str = 'Click Refresh to compute Allan deviation') -> None:
+        self._configure_axes()
+        self.canvas.draw()
+        self.status_label.setText(message)
+
+    @staticmethod
+    def _parse_window_seconds(value: str) -> float | None:
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            if ':' not in text:
+                return float(text)
+            parts = [float(part) for part in text.split(':')]
+        except ValueError:
+            return None
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+            return hours * 3600 + minutes * 60 + seconds
+        if len(parts) == 2:
+            minutes, seconds = parts
+            return minutes * 60 + seconds
+        if len(parts) == 1:
+            return parts[0]
+        return None
+
+    @staticmethod
+    def _estimate_sampling_rate(timestamps: np.ndarray) -> float | None:
+        diffs = np.diff(np.asarray(timestamps, dtype=np.float64))
+        diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+        if diffs.size == 0:
+            return None
+        median_diff = float(np.median(diffs))
+        if median_diff <= 0:
+            return None
+        return 1.0 / median_diff
+
+    @staticmethod
+    def _apply_history_window(
+        timestamps: np.ndarray,
+        values: np.ndarray,
+        window_seconds: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if timestamps.size == 0:
+            return timestamps, values
+        cutoff = float(np.max(timestamps)) - float(window_seconds)
+        keep = timestamps >= cutoff
+        return timestamps[keep], values[keep]
+
+    @staticmethod
+    def _extract_axis_series(
+        tracks: np.ndarray,
+        *,
+        axis_name: str,
+        selected_bead: int | None,
+        reference_bead: int | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        axis_index = ['X', 'Y', 'Z'].index(axis_name) + 1
+        finite_rows = np.isfinite(tracks[:, [0, axis_index, 4]]).all(axis=1)
+        tracks = tracks[finite_rows]
+        if tracks.size == 0 or selected_bead is None or selected_bead < 0:
+            return np.asarray([]), np.asarray([])
+
+        timestamps = tracks[:, 0]
+        bead_ids = tracks[:, 4]
+        values = tracks[:, axis_index]
+
+        selected_mask = bead_ids == selected_bead
+        timestamps_selected = timestamps[selected_mask]
+        values_selected = values[selected_mask]
+        if reference_bead is None:
+            return timestamps_selected, values_selected
+
+        reference_mask = bead_ids == reference_bead
+        timestamps_reference = timestamps[reference_mask]
+        values_reference = values[reference_mask]
+        if timestamps_selected.size == 0 or timestamps_reference.size == 0:
+            return np.asarray([]), np.asarray([])
+
+        aligned_timestamps, index_selected, index_reference = np.intersect1d(
+            timestamps_selected,
+            timestamps_reference,
+            assume_unique=False,
+            return_indices=True,
+        )
+        aligned_values = values_selected[index_selected] - values_reference[index_reference]
+        if axis_name == 'Z':
+            aligned_values *= -1
+        return aligned_timestamps, aligned_values
 
 
 class ProfilePanel(ControlPanelBase):

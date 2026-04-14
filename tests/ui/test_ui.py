@@ -1,7 +1,7 @@
 import os
 import sys
 from datetime import datetime
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,7 +12,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
-from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QWidget
+from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QSizePolicy, QWidget
 
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
@@ -26,9 +26,14 @@ from magscope.ipc_commands import (
     UpdateBeadRoisCommand,
 )
 from magscope.settings import MagScopeSettings
-from magscope.ui.controls import ZLUTGenerationDialog, ZLUTGenerationPanel, ZLUTSweepPreviewWidget
+from magscope.ui.controls import (
+    AllanDeviationPanel,
+    ZLUTGenerationDialog,
+    ZLUTGenerationPanel,
+    ZLUTSweepPreviewWidget,
+)
 from magscope.ui.plots import TracksTimeSeriesPlot
-from magscope.ui.ui import LoadingWindow, UIManager, _StartupReadyWindow
+from magscope.ui.ui import Controls, LoadingWindow, UIManager, _StartupReadyWindow
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import AcquisitionMode
 
@@ -356,6 +361,14 @@ class FakeTracksBuffer:
 
     def peak_unsorted(self):
         return self._data
+
+
+class FakeConnectSignal:
+    def __init__(self):
+        self.connections = []
+
+    def connect(self, callback) -> None:
+        self.connections.append(callback)
 
 
 class FakeLine:
@@ -1030,6 +1043,376 @@ def test_tracks_time_series_plot_skips_reference_plotting_on_alignment_error(mon
 
     assert plot.line.xdata == []
     assert plot.line.ydata == []
+
+
+def test_allan_deviation_panel_refresh_uses_selected_bead_without_reference(qtbot, monkeypatch):
+    calls = []
+
+    def fake_avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):
+        calls.append((np.asarray(data, dtype=np.float64), rate, taus, overlapping, edf))
+        return np.asarray([1.0, 2.0]), np.asarray([10.0, 10.0]), np.asarray([4.0, 9.0])
+
+    tweezepy_module = ModuleType('tweezepy')
+    allanvar_module = ModuleType('tweezepy.allanvar')
+    allanvar_module.avar = fake_avar
+    tweezepy_module.allanvar = allanvar_module
+    monkeypatch.setitem(sys.modules, 'tweezepy', tweezepy_module)
+    monkeypatch.setitem(sys.modules, 'tweezepy.allanvar', allanvar_module)
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, 10.0, 20.0, 30.0, 7.0, 0.0, 0.0],
+                    [1.0, 11.0, 21.0, 31.0, 7.0, 0.0, 0.0],
+                    [2.0, 12.0, 22.0, 32.0, 7.0, 0.0, 0.0],
+                    [3.0, 13.0, 23.0, 33.0, 7.0, 0.0, 0.0],
+                    [3.0, 99.0, 99.0, 99.0, 9.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('10')
+
+    panel.refresh_plot()
+
+    assert len(calls) == 3
+    np.testing.assert_allclose(calls[0][0], np.asarray([10.0, 11.0, 12.0, 13.0]))
+    np.testing.assert_allclose(calls[1][0], np.asarray([20.0, 21.0, 22.0, 23.0]))
+    np.testing.assert_allclose(calls[2][0], np.asarray([30.0, 31.0, 32.0, 33.0]))
+    assert all(call[1] == 1.0 for call in calls)
+    assert all(call[2] == 'octave' for call in calls)
+    assert len(panel.axes.lines) == 3
+    assert panel.status_label.text() == 'Refreshed Allan deviation for X, Y, Z using selected bead 7.'
+
+
+def test_allan_deviation_panel_uses_responsive_plot_canvas(qtbot):
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(np.asarray([])),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.resize(320, 700)
+    panel.show()
+    qtbot.wait(50)
+
+    assert panel.figure.get_constrained_layout()
+    assert 210 <= panel.canvas.minimumHeight() <= 235
+    assert panel.canvas.minimumHeight() == panel.canvas.maximumHeight()
+    assert panel.canvas.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert panel.canvas.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+
+
+def test_allan_deviation_panel_refresh_uses_selected_minus_reference(qtbot, monkeypatch):
+    calls = []
+
+    def fake_avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):
+        calls.append(np.asarray(data, dtype=np.float64))
+        return np.asarray([1.0, 2.0]), np.asarray([10.0, 10.0]), np.asarray([4.0, 9.0])
+
+    tweezepy_module = ModuleType('tweezepy')
+    allanvar_module = ModuleType('tweezepy.allanvar')
+    allanvar_module.avar = fake_avar
+    tweezepy_module.allanvar = allanvar_module
+    monkeypatch.setitem(sys.modules, 'tweezepy', tweezepy_module)
+    monkeypatch.setitem(sys.modules, 'tweezepy.allanvar', allanvar_module)
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, 10.0, 20.0, 30.0, 7.0, 0.0, 0.0],
+                    [0.0, 1.0, 2.0, 3.0, 9.0, 0.0, 0.0],
+                    [1.0, 11.0, 21.0, 31.0, 7.0, 0.0, 0.0],
+                    [1.0, 2.0, 3.0, 4.0, 9.0, 0.0, 0.0],
+                    [2.0, 12.0, 22.0, 32.0, 7.0, 0.0, 0.0],
+                    [2.0, 3.0, 4.0, 5.0, 9.0, 0.0, 0.0],
+                    [3.0, 13.0, 23.0, 33.0, 7.0, 0.0, 0.0],
+                    [3.0, 4.0, 5.0, 6.0, 9.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=9,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('10')
+
+    panel.refresh_plot()
+
+    assert len(calls) == 3
+    np.testing.assert_allclose(calls[0], np.asarray([9.0, 9.0, 9.0, 9.0]))
+    np.testing.assert_allclose(calls[1], np.asarray([18.0, 18.0, 18.0, 18.0]))
+    np.testing.assert_allclose(calls[2], np.asarray([-27.0, -27.0, -27.0, -27.0]))
+    assert panel.status_label.text() == (
+        'Refreshed Allan deviation for X, Y, Z using selected bead 7 minus reference bead 9.'
+    )
+
+
+def test_allan_deviation_panel_filters_to_recent_history_window(qtbot, monkeypatch):
+    calls = []
+
+    def fake_avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):
+        calls.append(np.asarray(data, dtype=np.float64))
+        return np.asarray([1.0, 2.0]), np.asarray([10.0, 10.0]), np.asarray([4.0, 9.0])
+
+    tweezepy_module = ModuleType('tweezepy')
+    allanvar_module = ModuleType('tweezepy.allanvar')
+    allanvar_module.avar = fake_avar
+    tweezepy_module.allanvar = allanvar_module
+    monkeypatch.setitem(sys.modules, 'tweezepy', tweezepy_module)
+    monkeypatch.setitem(sys.modules, 'tweezepy.allanvar', allanvar_module)
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, 10.0, 20.0, 30.0, 7.0, 0.0, 0.0],
+                    [1.0, 11.0, 21.0, 31.0, 7.0, 0.0, 0.0],
+                    [2.0, 12.0, 22.0, 32.0, 7.0, 0.0, 0.0],
+                    [3.0, 13.0, 23.0, 33.0, 7.0, 0.0, 0.0],
+                    [4.0, 14.0, 24.0, 34.0, 7.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('3')
+
+    panel.refresh_plot()
+
+    np.testing.assert_allclose(calls[0], np.asarray([11.0, 12.0, 13.0, 14.0]))
+
+
+def test_allan_deviation_panel_plots_xy_when_z_has_insufficient_samples(qtbot, monkeypatch):
+    calls = []
+
+    def fake_avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):
+        calls.append(np.asarray(data, dtype=np.float64))
+        return np.asarray([1.0, 2.0]), np.asarray([10.0, 10.0]), np.asarray([4.0, 9.0])
+
+    tweezepy_module = ModuleType('tweezepy')
+    allanvar_module = ModuleType('tweezepy.allanvar')
+    allanvar_module.avar = fake_avar
+    tweezepy_module.allanvar = allanvar_module
+    monkeypatch.setitem(sys.modules, 'tweezepy', tweezepy_module)
+    monkeypatch.setitem(sys.modules, 'tweezepy.allanvar', allanvar_module)
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, 10.0, 20.0, np.nan, 7.0, 0.0, 0.0],
+                    [1.0, 11.0, 21.0, np.nan, 7.0, 0.0, 0.0],
+                    [2.0, 12.0, 22.0, 30.0, 7.0, 0.0, 0.0],
+                    [3.0, 13.0, 23.0, 31.0, 7.0, 0.0, 0.0],
+                    [4.0, 14.0, 24.0, 32.0, 7.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('10')
+
+    panel.refresh_plot()
+
+    assert len(calls) == 2
+    assert len(panel.axes.lines) == 2
+    assert panel.status_label.text() == (
+        'Refreshed Allan deviation for X, Y using selected bead 7. '
+        'Skipped Z: insufficient aligned track samples.'
+    )
+
+
+def test_allan_deviation_panel_reports_when_all_axes_are_skipped(qtbot, monkeypatch):
+    def fake_avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):
+        raise AssertionError('avar should not be called when all axes are invalid')
+
+    tweezepy_module = ModuleType('tweezepy')
+    allanvar_module = ModuleType('tweezepy.allanvar')
+    allanvar_module.avar = fake_avar
+    tweezepy_module.allanvar = allanvar_module
+    monkeypatch.setitem(sys.modules, 'tweezepy', tweezepy_module)
+    monkeypatch.setitem(sys.modules, 'tweezepy.allanvar', allanvar_module)
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, np.nan, np.nan, np.nan, 7.0, 0.0, 0.0],
+                    [1.0, 11.0, np.nan, np.nan, 7.0, 0.0, 0.0],
+                    [2.0, np.nan, 22.0, np.nan, 7.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('10')
+
+    panel.refresh_plot()
+
+    assert len(panel.axes.lines) == 0
+    assert panel.status_label.text() == (
+        'Could not plot Allan deviation. '
+        'Skipped X: insufficient aligned track samples. '
+        'Skipped Y: insufficient aligned track samples. '
+        'Skipped Z: insufficient aligned track samples.'
+    )
+
+
+def test_allan_deviation_panel_reports_tweezepy_import_failure(qtbot, monkeypatch):
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(np.asarray([])),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+
+    monkeypatch.setattr('magscope.ui.controls.has_tweezepy_support', lambda: True)
+    monkeypatch.setattr(
+        'magscope.ui.controls.load_tweezepy_avar',
+        lambda: (None, "No module named 'numba'"),
+    )
+
+    panel.refresh_plot()
+
+    assert panel.status_label.text() == "Tweezepy import failed: No module named 'numba'"
+
+
+def test_allan_deviation_panel_loads_allanvar_without_tweezepy_init(qtbot, monkeypatch, tmp_path):
+    package_dir = tmp_path / 'tweezepy'
+    package_dir.mkdir()
+    (package_dir / '__init__.py').write_text("raise ModuleNotFoundError('numba')\n", encoding='utf-8')
+    (package_dir / 'allanvar.py').write_text(
+        "import numpy as np\n"
+        "\n"
+        "def avar(data, rate=1.0, taus='octave', overlapping=True, edf='approx'):\n"
+        "    values = np.asarray(data, dtype=np.float64)\n"
+        "    return np.asarray([1.0, 2.0]), np.asarray([1.0, 1.0]), np.asarray([4.0, 9.0])\n",
+        encoding='utf-8',
+    )
+
+    original_sys_path = sys.path[:]
+    sys.path.insert(0, str(tmp_path))
+    for module_name in ['tweezepy', 'tweezepy.allanvar', 'magscope_optional_tweezepy_allanvar']:
+        sys.modules.pop(module_name, None)
+
+    manager = SimpleNamespace(
+        tracks_buffer=FakeTracksBuffer(
+            np.asarray(
+                [
+                    [0.0, 10.0, 20.0, 30.0, 7.0, 0.0, 0.0],
+                    [1.0, 11.0, 21.0, 31.0, 7.0, 0.0, 0.0],
+                    [2.0, 12.0, 22.0, 32.0, 7.0, 0.0, 0.0],
+                    [3.0, 13.0, 23.0, 33.0, 7.0, 0.0, 0.0],
+                ],
+                dtype=np.float64,
+            )
+        ),
+        selected_bead=7,
+        reference_bead=None,
+    )
+
+    panel = AllanDeviationPanel(manager)
+    qtbot.addWidget(panel)
+    panel.history_window.setText('10')
+
+    try:
+        panel.refresh_plot()
+    finally:
+        sys.path[:] = original_sys_path
+        for module_name in ['tweezepy', 'tweezepy.allanvar', 'magscope_optional_tweezepy_allanvar']:
+            sys.modules.pop(module_name, None)
+
+    assert len(panel.axes.lines) == 3
+    assert panel.status_label.text() == 'Refreshed Allan deviation for X, Y, Z using selected bead 7.'
+
+
+def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class StubPanel(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    class StubZLUTPanel(StubPanel):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.zlut_file_selected = FakeConnectSignal()
+            self.zlut_clear_requested = FakeConnectSignal()
+
+    for name in [
+        'HelpPanel',
+        'ResetPanel',
+        'MagScopeSettingsPanel',
+        'AcquisitionPanel',
+        'BeadSelectionPanel',
+        'CameraPanel',
+        'HistogramPanel',
+        'TrackingOptionsPanel',
+        'PlotSettingsPanel',
+        'ProfilePanel',
+        'ScriptPanel',
+        'StatusPanel',
+        'XYLockPanel',
+        'ZLockPanel',
+        'ZLUTGenerationPanel',
+        'AllanDeviationPanel',
+    ]:
+        monkeypatch.setattr(ui_module, name, StubPanel)
+    monkeypatch.setattr(ui_module, 'ZLUTPanel', StubZLUTPanel)
+
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        plot_worker=SimpleNamespace(plots=[]),
+        controls_to_add=[],
+        request_zlut_file=lambda *args, **kwargs: None,
+        clear_zlut=lambda *args, **kwargs: None,
+    )
+
+    monkeypatch.setattr(ui_module, 'has_tweezepy_support', lambda: True)
+    controls = Controls(manager)
+    qtbot.addWidget(controls)
+    assert 'AllanDeviationPanel' in controls.panels
+
+    monkeypatch.setattr(ui_module, 'has_tweezepy_support', lambda: False)
+    controls_without_tweezepy = Controls(manager)
+    qtbot.addWidget(controls_without_tweezepy)
+    assert 'AllanDeviationPanel' not in controls_without_tweezepy.panels
 
 
 def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):

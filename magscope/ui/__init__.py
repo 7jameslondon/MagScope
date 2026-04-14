@@ -13,6 +13,7 @@ from magscope.ui.widgets import (
 )
 from magscope.ui.controls import (
     AcquisitionPanel,
+    AllanDeviationPanel,
     BeadSelectionPanel,
     CameraPanel,
     ControlPanelBase,

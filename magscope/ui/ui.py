@@ -47,6 +47,7 @@ from magscope.ui import (
     VideoViewer,
 )
 from magscope.ui.controls import (
+    AllanDeviationPanel,
     HelpPanel,
     MagScopeSettingsPanel,
     PlotSettingsPanel,
@@ -58,6 +59,7 @@ from magscope.ui.controls import (
     ZLUTGenerationPanel,
     ZLUTPanel,
     ZLockPanel,
+    has_tweezepy_support,
 )
 from magscope.ui.panel_layout import (
     PANEL_MIME_TYPE,
@@ -1970,6 +1972,9 @@ class Controls(QWidget):
         self.histogram_panel = HistogramPanel(self.manager)
         self.tracking_options_panel = TrackingOptionsPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
+        self.allan_deviation_panel = (
+            AllanDeviationPanel(self.manager) if has_tweezepy_support() else None
+        )
         self.profile_panel = ProfilePanel(self.manager)
         self.script_panel = ScriptPanel(self.manager)
         self.status_panel = StatusPanel(self.manager)
@@ -1999,6 +2004,11 @@ class Controls(QWidget):
             ("XYLockPanel", self.xy_lock_panel, "right", True),
             ("ZLockPanel", self.z_lock_panel, "right", True),
         ]
+        if self.allan_deviation_panel is not None:
+            definitions.insert(
+                definitions.index(("ZLUTPanel", self.zlut_panel, "right", True)),
+                ("AllanDeviationPanel", self.allan_deviation_panel, "right", True),
+            )
 
         column_names = list(self.layout_manager.columns.keys())
         fallback_column = column_names[0]
