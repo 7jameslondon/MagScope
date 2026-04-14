@@ -35,9 +35,8 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = []
-cu11 = ["cupy-cuda11x>=12.0"]
-cu12 = ["cupy-cuda12x>=13.0"]
-cu13 = ["cupy-cuda13x>=13.0"]
+cu12 = ["cupy-cuda12x>=14.0"]
+cu13 = ["cupy-cuda13x>=14.0"]
 python-microscope = ["microscope"]
 test = ["pytest", "pytest-qt"]
 docs = [
