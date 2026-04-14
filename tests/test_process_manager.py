@@ -401,9 +401,19 @@ class FakeHardwareBuffer:
         self.args = args
         self.kwargs = kwargs
         self.rows = []
+        self._unread_rows = []
 
     def write(self, row):
-        self.rows.append(np.array(row, copy=True))
+        copied = np.array(row, copy=True)
+        self.rows.append(copied)
+        self._unread_rows.append(copied)
+
+    def read(self):
+        if not self._unread_rows:
+            return np.empty((0, 0), dtype=float)
+        unread = np.vstack(self._unread_rows)
+        self._unread_rows.clear()
+        return unread
 
 
 class DummyFocusMotor(hardware.FocusMotorBase):
@@ -483,3 +493,59 @@ def test_focus_motor_base_reports_position_limits():
     motor.report_focus_motor_limits()
 
     assert sent_commands == [ReportFocusMotorLimitsCommand(z_min=0.0, z_max=10.0)]
+
+
+def test_hardware_manager_saves_to_device_file_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = True
+    motor.setup()
+
+    motor.do_main_loop()
+
+    save_path = tmp_path / f"{motor.name}.txt"
+    assert save_path.exists()
+    saved = np.loadtxt(save_path)
+    saved = np.atleast_2d(saved)
+    assert saved.shape == (1, 4)
+    np.testing.assert_allclose(saved[:, 1:], [[1.5, 1.5, 1.0]])
+
+
+def test_hardware_manager_appends_only_new_rows(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = True
+    motor.setup()
+
+    motor.do_main_loop()
+    motor.handle_move_absolute(4.0)
+    motor.do_main_loop()
+
+    save_path = tmp_path / f"{motor.name}.txt"
+    saved = np.loadtxt(save_path)
+    saved = np.atleast_2d(saved)
+    assert saved.shape == (3, 4)
+    np.testing.assert_allclose(saved[:, 1:], [[1.5, 1.5, 1.0], [1.5, 4.0, 0.0], [4.0, 4.0, 1.0]])
+
+
+def test_hardware_manager_does_not_save_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = False
+    motor.setup()
+
+    motor.do_main_loop()
+
+    assert not (tmp_path / f"{motor.name}.txt").exists()

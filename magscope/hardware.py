@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from time import time
 from warnings import warn
 
@@ -31,6 +32,7 @@ class HardwareManagerBase(ManagerProcessBase, ABC, metaclass=SingletonABCMeta):
 
     def do_main_loop(self):
         self.fetch()
+        self._save_pending_data_if_enabled()
 
     def quit(self):
         super().quit()
@@ -54,6 +56,42 @@ class HardwareManagerBase(ManagerProcessBase, ABC, metaclass=SingletonABCMeta):
 
         The timestamp should be the seconds since the unix epoch:
         (January 1, 1970, 00:00:00 UTC) """
+
+    def _save_pending_data_if_enabled(self) -> None:
+        if not self._acquisition_dir_on or not self._acquisition_dir or self._buffer is None:
+            return
+
+        rows = self._buffer.read()
+        if rows.size == 0:
+            return
+
+        # Fresh buffers are initialized with NaNs; skip them until real telemetry arrives.
+        rows = rows[np.any(np.isfinite(rows), axis=1)]
+        if rows.size == 0:
+            return
+
+        filepath = self._hardware_save_filepath()
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        should_write_header = not filepath.exists() or filepath.stat().st_size == 0
+
+        with filepath.open('a', encoding='utf-8', newline='') as file:
+            if should_write_header:
+                header = self._hardware_save_header()
+                if header:
+                    file.write(f'# {header}\n')
+            np.savetxt(file, rows)
+
+    def _hardware_save_filepath(self) -> Path:
+        acquisition_dir = self._acquisition_dir
+        if not acquisition_dir:
+            raise RuntimeError(f'{self.name} has no acquisition directory configured')
+        return Path(acquisition_dir) / f'{self.name}.txt'
+
+    def _hardware_save_header(self) -> str:
+        if self.buffer_shape[1] <= 1:
+            return 'timestamp'
+        extra_columns = [f'value_{index}' for index in range(1, self.buffer_shape[1])]
+        return ' '.join(['timestamp', *extra_columns])
 
 
 class FocusMotorBase(HardwareManagerBase, ABC, metaclass=SingletonABCMeta):
