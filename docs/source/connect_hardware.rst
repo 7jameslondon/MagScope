@@ -47,3 +47,52 @@ needs more complex logic.
 See ``examples/focus/simulated_focus_motor.py`` for a complete simulated
 focus motor that follows this pattern and also drives the simulated camera
 focus when ``DummyCameraBeads`` is active.
+
+python-microscope hardware
+--------------------------
+
+If your hardware is exposed through `python-microscope <https://python-microscope.org/>`_, MagScope provides optional adapters for focus stages and generic hardware managers.
+
+Install the optional dependency first::
+
+   pip install magscope[python-microscope]
+
+For a microscope Z stage, use :class:`magscope.PythonMicroscopeFocusMotor`. It accepts either a local ``device_factory`` or a remote ``device_uri``. When given a stage device, it will use the ``"z"`` axis by default::
+
+   import magscope
+   from magscope import PythonMicroscopeFocusMotor
+
+   scope = magscope.MagScope()
+   scope.add_hardware(
+       PythonMicroscopeFocusMotor(
+           device_uri="PYRO:Stage@127.0.0.1:8001",
+           axis_name="z",
+           position_scale=1000.0,
+       )
+   )
+   scope.start()
+
+``position_scale`` converts python-microscope stage units into the absolute Z units MagScope uses. For example, set ``position_scale=1000.0`` when the microscope axis reports micrometers but your MagScope workflow should operate in nanometers.
+
+For non-focus devices, subclass :class:`magscope.PythonMicroscopeHardwareManagerBase` to reuse the connection lifecycle while keeping your own telemetry schema and IPC commands::
+
+   from time import time
+
+   import numpy as np
+   import magscope
+   from magscope import PythonMicroscopeHardwareManagerBase
+
+   class MyMicroscopeHardware(PythonMicroscopeHardwareManagerBase):
+       def __init__(self):
+           super().__init__(device_uri="PYRO:Light@127.0.0.1:8002")
+           self.buffer_shape = (1000, 2)
+
+       def fetch(self):
+           power = float(self.microscope_device.power)
+           self._buffer.write(np.array([[time(), power]], dtype=float))
+
+This base class supports three ways of supplying the underlying microscope device:
+
+* ``device_factory``: recommended for local devices so construction happens in the child process
+* ``device_uri``: recommended for python-microscope device-server deployments
+* ``device``: useful when you already have a proxy or device object and know it is safe to share

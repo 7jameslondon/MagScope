@@ -110,3 +110,53 @@ During startup the camera manager calls :py:meth:`magscope.camera.CameraBase.con
 
 * Watch the console for warnings; if :py:meth:`magscope.camera.CameraBase.connect` raises an exception MagScope will stay in simulation mode and report the error.
 * Confirm that the GUI reflects any custom settings you exposed in ``settings`` and that adjusting them updates your device through ``__setitem__``.
+
+python-microscope cameras
+-------------------------
+
+If your camera is already available through `python-microscope <https://python-microscope.org/>`_, MagScope can wrap it directly with :class:`magscope.PythonMicroscopeCamera`.
+
+Install the optional dependency first::
+
+   pip install magscope[python-microscope]
+
+For local devices, prefer constructing the microscope device inside the camera manager process with ``device_factory``::
+
+   import numpy as np
+   import magscope
+   from magscope import PythonMicroscopeCamera
+   from microscope.simulators import SimulatedCamera
+
+   scope = magscope.MagScope()
+   scope.camera_manager.camera = PythonMicroscopeCamera(
+       width=512,
+       height=512,
+       dtype=np.uint16,
+       bits=16,
+       nm_per_px=5000.0,
+       device_factory=SimulatedCamera,
+   )
+   scope.start()
+
+For remote device-server cameras, provide the Pyro URI instead::
+
+   scope.camera_manager.camera = PythonMicroscopeCamera(
+       width=512,
+       height=512,
+       dtype=np.uint16,
+       bits=16,
+       nm_per_px=5000.0,
+       device_uri="PYRO:SomeCamera@127.0.0.1:8000",
+   )
+
+``PythonMicroscopeCamera`` reads frames from a microscope camera that exposes ``grab_next_data()`` or ``trigger_and_wait()``. It always exposes a ``framerate`` setting to MagScope. If your microscope device also has settings you want in the GUI, map them with ``settings_map``::
+
+   scope.camera_manager.camera = PythonMicroscopeCamera(
+       width=512,
+       height=512,
+       dtype=np.uint16,
+       bits=16,
+       nm_per_px=5000.0,
+       device_uri="PYRO:SomeCamera@127.0.0.1:8000",
+       settings_map={"framerate": "fps", "exposure": "exposure time"},
+   )
