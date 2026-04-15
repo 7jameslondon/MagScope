@@ -23,6 +23,7 @@
 ## 📖 Documentation
 View the full guide to MagScope at [magscope.readthedocs.io](https://magscope.readthedocs.io)
 
+See [CHANGELOG.md](CHANGELOG.md) for release-oriented summaries of notable user-facing changes.
 Maintainers can follow [RELEASE.md](RELEASE.md) for the project release checklist.
 
 ## 💬 Support
