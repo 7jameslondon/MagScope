@@ -5,7 +5,7 @@ User Guide
 This guide explains how to launch MagScope and use its interface. If you have not already read the :doc:`getting_started`.
 
 Launching the Demo Graphical User Interface (GUI)
-----------------------
+-------------------------------------------------
 MagScope includes a simulated camera so the interface can be explored without laboratory hardware. Launch the demo from a Python interpreter by running::
 
    import magscope
@@ -56,7 +56,7 @@ Alternatively, you can specify the number of windows between 1-3 using the follo
         :width: 200px
 
 Live Video Viewer
---------------
+-----------------
 MagScope automatically launches with a live video feed. You can zoom by scrolling in and out with a mouse wheel.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Video_Viewer_v1.gif

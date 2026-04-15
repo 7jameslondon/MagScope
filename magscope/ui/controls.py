@@ -75,13 +75,13 @@ from magscope.ipc_commands import (
 )
 from magscope.scripting import ScriptStatus
 from magscope.settings import MagScopeSettings
-from magscope.ui import (
+from magscope.ui.widgets import (
     CollapsibleGroupBox,
+    FlashLabel,
     LabeledCheckbox,
     LabeledLineEdit,
     LabeledLineEditWithValue,
 )
-from magscope.ui.widgets import FlashLabel
 from magscope.utils import AcquisitionMode, crop_stack_to_rois
 
 # Import only for the type check to avoid circular import

@@ -55,7 +55,6 @@ from magscope._logging import configure_logging, get_logger
 from magscope.beadlock import BeadLockManager
 from magscope.camera import CameraManager
 from magscope.datatypes import BeadRoiBuffer, LiveProfileBuffer, MatrixBuffer, VideoBuffer
-from magscope.ui import ControlPanelBase, TimeSeriesPlotBase, UIManager
 from magscope.hardware import FocusMotorBase, HardwareManagerBase
 from magscope.ipc import (
     broadcast_command,
@@ -77,6 +76,7 @@ from magscope.ipc_commands import (
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
 from magscope.settings import MagScopeSettings
 from magscope.scripting import ScriptManager
+from magscope.ui import UIManager
 from magscope.videoprocessing import VideoProcessorManager
 from magscope.zlut_generation import ZLUTGenerationManager
 
@@ -85,6 +85,8 @@ logger = get_logger("scope")
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event as EventType
     from multiprocessing.synchronize import Lock as LockType
+    from magscope.ui.controls import ControlPanelBase
+    from magscope.ui.plots import TimeSeriesPlotBase
 
 
 class MagScope(metaclass=SingletonMeta):
@@ -248,11 +250,11 @@ class MagScope(metaclass=SingletonMeta):
         self._hardware[hardware.name] = hardware
         self.command_registry.register_manager(hardware)
 
-    def add_control(self, control_type: type(ControlPanelBase), column: int):
+    def add_control(self, control_type: type['ControlPanelBase'], column: int):
         """Schedule a GUI control panel to be added when the UI manager starts."""
         self.ui_manager.controls_to_add.append((control_type, column))
 
-    def add_timeplot(self, plot: TimeSeriesPlotBase):
+    def add_timeplot(self, plot: 'TimeSeriesPlotBase'):
         """Schedule a time-series plot for inclusion in the GUI at startup."""
         self.ui_manager.plots_to_add.append(plot)
 

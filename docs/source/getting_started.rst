@@ -14,7 +14,7 @@ There are many ways to install Python. If you have a preferred method that works
 You can always download Python for free from the official website: `python.org <https://www.python.org/downloads/>`_.
 
 (2) Setup a Virtual Environment
-------------------------------
+-------------------------------
 You can run MagScope in Python directly without a virtual environment, but it is not recommended.
 If this is your first time using virtual environments, I recommend following `this guide from w3schools <https://docs.python.org/3/tutorial/venv.html>`_.
 

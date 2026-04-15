@@ -31,28 +31,20 @@ from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDatas
 from magscope.ipc import Delivery, register_ipc_command
 from magscope.ipc_commands import *
 from magscope.ui.auto_bead_selection_dialog import AutoBeadSelectionDialog
-from magscope.ui import (
+from magscope.ui.controls import (
     AcquisitionPanel,
-    BeadGraphic,
+    AllanDeviationPanel,
     BeadSelectionPanel,
     CameraPanel,
     ControlPanelBase,
-    GripSplitter,
     HistogramPanel,
-    PlotWorker,
-    ResizableLabel,
-    ScriptPanel,
-    StatusPanel,
-    TimeSeriesPlotBase,
-    VideoViewer,
-)
-from magscope.ui.controls import (
-    AllanDeviationPanel,
     HelpPanel,
     MagScopeSettingsPanel,
     PlotSettingsPanel,
     ProfilePanel,
     ResetPanel,
+    ScriptPanel,
+    StatusPanel,
     TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationDialog,
@@ -67,7 +59,9 @@ from magscope.ui.panel_layout import (
     PanelWrapper,
     ReorderableColumn,
 )
-from magscope.ui.widgets import CollapsibleGroupBox
+from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase
+from magscope.ui.video_viewer import VideoViewer
+from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, GripSplitter, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import MagScopeSettings

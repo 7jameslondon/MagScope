@@ -152,13 +152,13 @@ class ManagerProcessBase(Process, ABC, metaclass=SingletonABCMeta):
         }
 
     def run(self):
-        """ Start the process when 'start()' is called
+        """Start the process when ``start()`` is called.
 
-            run should create a loop that calls '_check_pipe()' last
-            Example:
-                while self._running:
-                    # do other stuff
-                    self._check_pipe() # should be done last
+        Subclasses should create a main loop that calls ``receive_ipc()`` last::
+
+            while self._running:
+                # do other stuff
+                self.receive_ipc()
         """
         if self._running:
             warn(f'{self.name} is already running')
