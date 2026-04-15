@@ -23,6 +23,8 @@
 ## 📖 Documentation
 View the full guide to MagScope at [magscope.readthedocs.io](https://magscope.readthedocs.io)
 
+Maintainers can follow [RELEASE.md](RELEASE.md) for the project release checklist.
+
 ## 💬 Support
 Report issues and make requests on the [GitHub issue tracker](https://github.com/7jameslondon/MagScope/issues)<br><br>
 Having trouble? Need help? Have suggestions? Want to contribute?<br>
