@@ -1080,6 +1080,7 @@ def test_allan_deviation_panel_refresh_uses_selected_bead_without_reference(qtbo
     panel = AllanDeviationPanel(manager)
     qtbot.addWidget(panel)
     panel.history_window.setText('10')
+    panel.taus_mode.setCurrentText('Octave')
 
     panel.refresh_plot()
 
