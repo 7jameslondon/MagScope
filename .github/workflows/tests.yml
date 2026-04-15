@@ -45,51 +45,18 @@ jobs:
           export QT_QPA_PLATFORM=offscreen
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running Linux Python 3.13 diagnostics: package init tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
-          echo "Running Linux Python 3.13 diagnostics: ZLUT preview test"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
-          echo "Running Linux Python 3.13 diagnostics: Allan deviation tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
-          echo "Running Linux Python 3.13 diagnostics: ZLUT generation tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "zlut_generation or live_preview or evaluation_preview or build_zlut_preview_payload" -q
-          echo "Running Linux Python 3.13 diagnostics: UI manager and controls tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "controls or ui_manager or loading_window or startup_ready_window or notify_startup_ready or create_central_widgets or tracks_time_series_plot or status_updates or update_beads_in_view" -q
-          echo "Running Linux Python 3.13 diagnostics: bead graphic and selection tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "bead_graphic or bead_overlay or add_random_beads or auto_bead_selection or selected_bead or reference_bead or bead_rois or callback_view_clicked or clear_beads or move_beads or incremental_bead_roi or add_bead" -q
-          echo "Running Linux Python 3.13 diagnostics: remaining test_ui tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel and not zlut_generation and not live_preview and not evaluation_preview and not build_zlut_preview_payload and not controls and not ui_manager and not loading_window and not startup_ready_window and not notify_startup_ready and not create_central_widgets and not tracks_time_series_plot and not status_updates and not update_beads_in_view and not bead_graphic and not bead_overlay and not add_random_beads and not auto_bead_selection and not selected_bead and not reference_bead and not bead_rois and not callback_view_clicked and not clear_beads and not move_beads and not incremental_bead_roi and not add_bead" -q
-          echo "Running Linux Python 3.13 diagnostics: remaining tests"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+          xvfb-run -a python -X dev -X faulthandler -m pytest -q
         elif [ "${{ runner.os }}" = "Linux" ]; then
           export QT_QPA_PLATFORM=offscreen
           xvfb-run -a python -m pytest -q
         elif [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running Windows Python 3.13 diagnostics: package init tests"
-          python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
-          echo "Running Windows Python 3.13 diagnostics: ZLUT preview test"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
-          echo "Running Windows Python 3.13 diagnostics: Allan deviation tests"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
-          echo "Running Windows Python 3.13 diagnostics: remaining test_ui tests"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel" -q
-          echo "Running Windows Python 3.13 diagnostics: remaining tests"
-          python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+          python -X dev -X faulthandler -m pytest -q
         elif [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running macOS Python 3.13 diagnostics: package init tests"
-          python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
-          echo "Running macOS Python 3.13 diagnostics: ZLUT preview test"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
-          echo "Running macOS Python 3.13 diagnostics: Allan deviation tests"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
-          echo "Running macOS Python 3.13 diagnostics: remaining test_ui tests"
-          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel" -q
-          echo "Running macOS Python 3.13 diagnostics: remaining tests"
-          python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
+          python -X dev -X faulthandler -m pytest -q
         else
           python -m pytest -q
         fi

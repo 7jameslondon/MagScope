@@ -170,6 +170,44 @@ class PlotWorker(QObject):
     def _stop(self):
         self._is_running = False
 
+    def dispose(self) -> None:
+        self._is_running = False
+
+        canvas = getattr(self, 'canvas', None)
+        figure = getattr(self, 'figure', None)
+
+        if canvas is not None:
+            try:
+                canvas.hide()
+            except RuntimeError:
+                pass
+            try:
+                canvas.setParent(None)
+            except RuntimeError:
+                pass
+
+        if figure is not None:
+            try:
+                figure.clear()
+            except Exception:
+                pass
+
+        if canvas is not None:
+            try:
+                canvas.close()
+            except RuntimeError:
+                pass
+            try:
+                canvas.deleteLater()
+            except RuntimeError:
+                pass
+
+        self.axes = None
+        self.canvas = None
+        self.figure = None
+        self._tracks_snapshot = None
+        self.plots = []
+
     def _update_figure_size(self, width: int, height: int):
         """Slot: update figure size based on QLabel dimensions."""
         if width > 0 and height > 0:

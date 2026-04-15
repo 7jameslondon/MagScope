@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
-from PyQt6.QtWidgets import QLabel, QGraphicsScene, QMainWindow, QSizePolicy, QWidget
+from PyQt6.QtCore import QPointF, QRect, QRectF, QSettings, Qt
+from PyQt6.QtWidgets import QApplication, QLabel, QGraphicsScene, QMainWindow, QSizePolicy, QWidget
 
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
@@ -317,6 +317,30 @@ class FakeZLutGenerationDialog:
 
 
 @pytest.fixture
+def isolated_qsettings(tmp_path):
+    previous_format = QSettings.defaultFormat()
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    QSettings('MagScope', 'MagScope').clear()
+    yield
+    QSettings('MagScope', 'MagScope').clear()
+    QSettings.setDefaultFormat(previous_format)
+
+
+@pytest.fixture(autouse=True)
+def cleanup_ui_state(isolated_qsettings):
+    clear_ui_manager_singleton()
+    yield
+    for widget in QApplication.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+    clear_ui_manager_singleton()
+
+
+@pytest.fixture
 def zlut_dialog_factory(qtbot, monkeypatch):
     from magscope.ui import controls as controls_module
 
@@ -459,6 +483,7 @@ def ui_manager():
         reference_bead_signal=FakeSignal(),
     )
     yield manager
+    manager.quit()
     clear_ui_manager_singleton()
 
 
