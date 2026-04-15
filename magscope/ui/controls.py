@@ -126,6 +126,57 @@ class ControlPanelBase(QWidget):
             self.groupbox.setStyleSheet("")
 
 
+class MatplotlibCleanupMixin:
+    def _init_matplotlib_cleanup(self) -> None:
+        self._matplotlib_disposed = False
+        self.destroyed.connect(self._dispose_matplotlib)  # type: ignore[arg-type]
+
+    def _dispose_matplotlib(self, *_args: object) -> None:
+        if getattr(self, '_matplotlib_disposed', False):
+            return
+        self._matplotlib_disposed = True
+
+        canvas = getattr(self, 'canvas', None)
+        figure = getattr(self, 'figure', None)
+
+        if canvas is not None:
+            try:
+                canvas.hide()
+            except RuntimeError:
+                pass
+            try:
+                canvas.setParent(None)
+            except RuntimeError:
+                pass
+
+        if figure is not None:
+            try:
+                figure.clear()
+            except Exception:
+                pass
+
+        if canvas is not None:
+            try:
+                canvas.close()
+            except RuntimeError:
+                pass
+            try:
+                canvas.deleteLater()
+            except RuntimeError:
+                pass
+
+        if hasattr(self, 'axes'):
+            self.axes = None
+        if hasattr(self, 'figure'):
+            self.figure = None
+        if hasattr(self, 'canvas'):
+            self.canvas = None
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._dispose_matplotlib()
+        super().closeEvent(event)
+
+
 class ResponsivePlotCanvas(FigureCanvas):
     """Figure canvas that grows taller when constrained to a narrow panel."""
 
@@ -657,7 +708,7 @@ class CameraPanel(ControlPanelBase):
         return f"Last updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
 
-class HistogramPanel(ControlPanelBase):
+class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Histogram', collapsed_by_default=True)
@@ -710,6 +761,7 @@ class HistogramPanel(ControlPanelBase):
         self.axes.set_xlim(0, 1)
 
         self.layout().addWidget(self.canvas)
+        self._init_matplotlib_cleanup()
 
     def enabled_callback(self, enabled: bool) -> None:
         effective_enabled = enabled and not self.groupbox.collapsed
@@ -1092,7 +1144,7 @@ def load_tweezepy_avar() -> tuple[callable | None, str | None]:
     return avar, None
 
 
-class AllanDeviationPanel(ControlPanelBase):
+class AllanDeviationPanel(MatplotlibCleanupMixin, ControlPanelBase):
     _SETTINGS_GROUP = 'AllanDeviationPanel'
 
     def __init__(self, manager: 'UIManager'):
@@ -1144,6 +1196,7 @@ class AllanDeviationPanel(ControlPanelBase):
         self.layout().addWidget(self.status_label)
 
         self._configure_axes()
+        self._init_matplotlib_cleanup()
         self.history_window.editingFinished.connect(self._persist_controls)  # type: ignore
         self.taus_mode.currentTextChanged.connect(lambda _value: self._persist_controls())
 
@@ -1362,7 +1415,7 @@ class AllanDeviationPanel(ControlPanelBase):
         return aligned_timestamps, aligned_values
 
 
-class ProfilePanel(ControlPanelBase):
+class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Radial Profile Monitor', collapsed_by_default=True)
 
@@ -1404,6 +1457,7 @@ class ProfilePanel(ControlPanelBase):
         self.axes.spines['left'].set_visible(False)
         self.axes.set_yticks([])
         self.line, = self.axes.plot([], [], 'w')
+        self._init_matplotlib_cleanup()
 
     def enabled_callback(self, enabled: bool) -> None:
         effective_enabled = enabled and not self.groupbox.collapsed
@@ -2572,7 +2626,7 @@ class ZLUTGenerationPanel(ControlPanelBase):
         _ = (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
 
 
-class ZLUTSweepPreviewWidget(QWidget):
+class ZLUTSweepPreviewWidget(MatplotlibCleanupMixin, QWidget):
     _STATE_LABELS = {
         0: 'Absent',
         1: 'Creating',
@@ -2613,6 +2667,7 @@ class ZLUTSweepPreviewWidget(QWidget):
         )
         self.axes.set_title('No sweep preview available')
         self.figure.tight_layout()
+        self._init_matplotlib_cleanup()
 
     def clear(self, message: str = 'Waiting for Z-LUT sweep data...') -> None:
         self.summary_label.setText(message)
