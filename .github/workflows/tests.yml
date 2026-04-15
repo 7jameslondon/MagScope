@@ -45,8 +45,14 @@ jobs:
           export QT_QPA_PLATFORM=offscreen
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running Linux Python 3.13 diagnostics: UI/package tests first"
-          xvfb-run -a python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running Linux Python 3.13 diagnostics: package init tests"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
+          echo "Running Linux Python 3.13 diagnostics: ZLUT preview test"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
+          echo "Running Linux Python 3.13 diagnostics: Allan deviation tests"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
+          echo "Running Linux Python 3.13 diagnostics: remaining test_ui tests"
+          xvfb-run -a python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel" -q
           echo "Running Linux Python 3.13 diagnostics: remaining tests"
           xvfb-run -a python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
         elif [ "${{ runner.os }}" = "Linux" ]; then
@@ -55,15 +61,27 @@ jobs:
         elif [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running Windows Python 3.13 diagnostics: UI/package tests first"
-          python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running Windows Python 3.13 diagnostics: package init tests"
+          python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
+          echo "Running Windows Python 3.13 diagnostics: ZLUT preview test"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
+          echo "Running Windows Python 3.13 diagnostics: Allan deviation tests"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
+          echo "Running Windows Python 3.13 diagnostics: remaining test_ui tests"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel" -q
           echo "Running Windows Python 3.13 diagnostics: remaining tests"
           python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
         elif [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.python-version }}" = "3.13" ]; then
           export PYTHONFAULTHANDLER=1
           export PYTHONMALLOC=debug
-          echo "Running macOS Python 3.13 diagnostics: UI/package tests first"
-          python -X dev -X faulthandler -m pytest tests/test_package_init.py tests/ui/test_ui.py -q
+          echo "Running macOS Python 3.13 diagnostics: package init tests"
+          python -X dev -X faulthandler -m pytest tests/test_package_init.py -q
+          echo "Running macOS Python 3.13 diagnostics: ZLUT preview test"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "test_zlut_preview_widget_masks_non_finite_values_without_red_override" -q
+          echo "Running macOS Python 3.13 diagnostics: Allan deviation tests"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "allan_deviation_panel" -q
+          echo "Running macOS Python 3.13 diagnostics: remaining test_ui tests"
+          python -X dev -X faulthandler -m pytest tests/ui/test_ui.py -k "not test_zlut_preview_widget_masks_non_finite_values_without_red_override and not allan_deviation_panel" -q
           echo "Running macOS Python 3.13 diagnostics: remaining tests"
           python -X dev -X faulthandler -m pytest tests -q --ignore=tests/test_package_init.py --ignore=tests/ui/test_ui.py
         else
