@@ -94,6 +94,16 @@ MagScope is a Python framework for live data acquisition and analysis in magneti
 
       Source code, issues, and releases.
 
+   .. grid-item-card:: Changelog
+      :link: https://github.com/7jameslondon/MagScope/blob/master/CHANGELOG.md
+      :link-type: url
+      :text-align: center
+      :shadow: md
+
+      :octicon:`history;3rem;sd-text-info`
+
+      Release-oriented summaries of notable changes.
+
    .. grid-item-card:: (Advanced) API Reference
       :link: api/index
       :link-type: doc
