@@ -809,7 +809,7 @@ class FlashLabel(QLabel):
     def __init__(self, text=""):
         super().__init__(text)
         self._flash_progress = 0.0
-        self._timer = QTimer()
+        self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_flash)
         self._step = 0
 

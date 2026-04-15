@@ -154,6 +154,7 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_bead_ids: list[int] = []
         self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
+        self._shutdown_complete = False
 
     @staticmethod
     def _zlut_requested_sweep_edges(
@@ -312,9 +313,7 @@ class UIManager(ManagerProcessBase):
         # Finally start the live plots
         self.plot_worker.moveToThread(self.plots_thread)
         self.plots_thread.started.connect(self.plot_worker.run)  # noqa
-        self.plot_worker.image_signal.connect(
-            lambda img: self.plots_widget.setPixmap(QPixmap.fromImage(img))
-        )
+        self.plot_worker.image_signal.connect(self._set_plot_image)
         self.plots_widget.resized.connect(self.update_plot_figure_size)
         self.plots_thread.start(QThread.Priority.LowPriority)
 
@@ -347,13 +346,13 @@ class UIManager(ManagerProcessBase):
         self.video_viewer.sceneClicked.connect(self.callback_view_clicked)
 
         # Timer
-        self._timer = QTimer()
+        self._timer = QTimer(self.qt_app)
         self._timer.timeout.connect(self._main_loop_tick)  # noqa
         self._timer.setInterval(0)
         self._timer.start()
 
         # Timer - Video Display
-        self._timer_video_view = QTimer()
+        self._timer_video_view = QTimer(self.qt_app)
         self._timer_video_view.timeout.connect(self._update_view_and_hist_tick)
         self._timer_video_view.setInterval(25)
         self._timer_video_view.start()
@@ -413,18 +412,122 @@ class UIManager(ManagerProcessBase):
         msg.show()
 
     def update_plot_figure_size(self, w, h):
-        self.plot_worker.figure_size_signal.emit(w, h)
+        if hasattr(self, 'plot_worker') and self.plot_worker is not None:
+            self.plot_worker.figure_size_signal.emit(w, h)
+
+    def _set_plot_image(self, img: QImage) -> None:
+        if self.plots_widget is None:
+            return
+        self.plots_widget.setPixmap(QPixmap.fromImage(img))
+
+    @staticmethod
+    def _disconnect_signal(signal, callback) -> None:
+        try:
+            signal.disconnect(callback)
+        except (RuntimeError, TypeError):
+            pass
+
+    @staticmethod
+    def _stop_timer(timer: QTimer | None) -> None:
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except RuntimeError:
+            pass
+        try:
+            timer.deleteLater()
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    def _close_widget(widget: QWidget | None) -> None:
+        if widget is None:
+            return
+        try:
+            widget.close()
+        except (AttributeError, RuntimeError):
+            pass
+        try:
+            widget.deleteLater()
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _shutdown_plot_worker(self) -> None:
+        plot_worker = getattr(self, 'plot_worker', None)
+        plots_thread = getattr(self, 'plots_thread', None)
+        plots_widget = getattr(self, 'plots_widget', None)
+
+        if plot_worker is None:
+            return
+
+        if plots_widget is not None:
+            self._disconnect_signal(plot_worker.image_signal, self._set_plot_image)
+            self._disconnect_signal(plots_widget.resized, self.update_plot_figure_size)
+
+        stop = getattr(plot_worker, '_stop', None)
+        if callable(stop):
+            stop()
+
+        if plots_thread is not None:
+            try:
+                plots_thread.quit()
+            except RuntimeError:
+                pass
+            try:
+                plots_thread.wait()
+            except RuntimeError:
+                pass
+            try:
+                plots_thread.deleteLater()
+            except RuntimeError:
+                pass
+
+        dispose = getattr(plot_worker, 'dispose', None)
+        if callable(dispose):
+            dispose()
+
+        self.plot_worker = None
+        self.plots_thread = None
 
     def quit(self):
-        super().quit()
+        if self._shutdown_complete or self._quitting.is_set():
+            return
 
-        # Stop the plot worker
-        self.plot_worker._stop()
-        self.plots_thread.quit()
-        self.plots_thread.wait()
+        can_use_process_quit = (
+            self._command_registry is not None
+            and hasattr(self._command_registry, 'route_for')
+            and (self._pipe is None or hasattr(self._pipe, 'close'))
+            and (self._magscope_quitting is None or hasattr(self._magscope_quitting, 'is_set'))
+        )
 
-        for window in self.windows:
-            window.close()
+        if not can_use_process_quit:
+            self._quitting.set()
+            self._running = False
+        else:
+            super().quit()
+
+        self._running = False
+        self._stop_timer(self._timer)
+        self._timer = None
+        self._stop_timer(self._timer_video_view)
+        self._timer_video_view = None
+
+        if self.video_viewer is not None:
+            coordinates_changed = getattr(self.video_viewer, 'coordinatesChanged', None)
+            if coordinates_changed is not None:
+                self._disconnect_signal(coordinates_changed, self.update_view_coords)
+            scene_clicked = getattr(self.video_viewer, 'sceneClicked', None)
+            if scene_clicked is not None:
+                self._disconnect_signal(scene_clicked, self.callback_view_clicked)
+
+        self._shutdown_plot_worker()
+
+        if self._auto_bead_selection_dialog is not None:
+            force_close = getattr(self._auto_bead_selection_dialog, 'force_close', None)
+            if callable(force_close):
+                force_close()
+            self._auto_bead_selection_dialog = None
 
         self._detach_zlut_sweep_dataset()
         self._zlut_generation_phase = 'idle'
@@ -434,8 +537,31 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_bead_ids = []
         self._zlut_evaluation_selected_bead_id = None
         if self._zlut_generation_dialog is not None:
-            self._zlut_generation_dialog.force_close()
+            force_close = getattr(self._zlut_generation_dialog, 'force_close', None)
+            if callable(force_close):
+                force_close()
             self._zlut_generation_dialog = None
+
+        for window in self.windows:
+            self._close_widget(window)
+        self.windows = []
+
+        for central_widget in self.central_widgets:
+            self._close_widget(central_widget)
+        self.central_widgets = []
+        self.central_layouts = []
+
+        self._close_widget(self.controls)
+        self.controls = None
+        self._close_widget(self.video_viewer)
+        self.video_viewer = None
+        self._close_widget(getattr(self, 'plots_widget', None))
+        self.plots_widget = None
+
+        if self.qt_app is not None:
+            self.qt_app.quit()
+
+        self._shutdown_complete = True
 
     def do_main_loop(self):
         # Because the UIManager is a special case with a GUI

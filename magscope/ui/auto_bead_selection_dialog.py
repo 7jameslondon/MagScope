@@ -572,6 +572,11 @@ class AutoBeadSelectionDialog(QDialog):
         self._shutdown_search_backend()
         super().accept()
 
+    def force_close(self) -> None:
+        self._search_in_progress = False
+        self._shutdown_search_backend()
+        self.close()
+
     def closeEvent(self, event) -> None:
         if self._search_in_progress:
             event.ignore()
