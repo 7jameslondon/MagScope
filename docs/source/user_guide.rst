@@ -85,30 +85,27 @@ The interface can be reset to the default arrangement by clicking the "Reset the
 
 Bead Selection
 --------------
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v2.gif
    :alt: Demonstration of beads being added, moved and removed
    :align: center
 
 Instructions and some controls for selecting bead ROIs can be found in the "Bead Selection" panel.
 To **add** a bead ROI click on the live video feed. A bead ROI will be created centered on your cursor.
-You can **move** the ROI by dragging the ROI.
+The first ROI added is automatically highlighted as the selected bead, click on an existing ROI to select a different bead.
+To **move** a bead ROI, first select it by clicking then dragging the ROI.
 You can **remove** a bead by right-clicking the ROI.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Bead_Selection_Panel_v2.jpg
    :alt: The bead selection panel
    :align: center
 
 Each bead ROI will be assigned an ID number in the corner of the ROI.
 The ID number always increases to prevent mixing up beads.
+``Reassign IDs`` will reset the ID numbers of each bead without removing any ROIs. This is useful for when ROIs have been manually removed, leaving gaps in ID numbers that reassigning can fill in.
 
 To clear all beads and reset the ID number count to 0 click the "Remove All Beads" button in the "Bead Selection" panel.
 
 You can also click ``Auto Bead Selection`` to freeze one recent live image, choose a seed bead, and preview matching bead ROIs before adding them. The dialog shows the frozen image, the current bead ROIs, a score threshold control for the proposed matches, and the match score next to each proposed ROI. Click ``Accept Proposed Beads`` to add the visible proposals through the normal bead creation path, or ``Cancel`` to leave the confirmed bead list unchanged.
-
-During an experiment you may want to lock the beads so you do not accidentally add/move/remove any of the ROIs.
-You can do this by click the 🔓 button on the "Bead Selection" panel.
-This will only affect user interactions (it will not effect the XY-Lock).
-You can click the button again to unlock.
 
 Live Plots
 ----------
@@ -121,15 +118,16 @@ See the :doc:`connect_hardware` guide for details.
    :align: center
 
 You can set limits on any axis using the min and max limits in the "Plot Settings" panel.
-By default the min and max values are automatically calculated. Times should be specified with a 24-hour clock.
+By default the min and max values are automatically calculated. The default time axis setting is ``Absolute`` times which are specified with a 24-hour clock.
 Such as "14:20:45" for 14 hours, 20 minutes, and 45 seconds. Or "14.12.45" will work the same. Or "14" for 14 hours, 0 minutes, and 0 seconds.
+The alternative ``Relative`` time mode uses the same 24-hour clock and displays the most recent data for the specified interval. For example "00.05.00" will plot the last 5 minutes of data.
 
-You can control which bead is plotted and which bead is selected with the "Plot Settings" panel.
+You can control which bead is selected and plotted within the "Plot Settings" panel.
 You can also set a reference bead who values will be subtracted from the other beads.
-Changing the plot setting does not affect how any of the data is saved.
-The raw tracks are always saved.
+Changing the plot settings does not affect how any of the data is saved.
+The raw tracking data is always saved.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plot_Settings_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Plot_Settings_Panel_v2.jpg
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
@@ -137,7 +135,7 @@ The selected bead's ROI will be highlighted in red.
 The reference bead's ROI will be highlighted in green.
 All other bead ROIs will be highlighted in blue.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selected_Bead_for_Plot_Setting_Panel_v1.jpg
+.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selected_Bead_for_Plot_Setting_Panel_v2.jpg
    :alt: Demonstration of the live video feed (video viewer)
    :align: center
 
@@ -183,7 +181,7 @@ Acquisition (Saving Data)
 -------------------------
 The "Acquire" checkbox enables data processing in general.
 If this is disabled no video will be sent for processing.
-These is almost never a reason to disable this.
+There is almost never a reason to disable this.
 
 The "Save" checkbox enabled saving data to the disk.
 The data will be saved to the directory selected with the "Select Directory to Save To" button.
@@ -230,6 +228,12 @@ It also provides basic information about the current Z-LUT.
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Z-LUT_Panel_v1.jpg
    :alt: The Z-LUT selection panel
    :align: center
+
+Z-LUT Generation
+----------------
+You can generate a Z-LUT using a focus motor. A simulated focus motor can be found in the examples folder.
+Select a bead ROI, then input the target start, step, and stop focus positions, as well as how many measurements should be taken at each step and take the average of.
+Clicking generate opens a dialog window that shows a preview of the raw sweep as the Z-LUT is created. After finishing, it can then be saved as a .txt file
 
 XY-Lock
 -------
