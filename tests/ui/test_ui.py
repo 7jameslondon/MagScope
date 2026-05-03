@@ -1121,6 +1121,40 @@ def test_viewer_layout_save_restore_and_reset(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_reset_viewer_layout_restores_hidden_docks(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._apply_default_viewer_layout()
+
+    manager.camera_dock.hide()
+    manager.plots_dock.hide()
+    assert manager.camera_dock.isHidden()
+    assert manager.plots_dock.isHidden()
+
+    manager._reset_viewer_layout()
+
+    assert not manager.camera_dock.isHidden()
+    assert not manager.plots_dock.isHidden()
+    assert not manager.camera_dock.isFloating()
+    assert not manager.plots_dock.isFloating()
+    assert not manager.camera_dock_header.isVisible()
+    assert not manager.plots_dock_header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
 def test_invalid_viewer_layout_restore_clears_saved_state(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1144,6 +1178,34 @@ def test_invalid_viewer_layout_restore_clears_saved_state(qtbot):
     assert not manager._restore_viewer_layout()
     assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
     assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is None
+
+    clear_ui_manager_singleton()
+
+
+def test_quit_saves_viewer_layout(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._apply_default_viewer_layout()
+    manager.plots_dock.setFloating(True)
+    qtbot.wait(0)
+
+    manager.quit()
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is not None
+    assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is not None
 
     clear_ui_manager_singleton()
 
