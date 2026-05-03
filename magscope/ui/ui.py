@@ -1168,12 +1168,19 @@ class UIManager(ManagerProcessBase):
 
         window = self.windows[0]
         geometry_restored = window.restoreGeometry(geometry)
-        state_restored = window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
-        self._sync_viewer_dock_headers()
-        restored = bool(geometry_restored and state_restored)
-        if not restored:
+        if not geometry_restored:
             self._clear_viewer_layout()
-        return restored
+            self._apply_default_viewer_layout()
+            return False
+
+        state_restored = window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+        if not state_restored:
+            self._clear_viewer_layout()
+            self._apply_default_viewer_layout()
+            return False
+
+        self._sync_viewer_dock_headers()
+        return True
 
     def _clear_viewer_layout(self) -> None:
         settings = self._viewer_layout_settings()

@@ -1182,6 +1182,42 @@ def test_invalid_viewer_layout_restore_clears_saved_state(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_invalid_viewer_geometry_does_not_apply_saved_dock_state(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._apply_default_viewer_layout()
+
+    manager.plots_dock.hide()
+    saved_dock_state = window.saveState(UIManager.VIEWER_LAYOUT_STATE_VERSION)
+    manager._apply_default_viewer_layout()
+    assert not manager.camera_dock.isHidden()
+    assert not manager.plots_dock.isHidden()
+
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY, b'invalid geometry')
+    settings.setValue(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY, saved_dock_state)
+
+    assert not manager._restore_viewer_layout()
+    assert not manager.camera_dock.isHidden()
+    assert not manager.plots_dock.isHidden()
+    assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
+    assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is None
+
+    clear_ui_manager_singleton()
+
+
 def test_quit_saves_viewer_layout(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()

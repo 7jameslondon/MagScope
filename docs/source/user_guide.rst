@@ -24,14 +24,9 @@ Or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
 Windows and Multiple Screens
 ----------------------------
 It is often easier to see everything in MagScope with multiple screens.
-By default MagScope will try to detect how many screens your computer has and place one Window in full screen on each.
-Alternatively, you can specify the number of windows between 1-3 using the following::
-
-   import magscope
-
-   scope = magscope.MagScope()
-   scope.ui_manager.n_windows = 1
-   scope.start()
+MagScope opens one main window with dockable Live Camera and Live Plots panes.
+You can undock either pane and move it to another screen, then dock it again by dragging it back into the main window.
+Use the Layout menu to show hidden viewer panes, dock all floating panes, or reset the viewer layout.
 
 .. list-table::
    :widths: 15 85
