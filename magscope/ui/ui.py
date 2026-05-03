@@ -9,9 +9,10 @@ from warnings import warn
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
-from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
+from PyQt6.QtGui import QAction, QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -116,6 +117,7 @@ class UIManager(ManagerProcessBase):
         self.central_layouts: list[QLayout] = []
         self.controls: Controls | None = None
         self.controls_to_add = []
+        self.camera_dock: QDockWidget | None = None
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
@@ -123,6 +125,7 @@ class UIManager(ManagerProcessBase):
         self.plot_worker: PlotWorker
         self.plot_thread: QThread
         self.plots_widget: QLabel
+        self.plots_dock: QDockWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
@@ -314,24 +317,23 @@ class UIManager(ManagerProcessBase):
         # Create the layouts for each window
         self.create_central_widgets()
 
-        # Create the windows
-        for i in range(self._n_windows):
-            if i == 0:
-                window = _StartupReadyWindow(self._notify_startup_ready)
-            else:
-                window = QMainWindow()
-            window.setWindowTitle("MagScope")
-            screen = QApplication.screens()[i % len(QApplication.screens())]
-            geometry = screen.geometry()
-            window.setGeometry(
-                geometry.x(), geometry.y(), geometry.width(), geometry.height()
-            )
-            window.setMinimumWidth(300)
-            window.setMinimumHeight(300)
-            window.closeEvent = lambda _, w=window: self.quit()
-            window.showMaximized()
-            window.setCentralWidget(self.central_widgets[i])
-            self.windows.append(window)
+        # Create the main window. Viewer panes are dock widgets owned by this window.
+        window = _StartupReadyWindow(self._notify_startup_ready)
+        window.setWindowTitle("MagScope")
+        screen = QApplication.screens()[0]
+        geometry = screen.geometry()
+        window.setGeometry(
+            geometry.x(), geometry.y(), geometry.width(), geometry.height()
+        )
+        window.setMinimumWidth(300)
+        window.setMinimumHeight(300)
+        window.closeEvent = lambda _, w=window: self.quit()
+        window.setCentralWidget(self.central_widgets[0])
+        self.windows.append(window)
+        self._create_viewer_docks(window)
+        self._create_view_menu(window)
+        window.showMaximized()
+        self._reset_viewer_layout()
 
         self._show_settings_persistence_warning_if_needed()
 
@@ -539,6 +541,8 @@ class UIManager(ManagerProcessBase):
         for window in self.windows:
             self._close_widget(window)
         self.windows = []
+        self.camera_dock = None
+        self.plots_dock = None
 
         for central_widget in self.central_widgets:
             self._close_widget(central_widget)
@@ -964,13 +968,93 @@ class UIManager(ManagerProcessBase):
         self._refresh_bead_roi_cache()
 
     def create_central_widgets(self):
-        match self.n_windows:
-            case 1:
-                self.create_one_window_widgets()
-            case 2:
-                self.create_two_window_widgets()
-            case 3:
-                self.create_three_window_widgets()
+        central_widget = QWidget()
+        central_layout = QVBoxLayout()
+        central_widget.setLayout(central_layout)
+        central_layout.addWidget(self.controls)
+        self.central_widgets.append(central_widget)
+        self.central_layouts.append(central_layout)
+
+    def _create_viewer_docks(self, window: QMainWindow) -> None:
+        if self.video_viewer is None or self.plots_widget is None:
+            return
+
+        self.camera_dock = QDockWidget("Live Camera", window)
+        self.camera_dock.setObjectName("LiveCameraDock")
+        self.camera_dock.setWidget(self.video_viewer)
+        self.camera_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.camera_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        self.plots_dock = QDockWidget("Live Plots", window)
+        self.plots_dock.setObjectName("LivePlotsDock")
+        self.plots_dock.setWidget(self.plots_widget)
+        self.plots_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.plots_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
+        window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
+
+    def _create_view_menu(self, window: QMainWindow) -> None:
+        view_menu = window.menuBar().addMenu("View")
+        if self.camera_dock is not None:
+            view_menu.addAction(self.camera_dock.toggleViewAction())
+        if self.plots_dock is not None:
+            view_menu.addAction(self.plots_dock.toggleViewAction())
+        view_menu.addSeparator()
+        reset_action = QAction("Reset Viewer Layout", window)
+        reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
+        view_menu.addAction(reset_action)
+
+    def _reset_viewer_layout(self) -> None:
+        if not self.windows or self.camera_dock is None or self.plots_dock is None:
+            return
+
+        window = self.windows[0]
+        self.camera_dock.show()
+        self.plots_dock.show()
+        self.camera_dock.setFloating(False)
+        self.plots_dock.setFloating(False)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
+        window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
+        window.resizeDocks(
+            [self.camera_dock, self.plots_dock],
+            [max(1, window.height() * 2 // 3), max(1, window.height() // 3)],
+            Qt.Orientation.Vertical,
+        )
+        window.resizeDocks(
+            [self.camera_dock],
+            [max(300, window.width() - self.central_widgets[0].sizeHint().width())],
+            Qt.Orientation.Horizontal,
+        )
+
+        if self.n_windows >= 2:
+            self._float_dock_on_screen(self.plots_dock, 1)
+        if self.n_windows >= 3:
+            self._float_dock_on_screen(self.camera_dock, 1)
+            self._float_dock_on_screen(self.plots_dock, 2)
+
+    def _float_dock_on_screen(self, dock: QDockWidget, screen_index: int) -> None:
+        screens = QApplication.screens()
+        if screen_index >= len(screens):
+            return
+
+        geometry = screens[screen_index].availableGeometry()
+        dock.setFloating(True)
+        dock.setGeometry(
+            geometry.x(),
+            geometry.y(),
+            max(300, geometry.width()),
+            max(300, geometry.height()),
+        )
+        dock.show()
 
     def create_one_window_widgets(self):
         for i in range(1):

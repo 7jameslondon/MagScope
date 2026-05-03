@@ -918,7 +918,7 @@ def test_notify_startup_ready_sends_command_once(ui_manager, monkeypatch):
 
 
 @pytest.mark.parametrize('n_windows', [1, 2, 3])
-def test_create_central_widgets_attaches_expected_children(qtbot, n_windows):
+def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot, n_windows):
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = QLabel('controls')
@@ -930,20 +930,25 @@ def test_create_central_widgets_attaches_expected_children(qtbot, n_windows):
     manager.n_windows = n_windows
     manager.create_central_widgets()
 
-    assert len(manager.central_widgets) == n_windows
+    assert len(manager.central_widgets) == 1
+    assert contains_widget(manager.central_widgets[0], manager.controls)
+    assert not contains_widget(manager.central_widgets[0], manager.plots_widget)
+    assert not contains_widget(manager.central_widgets[0], manager.video_viewer)
 
-    if n_windows == 1:
-        assert contains_widget(manager.central_widgets[0], manager.controls)
-        assert contains_widget(manager.central_widgets[0], manager.plots_widget)
-        assert contains_widget(manager.central_widgets[0], manager.video_viewer)
-    elif n_windows == 2:
-        assert contains_widget(manager.central_widgets[0], manager.controls)
-        assert contains_widget(manager.central_widgets[0], manager.video_viewer)
-        assert contains_widget(manager.central_widgets[1], manager.plots_widget)
-    else:
-        assert contains_widget(manager.central_widgets[0], manager.controls)
-        assert contains_widget(manager.central_widgets[1], manager.video_viewer)
-        assert contains_widget(manager.central_widgets[2], manager.plots_widget)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._create_view_menu(window)
+    manager._reset_viewer_layout()
+
+    assert manager.camera_dock is not None
+    assert manager.plots_dock is not None
+    assert manager.camera_dock.widget() is manager.video_viewer
+    assert manager.plots_dock.widget() is manager.plots_widget
+    assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
+    assert manager.plots_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
 
     clear_ui_manager_singleton()
 
