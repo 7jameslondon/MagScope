@@ -50,11 +50,8 @@ Panels can move arranged by dragging them by the top-right corner. If space perm
    :alt: Demonstration of moving a GUI panel in MagScope
    :align: center
 
-The interface can be reset to the default arrangement by clicking the "Reset the GUI" button in the top-left corner of the window with the control panels.
-
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Reset-GUI_v1.jpg
-   :alt: The "Reset the GUI" button
-   :align: center
+The control panels can be reset to their default arrangement from ``Preferences`` by opening the
+``Appearance/Layout`` tab and clicking ``Reset GUI Layout``.
 
 Bead Selection
 --------------

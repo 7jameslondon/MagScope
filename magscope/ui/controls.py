@@ -319,77 +319,6 @@ class HelpPanel(QFrame):
         )
 
 
-class ResetPanel(QFrame):
-    """Clickable panel that resets the GUI layout to defaults."""
-
-    def __init__(self, manager: "UIManager"):
-        super().__init__()
-        self.manager = manager
-        self.setObjectName("ResetPanelFrame")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFrameShape(QFrame.Shape.NoFrame)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(2)
-        self.setLayout(layout)
-
-        self.title_label = QLabel("Reset the GUI")
-        font = self.title_label.font()
-        font.setPointSize(font.pointSize() + 1)
-        font.setBold(True)
-        self.title_label.setFont(font)
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-
-
-        layout.addWidget(self.title_label)
-
-        self._is_hovered = False
-        self._apply_styles()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self.rect().contains(event.pos()):
-                confirmation = QMessageBox.question(
-                    self,
-                    "Reset GUI",
-                    "Reset panels to their default layout and states?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if confirmation == QMessageBox.StandardButton.Yes:
-                    self.manager.controls.reset_to_defaults()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def enterEvent(self, event):
-        self._is_hovered = True
-        self._apply_styles()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._is_hovered = False
-        self._apply_styles()
-        super().leaveEvent(event)
-
-    def _apply_styles(self):
-        text_color = "black" if self._is_hovered else "white"
-        background_color = "white" if self._is_hovered else "transparent"
-        self.setStyleSheet(
-            f"""
-            #ResetPanelFrame {{
-                border: 1px solid #5b5b5b;
-                border-radius: 6px;
-                background-color: {background_color};
-            }}
-            #ResetPanelFrame QLabel {{
-                color: {text_color};
-            }}
-            """
-        )
-
-
 class MagScopeSettingsPanel(ControlPanelBase):
     """Allow importing, exporting, and editing MagScope configuration values."""
 
@@ -2195,15 +2124,31 @@ class PreferencesDialog(QDialog):
         self.tracking_scroll = self._scrollable_tab(self.tracking_options_panel)
         self.tabs.addTab(self.tracking_scroll, 'Tracking')
 
+        self.appearance_layout_tab = self._create_appearance_layout_tab()
+        self.tabs.addTab(self.appearance_layout_tab, 'Appearance/Layout')
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        reset_button = QPushButton('Reset GUI Layout')
-        reset_button.clicked.connect(self._reset_gui_layout)  # type: ignore[arg-type]
-        buttons.addWidget(reset_button)
         close_button = QPushButton('Close')
         close_button.clicked.connect(self.accept)  # type: ignore[arg-type]
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
+
+    def _create_appearance_layout_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        description = QLabel('Reset panels to their default layout and collapsed states.', tab)
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self.reset_gui_layout_button = QPushButton('Reset GUI Layout', tab)
+        self.reset_gui_layout_button.clicked.connect(self._reset_gui_layout)  # type: ignore[arg-type]
+        layout.addWidget(self.reset_gui_layout_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch(1)
+        return tab
 
     def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
         scroll = QScrollArea(self)

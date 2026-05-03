@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QGraphicsScene,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -1219,6 +1220,36 @@ def test_search_guides_to_roi_setting_in_preferences(qtbot):
     assert dialog.tabs.currentWidget() is dialog.settings_scroll
     assert highlighted_widgets == [roi_widget]
     assert roi_widget.lineedit.selectedText() == roi_widget.lineedit.text()
+
+    clear_ui_manager_singleton()
+
+
+def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    reset_calls = []
+    manager.controls = SimpleNamespace(reset_to_defaults=lambda: reset_calls.append(True))
+    monkeypatch.setattr(
+        'magscope.ui.controls.QMessageBox.question',
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+
+    assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [
+        'MagScope',
+        'Tracking',
+        'Appearance/Layout',
+    ]
+    assert dialog.appearance_layout_tab.layout().indexOf(dialog.reset_gui_layout_button) != -1
+
+    dialog.tabs.setCurrentWidget(dialog.appearance_layout_tab)
+    qtbot.mouseClick(dialog.reset_gui_layout_button, Qt.MouseButton.LeftButton)
+
+    assert reset_calls == [True]
 
     clear_ui_manager_singleton()
 
