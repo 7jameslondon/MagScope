@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from importlib import resources
 from math import floor, ceil
 import os
 import sys
@@ -9,7 +10,7 @@ from warnings import warn
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
-from PyQt6.QtGui import QAction, QGuiApplication, QImage, QPixmap
+from PyQt6.QtGui import QAction, QFont, QFontDatabase, QGuiApplication, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -22,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -102,6 +104,8 @@ class _StartupReadyWindow(QMainWindow):
 
 
 class UIManager(ManagerProcessBase):
+    _material_symbols_font_family: str | None = None
+
     def __init__(self):
         super().__init__()
         self._active_bead_graphic: BeadGraphic | None = None
@@ -118,6 +122,7 @@ class UIManager(ManagerProcessBase):
         self.controls: Controls | None = None
         self.controls_to_add = []
         self.camera_dock: QDockWidget | None = None
+        self.camera_dock_header: QWidget | None = None
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
@@ -126,6 +131,7 @@ class UIManager(ManagerProcessBase):
         self.plot_thread: QThread
         self.plots_widget: QLabel
         self.plots_dock: QDockWidget | None = None
+        self.plots_dock_header: QWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
@@ -152,6 +158,37 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
         self._shutdown_complete = False
+
+    @classmethod
+    def _material_symbols_font(cls, point_size: int = 18) -> QFont:
+        if cls._material_symbols_font_family is None:
+            font_resource = resources.files("magscope").joinpath(
+                "assets/MaterialSymbolsRounded.ttf"
+            )
+            font_id = QFontDatabase.addApplicationFont(str(font_resource))
+            families = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
+            cls._material_symbols_font_family = families[0] if families else "Material Symbols Rounded"
+
+        font = QFont(cls._material_symbols_font_family, point_size)
+        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        return font
+
+    @staticmethod
+    def _material_symbols_filled_stylesheet() -> str:
+        return """
+            QToolButton {
+                border: none;
+                background: transparent;
+                color: #d0d0d0;
+                padding: 0px;
+            }
+            QToolButton:hover {
+                color: #9a9a9a;
+            }
+            QToolButton:pressed {
+                color: #606060;
+            }
+        """
 
     @staticmethod
     def _zlut_requested_sweep_edges(
@@ -986,7 +1023,11 @@ class UIManager(ManagerProcessBase):
 
         self.camera_dock = QDockWidget("Live Camera", window)
         self.camera_dock.setObjectName("LiveCameraDock")
-        self.camera_dock.setWidget(self.video_viewer)
+        camera_container, self.camera_dock_header = self._create_viewer_dock_content(
+            self.camera_dock,
+            self.video_viewer,
+        )
+        self.camera_dock.setWidget(camera_container)
         self.camera_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.camera_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable
@@ -999,7 +1040,11 @@ class UIManager(ManagerProcessBase):
 
         self.plots_dock = QDockWidget("Live Plots", window)
         self.plots_dock.setObjectName("LivePlotsDock")
-        self.plots_dock.setWidget(self.plots_widget)
+        plots_container, self.plots_dock_header = self._create_viewer_dock_content(
+            self.plots_dock,
+            self.plots_widget,
+        )
+        self.plots_dock.setWidget(plots_container)
         self.plots_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.plots_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable
@@ -1013,7 +1058,53 @@ class UIManager(ManagerProcessBase):
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
         window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
 
+    def _create_viewer_dock_content(
+        self,
+        dock: QDockWidget,
+        viewer: QWidget,
+    ) -> tuple[QWidget, QWidget]:
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        header = QWidget(container)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 1, 6, 1)
+        header_layout.setSpacing(4)
+        header_layout.addStretch(1)
+        dock_button = QToolButton(header)
+        dock_button.setObjectName(f"{dock.objectName()}DockButton")
+        dock_button.setText("push_pin")
+        dock_button.setToolTip("Dock this viewer")
+        dock_button.setFont(self._material_symbols_font(point_size=11))
+        dock_button.setFixedSize(20, 20)
+        dock_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        dock_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        dock_button.clicked.connect(lambda _checked=False, target=dock: self._dock_viewer_pane(target))
+        header_layout.addWidget(dock_button)
+        header.hide()
+
+        container_layout.addWidget(header)
+        container_layout.addWidget(viewer)
+        return container, header
+
+    def _dock_viewer_pane(self, dock: QDockWidget) -> None:
+        dock.setFloating(False)
+        dock.show()
+
+    def _set_viewer_dock_header_visible(self, dock: QDockWidget, visible: bool) -> None:
+        if dock is self.camera_dock:
+            header = self.camera_dock_header
+        elif dock is self.plots_dock:
+            header = self.plots_dock_header
+        else:
+            header = None
+        if header is not None:
+            header.setVisible(visible)
+
     def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
+        self._set_viewer_dock_header_visible(dock, floating)
         if not floating:
             return
 

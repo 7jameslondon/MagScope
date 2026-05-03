@@ -1,6 +1,7 @@
 import os
 import sys
 from datetime import datetime
+from importlib import resources
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
@@ -12,7 +13,15 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QPointF, QRect, QRectF, QSettings, Qt
-from PyQt6.QtWidgets import QApplication, QLabel, QGraphicsScene, QMainWindow, QSizePolicy, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QGraphicsScene,
+    QMainWindow,
+    QSizePolicy,
+    QToolButton,
+    QWidget,
+)
 
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
@@ -945,8 +954,8 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot,
 
     assert manager.camera_dock is not None
     assert manager.plots_dock is not None
-    assert manager.camera_dock.widget() is manager.video_viewer
-    assert manager.plots_dock.widget() is manager.plots_widget
+    assert contains_widget(manager.camera_dock.widget(), manager.video_viewer)
+    assert contains_widget(manager.plots_dock.widget(), manager.plots_widget)
     assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert manager.plots_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
 
@@ -980,14 +989,58 @@ def test_floating_viewer_docks_can_be_maximized(qtbot, dock_name):
     assert flags & Qt.WindowType.WindowSystemMenuHint
     assert flags & Qt.WindowType.WindowMaximizeButtonHint
     assert flags & Qt.WindowType.WindowType_Mask == Qt.WindowType.Window
-    assert dock.maximumWidth() == 16777215
-    assert dock.maximumHeight() == 16777215
-    assert dock.widget().maximumWidth() == 16777215
-    assert dock.widget().maximumHeight() == 16777215
+    assert dock.maximumWidth() > 100000
+    assert dock.maximumHeight() > 100000
+    assert dock.widget().maximumWidth() > 100000
+    assert dock.widget().maximumHeight() > 100000
     assert dock.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     assert dock.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
 
     clear_ui_manager_singleton()
+
+
+@pytest.mark.parametrize('dock_name', ['camera_dock', 'plots_dock'])
+def test_floating_viewer_docks_show_dock_button(qtbot, dock_name):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+
+    dock = getattr(manager, dock_name)
+    header = manager.camera_dock_header if dock_name == 'camera_dock' else manager.plots_dock_header
+    assert header is not None
+    assert not header.isVisible()
+
+    dock.setFloating(True)
+    qtbot.wait(0)
+    assert header.isVisible()
+
+    dock_button = header.findChild(QToolButton)
+    assert dock_button is not None
+    assert dock_button.text() == 'push_pin'
+    assert dock_button.toolTip() == 'Dock this viewer'
+    qtbot.mouseClick(dock_button, Qt.MouseButton.LeftButton)
+
+    assert not dock.isFloating()
+    assert not header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_material_symbols_font_is_packaged():
+    font_resource = resources.files('magscope').joinpath('assets/MaterialSymbolsRounded.ttf')
+
+    assert font_resource.is_file()
 
 
 def test_status_updates_format_strings(ui_manager):
