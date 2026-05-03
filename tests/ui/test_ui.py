@@ -1246,11 +1246,15 @@ def test_quit_saves_viewer_layout(qtbot):
     clear_ui_manager_singleton()
 
 
-def test_ui_manager_does_not_expose_n_windows():
+def test_ui_manager_n_windows_warns_that_value_is_ignored():
     clear_ui_manager_singleton()
     manager = UIManager()
 
-    assert not hasattr(manager, 'n_windows')
+    with pytest.warns(RuntimeWarning, match='n_windows has been removed'):
+        manager.n_windows = 2
+
+    assert manager.n_windows is None
+    assert not hasattr(manager, '_n_windows')
 
     clear_ui_manager_singleton()
 

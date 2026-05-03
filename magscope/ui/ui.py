@@ -6,6 +6,7 @@ import sys
 from time import time
 import traceback
 from typing import Callable, Iterable
+from warnings import warn
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
@@ -965,6 +966,19 @@ class UIManager(ManagerProcessBase):
     def _clear_live_profile_buffer(self) -> None:
         if self.live_profile_buffer is not None:
             self.live_profile_buffer.clear()
+
+    @property
+    def n_windows(self):
+        return None
+
+    @n_windows.setter
+    def n_windows(self, value):
+        warn(
+            "UIManager.n_windows has been removed; MagScope now uses one main window "
+            "with dockable Live Camera and Live Plots panes. This value is ignored.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     @property
     def bead_roi_updates_suppressed(self) -> bool:
