@@ -60,11 +60,12 @@ Behavior:
 - Users should be able to restore a hidden/closed viewer pane from a View/Viewers toolbar or menu.
 - A `Reset Viewer Layout` action should restore the default camera/plot layout.
 
-Startup behavior should preserve the current `n_windows` intent:
-- `n_windows == 1`: controls, camera, and plots start in one main window, with camera and plots docked.
-- `n_windows == 2`: controls and camera start in the main window, live plots start floating on the second screen.
-- `n_windows == 3`: controls start in the main window, camera and plots start floating on separate screens when available.
-- Even when a pane starts floating, it must still be a dock widget owned by the main window so it can be re-docked.
+Startup behavior:
+- `n_windows` is intentionally removed.
+- MagScope now starts with one main window containing the controls rail and docked Live Camera and Live Plots panes.
+- Users can undock Live Camera or Live Plots manually and move them to another screen.
+- Even when a pane is floating, it must still be a dock widget owned by the main window so it can be re-docked.
+- Existing scripts that set `scope.ui_manager.n_windows` should remove that line.
 
 Implementation guidance:
 - Refactor `UIManager.create_central_widgets()` so the central widget hosts only the controls area.
