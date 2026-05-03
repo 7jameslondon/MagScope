@@ -63,7 +63,7 @@ from magscope.ui.panel_layout import (
 )
 from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase
 from magscope.ui.video_viewer import VideoViewer
-from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, GripSplitter, ResizableLabel
+from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import MagScopeSettings
@@ -1208,115 +1208,6 @@ class UIManager(ManagerProcessBase):
     def _reset_viewer_layout(self) -> None:
         self._clear_viewer_layout()
         self._apply_default_viewer_layout()
-
-    def create_one_window_widgets(self):
-        for i in range(1):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
-
-        # Left-right split
-        lr_splitter = GripSplitter(name='One Window Left-Right Splitter',
-                                   orientation=Qt.Orientation.Horizontal)
-        self.central_layouts[0].addWidget(lr_splitter)
-
-        # Left
-        left_widget = QWidget()
-        left_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(left_widget)
-        left_layout = QHBoxLayout()
-        left_widget.setLayout(left_layout)
-
-        # Add controls to left
-        left_layout.addWidget(self.controls)
-
-        # Right
-        right_widget = QWidget()
-        right_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(right_widget)
-        right_layout = QHBoxLayout()
-        right_widget.setLayout(right_layout)
-
-        # Right: top-bottom split
-        ud_splitter = GripSplitter(name='One Window Top-Bottom Splitter',
-                                   orientation=Qt.Orientation.Vertical)
-        right_layout.addWidget(ud_splitter)
-
-        # Right-top
-        right_top_widget = QWidget()
-        right_top_widget.setMinimumHeight(150)
-        ud_splitter.addWidget(right_top_widget)
-        right_top_layout = QHBoxLayout()
-        right_top_widget.setLayout(right_top_layout)
-
-        # Add plots to right-top
-        right_top_layout.addWidget(self.plots_widget)
-
-        # Right-bottom
-        right_bottom_widget = QWidget()
-        right_bottom_widget.setMinimumHeight(150)
-        ud_splitter.addWidget(right_bottom_widget)
-        right_bottom_layout = QHBoxLayout()
-        right_bottom_widget.setLayout(right_bottom_layout)
-
-        # Add video viewer to right-bottom
-        right_bottom_layout.addWidget(self.video_viewer)
-
-    def create_two_window_widgets(self):
-        for i in range(2):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
-
-        ### Window 0 ###
-
-        # Left-right split
-        lr_splitter = GripSplitter(name='Two Window Left-Right Splitter',
-                                   orientation=Qt.Orientation.Horizontal)
-        self.central_layouts[0].addWidget(lr_splitter)
-
-        # Left
-        left_widget = QWidget()
-        left_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(left_widget)
-        left_layout = QHBoxLayout()
-        left_widget.setLayout(left_layout)
-
-        # Add controls to left
-        left_layout.addWidget(self.controls)
-
-        # Right
-        right_widget = QWidget()
-        right_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(right_widget)
-        right_layout = QHBoxLayout()
-        right_widget.setLayout(right_layout)
-
-        # Add video viewer to right
-        right_layout.addWidget(self.video_viewer)
-
-        ### Window 1 ###
-
-        # Add plots to window-1
-        self.central_layouts[1].addWidget(self.plots_widget)
-
-    def create_three_window_widgets(self):
-        for i in range(3):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
-
-        ### Window 0 ###
-        # Add controls to window-0
-        self.central_layouts[0].addWidget(self.controls)
-
-        ### Window 1 ###
-        # Add video viewer to window-1
-        self.central_layouts[1].addWidget(self.video_viewer)
-
-        ### Window 2 ###
-        # Add plots to window-2
-        self.central_layouts[2].addWidget(self.plots_widget)
 
     def update_view_coords(self):
         pass

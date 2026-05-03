@@ -1038,7 +1038,7 @@ def test_floating_viewer_docks_show_dock_button(qtbot, dock_name):
     clear_ui_manager_singleton()
 
 
-def test_layout_menu_can_dock_all_viewers(qtbot):
+def test_layout_menu_can_dock_all_windows(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = QLabel('controls')
