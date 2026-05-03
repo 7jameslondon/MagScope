@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF, QPropertyAnimation, QRect,
-                          QRectF, QSettings, Qt, QTimer, pyqtSignal)
+                          QRectF, QSize, QSettings, Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QPainter, QPalette, QPen, QValidator
 from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem,
                              QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel,
@@ -854,8 +854,19 @@ class ResizableLabel(QLabel):
     """Custom QLabel that emits a signal when it's resized."""
     resized = pyqtSignal(int, int)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, ignore_pixmap_size_hint: bool = False):
         super().__init__(parent)
+        self._ignore_pixmap_size_hint = ignore_pixmap_size_hint
+
+    def sizeHint(self) -> QSize:  # type: ignore[override]
+        if self._ignore_pixmap_size_hint:
+            return QSize(1, 1)
+        return super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # type: ignore[override]
+        if self._ignore_pixmap_size_hint:
+            return QSize(1, 1)
+        return super().minimumSizeHint()
 
     def resizeEvent(self, event):
         """Override resize event to emit signal with new dimensions."""

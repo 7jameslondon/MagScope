@@ -13,6 +13,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QPointF, QRect, QRectF, QSettings, Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
@@ -43,7 +44,7 @@ from magscope.ui.controls import (
 )
 from magscope.ui.plots import TracksTimeSeriesPlot
 from magscope.ui.ui import Controls, LoadingWindow, UIManager, _StartupReadyWindow
-from magscope.ui.widgets import BeadGraphic
+from magscope.ui.widgets import BeadGraphic, ResizableLabel
 from magscope.utils import AcquisitionMode
 
 
@@ -1020,6 +1021,8 @@ def test_floating_viewer_docks_show_dock_button(qtbot, dock_name):
     header = manager.camera_dock_header if dock_name == 'camera_dock' else manager.plots_dock_header
     assert header is not None
     assert not header.isVisible()
+    assert header.height() == 22
+    assert header.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
 
     dock.setFloating(True)
     qtbot.wait(0)
@@ -1041,6 +1044,17 @@ def test_material_symbols_font_is_packaged():
     font_resource = resources.files('magscope').joinpath('assets/MaterialSymbolsRounded.ttf')
 
     assert font_resource.is_file()
+
+
+def test_resizable_label_can_ignore_pixmap_size_hint(qtbot):
+    label = ResizableLabel(ignore_pixmap_size_hint=True)
+    qtbot.addWidget(label)
+    label.setPixmap(QPixmap(1200, 800))
+
+    assert label.sizeHint().width() == 1
+    assert label.sizeHint().height() == 1
+    assert label.minimumSizeHint().width() == 1
+    assert label.minimumSizeHint().height() == 1
 
 
 def test_status_updates_format_strings(ui_manager):

@@ -328,8 +328,10 @@ class UIManager(ManagerProcessBase):
             self._n_windows = len(QApplication.screens())
 
         # Create the live plots in a separate thread (but dont start it)
-        self.plots_widget = ResizableLabel()
+        self.plots_widget = ResizableLabel(ignore_pixmap_size_hint=True)
         self.plots_widget.setScaledContents(True)
+        self.plots_widget.setMinimumSize(1, 1)
+        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.plots_thread = QThread()
         self.plot_worker = PlotWorker()
         for plot in self.plots_to_add:
@@ -1018,7 +1020,8 @@ class UIManager(ManagerProcessBase):
 
         self.video_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.video_viewer.setMaximumSize(16777215, 16777215)
-        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.plots_widget.setMinimumSize(1, 1)
         self.plots_widget.setMaximumSize(16777215, 16777215)
 
         self.camera_dock = QDockWidget("Live Camera", window)
@@ -1069,6 +1072,8 @@ class UIManager(ManagerProcessBase):
         container_layout.setSpacing(0)
 
         header = QWidget(container)
+        header.setFixedHeight(22)
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(6, 1, 6, 1)
         header_layout.setSpacing(4)
@@ -1085,8 +1090,8 @@ class UIManager(ManagerProcessBase):
         header_layout.addWidget(dock_button)
         header.hide()
 
-        container_layout.addWidget(header)
-        container_layout.addWidget(viewer)
+        container_layout.addWidget(header, 0)
+        container_layout.addWidget(viewer, 1)
         return container, header
 
     def _dock_viewer_pane(self, dock: QDockWidget) -> None:
