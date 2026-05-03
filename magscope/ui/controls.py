@@ -97,6 +97,47 @@ if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
 
 
+def _panel_control_target(
+    label: str,
+    panel_id: str,
+    widget_attr: str,
+    *,
+    context: str,
+    aliases: tuple[str, ...] = (),
+    description: str = '',
+    keywords: tuple[str, ...] = (),
+) -> PanelControlTarget:
+    return PanelControlTarget(
+        label=label,
+        aliases=aliases,
+        context=context,
+        description=description,
+        keywords=keywords,
+        panel_id=panel_id,
+        widget_path=(widget_attr,),
+    )
+
+
+def _preference_widget_targets(
+    definitions: tuple[tuple[str, str, tuple[str, ...]], ...],
+    *,
+    tab_name: str,
+    context: str,
+) -> list[SearchTarget]:
+    return [
+        PreferencesWidgetTarget(
+            label=label,
+            aliases=aliases,
+            context=context,
+            description=f'Shows the {label} control in {context}.',
+            keywords=(widget_attr,),
+            tab_name=tab_name,
+            widget_attr=widget_attr,
+        )
+        for widget_attr, label, aliases in definitions
+    ]
+
+
 class ControlPanelBase(QWidget):
     def __init__(
         self,
@@ -582,6 +623,38 @@ class AcquisitionPanel(ControlPanelBase):
     def update_save_highlight(self, should_save: bool) -> None:
         self.set_highlighted(should_save)
 
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target(
+                'Acquire',
+                'AcquisitionPanel',
+                'acquisition_on_checkbox',
+                context='Acquisition',
+                aliases=('acquisition on', 'start acquisition', 'record'),
+            ),
+            _panel_control_target(
+                'Acquisition Mode',
+                'AcquisitionPanel',
+                'acquisition_mode_combobox',
+                context='Acquisition',
+                aliases=('mode', 'recording mode', 'save mode'),
+            ),
+            _panel_control_target(
+                'Save Acquisition',
+                'AcquisitionPanel',
+                'acquisition_dir_on_checkbox',
+                context='Acquisition',
+                aliases=('save', 'save data', 'save acquisition'),
+            ),
+            _panel_control_target(
+                'Select Directory to Save To',
+                'AcquisitionPanel',
+                'acquisition_dir_button',
+                context='Acquisition',
+                aliases=('save directory', 'output folder', 'acquisition folder'),
+            ),
+        ]
+
 
 class BeadSelectionPanel(ControlPanelBase):
 
@@ -652,6 +725,8 @@ class BeadSelectionPanel(ControlPanelBase):
                     'detect beads',
                 ),
                 context='Bead Selection',
+                description='Shows the button used to open automatic bead selection.',
+                keywords=('bead finder', 'select beads automatically'),
                 panel_id='BeadSelectionPanel',
                 widget_path=('auto_select_button',),
             ),
@@ -1030,6 +1105,59 @@ class PlotSettingsPanel(ControlPanelBase):
 
         bead_options_toggle.toggled.connect(_toggle_bead_overlay_options)
         self.layout().addWidget(bead_view_container)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target(
+                'Selected Bead',
+                'PlotSettingsPanel',
+                'selected_bead',
+                context='Plot Settings',
+                aliases=('active bead', 'red bead'),
+            ),
+            _panel_control_target(
+                'Reference Bead',
+                'PlotSettingsPanel',
+                'reference_bead',
+                context='Plot Settings',
+                aliases=('green bead', 'subtract bead'),
+            ),
+            _panel_control_target(
+                'Time axis mode',
+                'PlotSettingsPanel',
+                'time_mode',
+                context='Plot Settings',
+                aliases=('time mode', 'absolute time', 'relative time'),
+            ),
+            _panel_control_target(
+                'Relative Time',
+                'PlotSettingsPanel',
+                'time_relative_window',
+                context='Plot Settings',
+                aliases=('relative time window', 'time window'),
+            ),
+            _panel_control_target(
+                'Show beads on video',
+                'PlotSettingsPanel',
+                'beads_in_view_on',
+                context='Plot Settings',
+                aliases=('show bead centers', 'bead overlay', 'plot beads on video'),
+            ),
+            _panel_control_target(
+                'Number of timepoints to show',
+                'PlotSettingsPanel',
+                'beads_in_view_count',
+                context='Plot Settings',
+                aliases=('bead overlay history', 'timepoints'),
+            ),
+            _panel_control_target(
+                'Marker size',
+                'PlotSettingsPanel',
+                'beads_in_view_marker_size',
+                context='Plot Settings',
+                aliases=('bead marker size', 'crosshair size'),
+            ),
+        ]
 
     def selected_bead_callback(self, value):
         try:
@@ -1690,78 +1818,22 @@ class TrackingOptionsPanel(ControlPanelBase):
 
     @staticmethod
     def search_targets() -> list[SearchTarget]:
-        return [
-            PreferencesWidgetTarget(
-                label='Use FFT profile',
-                aliases=('FFT profile', 'enable FFT profile'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='use_fft',
+        return _preference_widget_targets(
+            (
+                ('use_fft', 'Use FFT profile', ('FFT profile', 'enable FFT profile')),
+                ('fft_oversample', 'FFT oversample', ('FFT oversampling',)),
+                ('fft_rmin', 'FFT rmin', ('FFT Rmin', 'rmin', 'FFT r min', 'minimum FFT radius')),
+                ('fft_rmax', 'FFT rmax', ('FFT Rmax', 'rmax', 'FFT r max', 'maximum FFT radius')),
+                ('fft_gaus_factor', 'FFT gaus_factor', ('FFT gaussian factor', 'FFT gaus factor')),
+                ('radial_oversample', 'Radial oversample', ('radial oversampling',)),
+                ('lookup_n_local', 'lookup_z n_local', ('lookup z n local', 'z lookup n local')),
+                ('iterations', 'Auto-conv iterations', ('auto conv iterations', 'auto convolution iterations')),
+                ('line_ratio', 'Line ratio', ('tracking line ratio',)),
+                ('n_local', 'n_local (auto-conv)', ('n local auto conv', 'auto conv n local')),
             ),
-            PreferencesWidgetTarget(
-                label='FFT oversample',
-                aliases=('FFT oversampling',),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='fft_oversample',
-            ),
-            PreferencesWidgetTarget(
-                label='FFT rmin',
-                aliases=('FFT Rmin', 'rmin', 'FFT r min', 'minimum FFT radius'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='fft_rmin',
-            ),
-            PreferencesWidgetTarget(
-                label='FFT rmax',
-                aliases=('FFT Rmax', 'rmax', 'FFT r max', 'maximum FFT radius'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='fft_rmax',
-            ),
-            PreferencesWidgetTarget(
-                label='FFT gaus_factor',
-                aliases=('FFT gaussian factor', 'FFT gaus factor'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='fft_gaus_factor',
-            ),
-            PreferencesWidgetTarget(
-                label='Radial oversample',
-                aliases=('radial oversampling',),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='radial_oversample',
-            ),
-            PreferencesWidgetTarget(
-                label='lookup_z n_local',
-                aliases=('lookup z n local', 'z lookup n local'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='lookup_n_local',
-            ),
-            PreferencesWidgetTarget(
-                label='Auto-conv iterations',
-                aliases=('auto conv iterations', 'auto convolution iterations'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='iterations',
-            ),
-            PreferencesWidgetTarget(
-                label='Line ratio',
-                aliases=('tracking line ratio',),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='line_ratio',
-            ),
-            PreferencesWidgetTarget(
-                label='n_local (auto-conv)',
-                aliases=('n local auto conv', 'auto conv n local'),
-                context='Preferences > Tracking',
-                tab_name='Tracking',
-                widget_attr='n_local',
-            ),
-        ]
+            tab_name='Tracking',
+            context='Preferences > Tracking',
+        )
 
     def _parse_int(self, widget: LabeledLineEditWithValue, fallback: int, *, minimum: int | None = None) -> int:
         text = widget.lineedit.text().strip()
@@ -2415,9 +2487,9 @@ class XYLockPanel(ControlPanelBase):
         controls_row.addWidget(self.enabled)
 
         # Once
-        once = QPushButton('Once')
-        once.clicked.connect(self.once_callback)
-        controls_row.addWidget(once)
+        self.once_button = QPushButton('Once')
+        self.once_button.clicked.connect(self.once_callback)
+        controls_row.addWidget(self.once_button)
 
         # Interval
         default_interval = self.manager.settings['xy-lock default interval']
@@ -2448,6 +2520,15 @@ class XYLockPanel(ControlPanelBase):
             widths=(105, 100, 0),
         )
         self.layout().addWidget(self.window)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('XY-Lock Enabled', 'XYLockPanel', 'enabled', context='XY-Lock', aliases=('enable xy lock', 'xy lock on')),
+            _panel_control_target('XY-Lock Once', 'XYLockPanel', 'once_button', context='XY-Lock', aliases=('run xy lock once', 'center beads once')),
+            _panel_control_target('XY-Lock Interval', 'XYLockPanel', 'interval', context='XY-Lock', aliases=('xy lock frequency',)),
+            _panel_control_target('XY-Lock Max', 'XYLockPanel', 'max', context='XY-Lock', aliases=('xy lock maximum', 'xy lock max pixels')),
+            _panel_control_target('XY-Lock Averaging Window', 'XYLockPanel', 'window', context='XY-Lock', aliases=('xy lock window', 'xy lock averaging')),
+        ]
 
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
@@ -2608,6 +2689,16 @@ class ZLockPanel(ControlPanelBase):
             widths=(75, 100, 0),
         )
         self.layout().addWidget(self.window)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Z-Lock Enabled', 'ZLockPanel', 'enabled', context='Z-Lock', aliases=('enable z lock', 'z lock on')),
+            _panel_control_target('Z-Lock Bead', 'ZLockPanel', 'bead', context='Z-Lock', aliases=('focus bead', 'z lock bead roi')),
+            _panel_control_target('Z-Lock Target', 'ZLockPanel', 'target', context='Z-Lock', aliases=('z target', 'focus target')),
+            _panel_control_target('Z-Lock Interval', 'ZLockPanel', 'interval', context='Z-Lock', aliases=('z lock frequency',)),
+            _panel_control_target('Z-Lock Max', 'ZLockPanel', 'max', context='Z-Lock', aliases=('z lock maximum', 'z lock max nm')),
+            _panel_control_target('Z-Lock Averaging Window', 'ZLockPanel', 'window', context='Z-Lock', aliases=('z lock window', 'z lock averaging')),
+        ]
 
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
@@ -2784,6 +2875,15 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.generate_button = QPushButton('Generate')
         self.generate_button.clicked.connect(self.generate_callback)
         buttons_row.addWidget(self.generate_button)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Z-LUT Start', 'ZLUTGenerationPanel', 'start_input', context='Z-LUT Generation', aliases=('start nm', 'z lut start')),
+            _panel_control_target('Z-LUT Step', 'ZLUTGenerationPanel', 'step_input', context='Z-LUT Generation', aliases=('step nm', 'z lut step')),
+            _panel_control_target('Z-LUT Stop', 'ZLUTGenerationPanel', 'stop_input', context='Z-LUT Generation', aliases=('stop nm', 'z lut stop')),
+            _panel_control_target('Z-LUT Measurements per Step', 'ZLUTGenerationPanel', 'measurements_input', context='Z-LUT Generation', aliases=('measurements per step', 'captures per step')),
+            _panel_control_target('Generate Z-LUT', 'ZLUTGenerationPanel', 'generate_button', context='Z-LUT Generation', aliases=('generate', 'start z lut generation')),
+        ]
 
     def generate_callback(self):
         # Start
@@ -3247,6 +3347,12 @@ class ZLUTPanel(ControlPanelBase):
         self.max_value = self._add_metadata_row('Max (nm):')
         self.step_value = self._add_metadata_row('Step (nm):')
         self.profile_length_value = self._add_metadata_row('Profile Length:')
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Select Z-LUT File', 'ZLUTPanel', 'select_button', context='Z-LUT', aliases=('load z lut', 'choose z-lut file')),
+            _panel_control_target('Clear Z-LUT', 'ZLUTPanel', 'clear_button', context='Z-LUT', aliases=('remove z lut', 'reset z lut')),
+        ]
 
     def _add_metadata_row(self, label_text: str) -> QLabel:
         row = QHBoxLayout()

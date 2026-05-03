@@ -17,6 +17,9 @@ class SearchTarget:
     label: str
     aliases: tuple[str, ...] = ()
     context: str = ""
+    description: str = ""
+    keywords: tuple[str, ...] = ()
+    guide_only: bool = True
 
     @property
     def display_label(self) -> str:
@@ -24,7 +27,7 @@ class SearchTarget:
 
     @property
     def search_values(self) -> tuple[str, ...]:
-        return (self.label, self.display_label, *self.aliases)
+        return (self.label, self.display_label, *self.aliases, *self.keywords)
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,14 @@ class SearchMatch:
 
 
 class SearchRegistry:
+    RANK_EXACT_LABEL = 0
+    RANK_EXACT_DISPLAY = 1
+    RANK_EXACT_ALIAS = 2
+    RANK_PREFIX = 3
+    RANK_CONTAINS = 4
+    RANK_FUZZY = 5
+    RANK_EMPTY_QUERY = 10
+
     def __init__(self, targets: list[SearchTarget] | None = None) -> None:
         self._targets: list[SearchTarget] = list(targets or [])
 
@@ -81,27 +92,37 @@ class SearchRegistry:
     def matches(self, text: str) -> list[SearchMatch]:
         query = normalize_search_text(text)
         if not query:
-            return [SearchMatch(target, 10, 0.0) for target in self._targets]
+            return [SearchMatch(target, self.RANK_EMPTY_QUERY, 0.0) for target in self._targets]
 
         query_terms = query.split()
         matches: list[SearchMatch] = []
         fuzzy_matches: list[SearchMatch] = []
         for target in self._targets:
-            normalized_values = [normalize_search_text(value) for value in target.search_values]
-            exact_label = normalize_search_text(target.label) == query
-            exact_display = normalize_search_text(target.display_label) == query
-            exact_alias = any(normalize_search_text(alias) == query for alias in target.aliases)
-            if exact_label or exact_display:
-                matches.append(SearchMatch(target, 0, 1.0))
+            normalized_label = normalize_search_text(target.label)
+            normalized_display = normalize_search_text(target.display_label)
+            normalized_aliases = [normalize_search_text(alias) for alias in target.aliases]
+            normalized_keywords = [normalize_search_text(keyword) for keyword in target.keywords]
+            normalized_values = [
+                normalized_label,
+                normalized_display,
+                *normalized_aliases,
+                *normalized_keywords,
+            ]
+
+            if normalized_label == query:
+                matches.append(SearchMatch(target, self.RANK_EXACT_LABEL, 1.0))
                 continue
-            if exact_alias:
-                matches.append(SearchMatch(target, 1, 1.0))
+            if normalized_display == query:
+                matches.append(SearchMatch(target, self.RANK_EXACT_DISPLAY, 1.0))
+                continue
+            if any(alias == query for alias in normalized_aliases):
+                matches.append(SearchMatch(target, self.RANK_EXACT_ALIAS, 1.0))
                 continue
             if any(value.startswith(query) for value in normalized_values):
-                matches.append(SearchMatch(target, 2, 0.9))
+                matches.append(SearchMatch(target, self.RANK_PREFIX, 0.9))
                 continue
             if any(query in value or all(term in value for term in query_terms) for value in normalized_values):
-                matches.append(SearchMatch(target, 3, 0.75))
+                matches.append(SearchMatch(target, self.RANK_CONTAINS, 0.75))
                 continue
 
             fuzzy_score = max(
@@ -109,7 +130,7 @@ class SearchRegistry:
                 default=0.0,
             )
             if fuzzy_score >= 0.68:
-                fuzzy_matches.append(SearchMatch(target, 4, fuzzy_score))
+                fuzzy_matches.append(SearchMatch(target, self.RANK_FUZZY, fuzzy_score))
 
         matches_to_sort = matches if matches else fuzzy_matches
         return sorted(matches_to_sort, key=lambda match: (match.rank, -match.score, match.target.display_label))

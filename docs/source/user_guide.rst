@@ -53,6 +53,24 @@ Panels can move arranged by dragging them by the top-right corner. If space perm
 The control panels can be reset to their default arrangement from ``Preferences`` by opening the
 ``Appearance/Layout`` tab and clicking ``Reset GUI Layout``.
 
+Finding Controls
+----------------
+Use the ``Search for controls ...`` box in the top menu bar to find controls without running them.
+Search suggestions appear while you type; press ``Enter`` or select a suggestion to show where that
+control is located. MagScope opens the relevant panel, menu, or Preferences tab, scrolls the control
+into view when needed, and temporarily highlights it. Search is guide-only: it does not click buttons,
+change settings, or execute actions.
+
+Useful examples include:
+
+* ``ROI`` - opens ``Preferences`` and highlights the ROI size setting in the ``MagScope`` tab.
+* ``find beads`` - shows ``Auto Bead Selection`` in the ``Bead Selection`` panel.
+* ``FFT rmin`` - opens ``Preferences`` and highlights the tracking option in the ``Tracking`` tab.
+* ``dock`` - opens the ``Layout`` menu and highlights ``Dock All Windows`` without docking anything.
+
+Press ``Ctrl+K`` or ``Ctrl+F`` to focus the search box. Press ``Escape`` while the search box is
+focused to clear it.
+
 Bead Selection
 --------------
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Selecting_Beads_v1.gif

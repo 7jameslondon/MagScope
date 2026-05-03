@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
     QLayout,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QScrollArea,
     QSizePolicy,
@@ -195,8 +196,11 @@ class UIManager(ManagerProcessBase):
         self._shutdown_complete = False
         self._search_box: QLineEdit | None = None
         self._search_status_label: QLabel | None = None
+        self._search_status_timer: QTimer | None = None
         self._menu_row: QWidget | None = None
+        self._menu_bar: QMenuBar | None = None
         self._layout_menu: QMenu | None = None
+        self._menus: dict[str, QMenu] = {}
         self._search_shortcuts: list[QShortcut] = []
         self._search_registry = SearchRegistry()
         self._search_highlighter = SearchHighlighter()
@@ -231,6 +235,50 @@ class UIManager(ManagerProcessBase):
                 color: #606060;
             }
         """
+
+    @staticmethod
+    def _viewer_dock_separator_stylesheet() -> str:
+        return """
+            QMainWindow::separator {
+                background: transparent;
+                width: 5px;
+                height: 5px;
+            }
+            QMainWindow::separator:vertical {
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 transparent,
+                    stop: 0.4 transparent,
+                    stop: 0.4 #808080,
+                    stop: 0.6 #808080,
+                    stop: 0.6 transparent,
+                    stop: 1 transparent
+                );
+            }
+            QMainWindow::separator:horizontal {
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 transparent,
+                    stop: 0.4 transparent,
+                    stop: 0.4 #808080,
+                    stop: 0.6 #808080,
+                    stop: 0.6 transparent,
+                    stop: 1 transparent
+                );
+            }
+            QMainWindow::separator:hover {
+                background: #78c7ff;
+            }
+        """
+
+    def _apply_viewer_dock_separator_style(self, window: QMainWindow) -> None:
+        separator_style = self._viewer_dock_separator_stylesheet().strip()
+        existing_style = window.styleSheet().strip()
+        if separator_style in existing_style:
+            return
+        window.setStyleSheet(
+            f"{existing_style}\n\n{separator_style}" if existing_style else separator_style
+        )
 
     @staticmethod
     def _zlut_requested_sweep_edges(
@@ -623,6 +671,13 @@ class UIManager(ManagerProcessBase):
 
         self._save_viewer_layout()
         self._search_highlighter.clear()
+        if self._search_status_timer is not None:
+            try:
+                self._search_status_timer.stop()
+            except RuntimeError:
+                pass
+        self._search_status_timer = None
+        self._search_status_label = None
 
         for window in self.windows:
             self._close_widget(window)
@@ -1062,6 +1117,8 @@ class UIManager(ManagerProcessBase):
         if self.video_viewer is None or self.plots_widget is None:
             return
 
+        self._apply_viewer_dock_separator_style(window)
+
         self.video_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.video_viewer.setMaximumSize(16777215, 16777215)
         self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
@@ -1182,7 +1239,7 @@ class UIManager(ManagerProcessBase):
 
     def _create_view_menu(self, window: QMainWindow) -> None:
         view_menu = window.menuBar().addMenu("Layout")
-        self._layout_menu = view_menu
+        self._register_menu("Layout", view_menu)
         if self.camera_dock is not None:
             view_menu.addAction(self.camera_dock.toggleViewAction())
         if self.plots_dock is not None:
@@ -1194,6 +1251,11 @@ class UIManager(ManagerProcessBase):
         reset_action = QAction("Reset Viewer Layout", window)
         reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
         view_menu.addAction(reset_action)
+
+    def _register_menu(self, name: str, menu: QMenu) -> None:
+        self._menus[name] = menu
+        if name == "Layout":
+            self._layout_menu = menu
 
     def _create_preferences_menu_action(self, window: QMainWindow) -> None:
         preferences_action = QAction("Preferences", window)
@@ -1210,9 +1272,16 @@ class UIManager(ManagerProcessBase):
     def _create_search_menu_widget(self, window: QMainWindow) -> None:
         self._refresh_search_registry()
         menu_bar = window.menuBar()
+        self._menu_bar = menu_bar
         menu_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
-        menu_row = QWidget(window)
+        menu_container = QWidget(window)
+        menu_container.setObjectName("MainMenuContainer")
+        menu_container_layout = QVBoxLayout(menu_container)
+        menu_container_layout.setContentsMargins(0, 0, 0, 0)
+        menu_container_layout.setSpacing(0)
+
+        menu_row = QWidget(menu_container)
         menu_row.setObjectName("MainMenuRow")
         menu_row_layout = QHBoxLayout(menu_row)
         menu_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1251,10 +1320,25 @@ class UIManager(ManagerProcessBase):
         search_status_label.setVisible(False)
         menu_row_layout.addWidget(search_status_label)
         menu_row_layout.addStretch(1)
-        window.setMenuWidget(menu_row)
+
+        menu_divider = QFrame(menu_container)
+        menu_divider.setObjectName("MainMenuDivider")
+        menu_divider.setFrameShape(QFrame.Shape.NoFrame)
+        menu_divider.setFixedHeight(1)
+        menu_divider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        menu_divider.setStyleSheet("#MainMenuDivider { background-color: #808080; }")
+
+        menu_container_layout.addWidget(menu_row)
+        menu_container_layout.addWidget(menu_divider)
+        window.setMenuWidget(menu_container)
         self._menu_row = menu_row
         self._search_box = search_box
         self._search_status_label = search_status_label
+        search_status_label.destroyed.connect(lambda _obj=None: self._clear_search_status_label_ref())
+        self._search_status_timer = QTimer(menu_row)
+        self._search_status_timer.setSingleShot(True)
+        self._search_status_timer.setInterval(3000)
+        self._search_status_timer.timeout.connect(lambda: self._set_search_status(""))
         self._install_search_shortcuts(window, search_box)
 
     def _refresh_search_registry(self) -> None:
@@ -1397,8 +1481,10 @@ class UIManager(ManagerProcessBase):
     def _guide_to_search_result(self, text: str) -> None:
         target = self._find_search_target(text)
         if target is None:
+            logger.debug("No UI search target matched query %r", text)
             return
 
+        logger.debug("Guiding to UI search target %s", target.display_label)
         self._guide_to_target(target)
 
     def _guide_to_target(self, target: SearchTarget) -> None:
@@ -1406,7 +1492,12 @@ class UIManager(ManagerProcessBase):
         if self._search_box is not None:
             self._search_box.setText(target.label)
             self._search_box.selectAll()
-        self._set_search_status(f"Showing: {target.display_label}")
+        status_parts = [f"Showing: {target.display_label}"]
+        if target.guide_only:
+            status_parts.append("Guide only; no action was run.")
+        if target.description:
+            status_parts.append(target.description)
+        self._set_search_status(" ".join(status_parts))
 
     def _reveal_search_target(self, target: SearchTarget) -> None:
         if isinstance(target, PreferencesSettingTarget):
@@ -1427,10 +1518,14 @@ class UIManager(ManagerProcessBase):
         reveal_panel = getattr(self.controls, "reveal_panel", None)
         if callable(reveal_panel):
             reveal_panel(target.panel_id)
+        else:
+            logger.debug("Controls object cannot reveal search panel %s", target.panel_id)
 
         widget = self._search_target_widget(target)
         if widget is not None:
             self._highlight_search_widget(widget)
+        else:
+            logger.warning("Search target widget could not be found: %s", target.display_label)
 
     def _search_target_widget(self, target: PanelControlTarget) -> QWidget | None:
         if self.controls is None:
@@ -1461,6 +1556,8 @@ class UIManager(ManagerProcessBase):
         reveal_setting = getattr(self._preferences_dialog, "reveal_setting", None)
         if callable(reveal_setting):
             reveal_setting(target.setting_key)
+        else:
+            logger.warning("Preferences dialog cannot reveal setting %s", target.setting_key)
 
     def _reveal_preference_widget(self, target: PreferencesWidgetTarget) -> None:
         self._show_preferences_dialog()
@@ -1470,25 +1567,42 @@ class UIManager(ManagerProcessBase):
         reveal_widget = getattr(self._preferences_dialog, "reveal_widget", None)
         if callable(reveal_widget):
             reveal_widget(target.tab_name, target.widget_attr)
+        else:
+            logger.warning(
+                "Preferences dialog cannot reveal widget %s > %s",
+                target.tab_name,
+                target.widget_attr,
+            )
 
     def _reveal_menu_action(self, target: MenuActionTarget) -> None:
-        if target.menu_name != "Layout" or self._layout_menu is None:
+        menu = self._menus.get(target.menu_name)
+        if menu is None:
+            logger.warning("Search target menu could not be found: %s", target.menu_name)
             return
 
         action = next(
-            (action for action in self._layout_menu.actions() if action.text() == target.action_text),
+            (action for action in menu.actions() if action.text() == target.action_text),
             None,
         )
         if action is None:
+            logger.warning(
+                "Search target menu action could not be found: %s > %s",
+                target.menu_name,
+                target.action_text,
+            )
             return
 
-        self._layout_menu.setActiveAction(action)
-        if not self.windows:
+        menu.setActiveAction(action)
+        menu_bar = self._menu_bar
+        if menu_bar is None:
+            logger.warning("Search target menu bar is not available for %s", target.display_label)
             return
 
-        menu_bar = self.windows[0].menuBar()
-        menu_action_geometry = menu_bar.actionGeometry(self._layout_menu.menuAction())
-        self._layout_menu.popup(menu_bar.mapToGlobal(menu_action_geometry.bottomLeft()))
+        completer = self._search_box.completer() if self._search_box is not None else None
+        if completer is not None:
+            completer.popup().hide()
+        menu_action_geometry = menu_bar.actionGeometry(menu.menuAction())
+        menu.popup(menu_bar.mapToGlobal(menu_action_geometry.bottomLeft()))
 
     def _highlight_search_widget(self, widget: QWidget) -> None:
         self._search_highlighter.highlight(widget)
@@ -1515,12 +1629,30 @@ class UIManager(ManagerProcessBase):
         self._set_search_status("")
 
     def _set_search_status(self, text: str) -> None:
-        if self._search_status_label is None:
+        label = self._search_status_label
+        if label is None:
             return
-        self._search_status_label.setText(text)
-        self._search_status_label.setVisible(bool(text))
-        if text:
-            QTimer.singleShot(3000, lambda: self._set_search_status(""))
+        try:
+            label.setText(text)
+            label.setVisible(bool(text))
+        except RuntimeError:
+            self._clear_search_status_label_ref()
+            return
+
+        timer = self._search_status_timer
+        if timer is None:
+            return
+        try:
+            if text:
+                timer.start()
+            else:
+                timer.stop()
+        except RuntimeError:
+            self._search_status_timer = None
+
+    def _clear_search_status_label_ref(self) -> None:
+        self._search_status_label = None
+        self._search_status_timer = None
 
     def _show_preferences_dialog(self) -> None:
         if self._preferences_dialog is None:

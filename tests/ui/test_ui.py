@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 from datetime import datetime
 from importlib import resources
 from types import ModuleType, SimpleNamespace
@@ -16,6 +17,7 @@ from PyQt6.QtCore import QPointF, QRect, QRectF, QSettings, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QLabel,
     QGraphicsScene,
     QLineEdit,
@@ -40,13 +42,20 @@ from magscope.ipc_commands import (
 )
 from magscope.settings import MagScopeSettings
 from magscope.ui.controls import (
+    AcquisitionPanel,
     AllanDeviationPanel,
+    PlotSettingsPanel,
     PreferencesDialog,
-    ZLUTGenerationDialog,
+    TrackingOptionsPanel,
+    XYLockPanel,
+    ZLockPanel,
+    ZLUTPanel,
     ZLUTGenerationPanel,
+    ZLUTGenerationDialog,
     ZLUTSweepPreviewWidget,
 )
 from magscope.ui.plots import TracksTimeSeriesPlot
+from magscope.ui.search import PanelControlTarget, SearchRegistry
 from magscope.ui.ui import Controls, LoadingWindow, UIManager, _StartupReadyWindow
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.utils import AcquisitionMode
@@ -949,6 +958,7 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
 
     window = QMainWindow()
     qtbot.addWidget(window)
+    window.setStyleSheet('QLabel { color: red; }')
     window.setCentralWidget(manager.central_widgets[0])
     manager.windows.append(window)
     manager._create_viewer_docks(window)
@@ -961,6 +971,15 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     assert contains_widget(manager.plots_dock.widget(), manager.plots_widget)
     assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert manager.plots_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
+    assert 'QLabel { color: red; }' in window.styleSheet()
+    assert 'QMainWindow::separator' in window.styleSheet()
+    assert 'QMainWindow::separator:vertical' in window.styleSheet()
+    assert 'QMainWindow::separator:horizontal' in window.styleSheet()
+    assert '#808080' in window.styleSheet()
+    assert 'QMainWindow::separator:hover' in window.styleSheet()
+    assert 'background: #78c7ff;' in window.styleSheet()
+    assert 'width: 5px;' in window.styleSheet()
+    assert 'height: 5px;' in window.styleSheet()
 
     clear_ui_manager_singleton()
 
@@ -1093,13 +1112,19 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     window.show()
     qtbot.wait(0)
 
-    assert window.menuWidget() is manager._menu_row
+    menu_container = window.menuWidget()
+    assert menu_container.objectName() == 'MainMenuContainer'
+    assert menu_container.layout().itemAt(0).widget() is manager._menu_row
     assert window.menuBar().actions()[-1].text() == 'Help'
     assert manager._menu_row.layout().itemAt(0).widget() is window.menuBar()
     search_container = manager._menu_row.layout().itemAt(1).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
+    menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
     assert manager._menu_row.objectName() == 'MainMenuRow'
     assert search_container.objectName() == 'MenuSearchContainer'
+    assert menu_divider is not None
+    assert menu_divider.height() == 1
+    assert '#808080' in menu_divider.styleSheet()
     assert isinstance(search_box, QLineEdit)
     assert search_box.isVisible()
     assert search_box.placeholderText() == 'Search for controls ...'
@@ -1109,6 +1134,58 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert manager._menu_row.findChild(QLabel, 'MenuSearchStatusLabel') is manager._search_status_label
 
     clear_ui_manager_singleton()
+
+
+def test_search_registry_ranks_exact_alias_and_fuzzy_matches():
+    registry = SearchRegistry([
+        PanelControlTarget(
+            label='FFT rmin',
+            aliases=('rmin', 'minimum FFT radius'),
+            context='Preferences > Tracking',
+            panel_id='TrackingOptionsPanel',
+            keywords=('fft_profile.rmin',),
+        ),
+        PanelControlTarget(
+            label='ROI Size',
+            aliases=('ROI', 'region of interest'),
+            context='Preferences > MagScope',
+            panel_id='MagScopeSettingsPanel',
+        ),
+        PanelControlTarget(
+            label='Dock All Windows',
+            aliases=('dock',),
+            context='Layout Menu',
+            panel_id='LayoutMenu',
+        ),
+    ])
+
+    assert registry.best('FFT rmin').label == 'FFT rmin'
+    assert registry.best('ROI').label == 'ROI Size'
+    assert registry.best('dock').label == 'Dock All Windows'
+    assert registry.best('fft rmn').label == 'FFT rmin'
+    assert registry.labels('minimum radius') == ['FFT rmin - Preferences > Tracking']
+
+
+def test_panel_search_targets_cover_common_controls():
+    target_labels = set()
+    for panel_class in (
+        AcquisitionPanel,
+        PlotSettingsPanel,
+        XYLockPanel,
+        ZLockPanel,
+        ZLUTGenerationPanel,
+        ZLUTPanel,
+    ):
+        target_labels.update(target.label for target in panel_class.search_targets(object()))
+    target_labels.update(target.label for target in TrackingOptionsPanel.search_targets())
+
+    assert 'Acquire' in target_labels
+    assert 'Selected Bead' in target_labels
+    assert 'FFT rmin' in target_labels
+    assert 'XY-Lock Once' in target_labels
+    assert 'Z-Lock Target' in target_labels
+    assert 'Generate Z-LUT' in target_labels
+    assert 'Select Z-LUT File' in target_labels
 
 
 def test_search_guides_to_auto_bead_button_without_clicking(qtbot):
@@ -1160,6 +1237,50 @@ def test_search_focus_clear_and_status_helpers(qtbot):
     manager._clear_search_box(manager._search_box)
     assert manager._search_box.text() == ''
     assert not manager._search_status_label.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_search_status_mentions_guide_only_metadata(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+
+    target = PanelControlTarget(
+        label='Demo Control',
+        context='Demo Panel',
+        description='Shows the demo control.',
+        panel_id='MissingPanel',
+    )
+    manager._guide_to_target(target)
+
+    assert manager._search_status_label.text() == (
+        'Showing: Demo Control - Demo Panel Guide only; no action was run. '
+        'Shows the demo control.'
+    )
+
+    clear_ui_manager_singleton()
+
+
+def test_search_status_clear_handles_deleted_label(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+
+    label = manager._search_status_label
+    manager._set_search_status('Showing: Demo')
+    label.deleteLater()
+    qtbot.wait(0)
+    manager._clear_search_status_label_ref()
+
+    manager._set_search_status('')
+
+    assert manager._search_status_label is None
+    assert manager._search_status_timer is None
 
     clear_ui_manager_singleton()
 
@@ -1264,13 +1385,35 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
 
     manager._create_view_menu(window)
     manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
 
+    assert manager._menus['Layout'] is manager._layout_menu
     assert manager._search_completion_labels('dock') == ['Dock All Windows - Layout Menu']
+    assert window.menuWidget() is manager._menu_row
+    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
 
     manager._guide_to_search_result('dock')
 
+    assert window.menuWidget() is manager._menu_row
+    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
+
+    clear_ui_manager_singleton()
+
+
+def test_search_logs_unmatched_queries(qtbot, caplog):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+
+    with caplog.at_level(logging.DEBUG):
+        manager._guide_to_search_result('not a real control')
+
+    assert 'No UI search target matched query' in caplog.text
 
     clear_ui_manager_singleton()
 
