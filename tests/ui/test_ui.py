@@ -953,6 +953,43 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot,
     clear_ui_manager_singleton()
 
 
+@pytest.mark.parametrize('dock_name', ['camera_dock', 'plots_dock'])
+def test_floating_viewer_docks_can_be_maximized(qtbot, dock_name):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+
+    dock = getattr(manager, dock_name)
+    dock.setFloating(True)
+    qtbot.wait(0)
+
+    flags = dock.windowFlags()
+    assert flags & Qt.WindowType.Window
+    assert flags & Qt.WindowType.WindowTitleHint
+    assert flags & Qt.WindowType.WindowSystemMenuHint
+    assert flags & Qt.WindowType.WindowMaximizeButtonHint
+    assert flags & Qt.WindowType.WindowType_Mask == Qt.WindowType.Window
+    assert dock.maximumWidth() == 16777215
+    assert dock.maximumHeight() == 16777215
+    assert dock.widget().maximumWidth() == 16777215
+    assert dock.widget().maximumHeight() == 16777215
+    assert dock.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert dock.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+
+    clear_ui_manager_singleton()
+
+
 def test_status_updates_format_strings(ui_manager):
     ui_manager.video_buffer = SimpleNamespace(
         get_level=lambda: 0.25,

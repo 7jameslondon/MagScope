@@ -979,6 +979,11 @@ class UIManager(ManagerProcessBase):
         if self.video_viewer is None or self.plots_widget is None:
             return
 
+        self.video_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_viewer.setMaximumSize(16777215, 16777215)
+        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.plots_widget.setMaximumSize(16777215, 16777215)
+
         self.camera_dock = QDockWidget("Live Camera", window)
         self.camera_dock.setObjectName("LiveCameraDock")
         self.camera_dock.setWidget(self.video_viewer)
@@ -987,6 +992,9 @@ class UIManager(ManagerProcessBase):
             QDockWidget.DockWidgetFeature.DockWidgetClosable
             | QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        self.camera_dock.topLevelChanged.connect(
+            lambda floating, dock=self.camera_dock: self._schedule_floating_dock_window_configuration(dock, floating)
         )
 
         self.plots_dock = QDockWidget("Live Plots", window)
@@ -998,9 +1006,39 @@ class UIManager(ManagerProcessBase):
             | QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
+        self.plots_dock.topLevelChanged.connect(
+            lambda floating, dock=self.plots_dock: self._schedule_floating_dock_window_configuration(dock, floating)
+        )
 
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
         window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
+
+    def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
+        if not floating:
+            return
+
+        self._configure_floating_dock_window(dock, floating)
+        QTimer.singleShot(0, lambda: self._configure_floating_dock_window(dock, floating))
+
+    def _configure_floating_dock_window(self, dock: QDockWidget, floating: bool) -> None:
+        if not floating:
+            return
+
+        dock.setMinimumSize(300, 300)
+        dock.setMaximumSize(16777215, 16777215)
+        dock.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        child = dock.widget()
+        if child is not None:
+            child.setMaximumSize(16777215, 16777215)
+            child.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        dock.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        dock.show()
 
     def _create_view_menu(self, window: QMainWindow) -> None:
         view_menu = window.menuBar().addMenu("View")
@@ -1048,6 +1086,7 @@ class UIManager(ManagerProcessBase):
 
         geometry = screens[screen_index].availableGeometry()
         dock.setFloating(True)
+        self._configure_floating_dock_window(dock, True)
         dock.setGeometry(
             geometry.x(),
             geometry.y(),
