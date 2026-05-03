@@ -48,3 +48,40 @@ Layout behavior:
 - Do not allow users to drag panels into arbitrary extra columns in the default desktop UI.
 - The control rail width should be stable enough that controls are not clipped.
 - The camera/video viewer should receive the flexible expanding space.
+
+## Dockable Live Viewer Redesign
+
+The live camera viewer and live plots should be implemented as dockable desktop panes rather than fixed widgets inside splitter layouts or separate hard-coded windows.
+
+Use Qt's native `QDockWidget` system for:
+- Live Camera
+- Live Plots
+
+Behavior:
+- Both viewer panes should be dockable, floatable, movable, and restorable.
+- Users should be able to undock either pane into its own floating window.
+- Users should be able to drag floating panes back into the main MagScope window.
+- Users should be able to restore a hidden/closed viewer pane from a View/Viewers toolbar or menu.
+- A `Reset Viewer Layout` action should restore the default camera/plot layout.
+
+Startup behavior should preserve the current `n_windows` intent:
+- `n_windows == 1`: controls, camera, and plots start in one main window, with camera and plots docked.
+- `n_windows == 2`: controls and camera start in the main window, live plots start floating on the second screen.
+- `n_windows == 3`: controls start in the main window, camera and plots start floating on separate screens when available.
+- Even when a pane starts floating, it must still be a dock widget owned by the main window so it can be re-docked.
+
+Implementation guidance:
+- Refactor `UIManager.create_central_widgets()` so the central widget hosts only the controls area.
+- Create `QDockWidget("Live Camera")` wrapping `self.video_viewer`.
+- Create `QDockWidget("Live Plots")` wrapping `self.plots_widget`.
+- Add both docks to the primary `QMainWindow`.
+- Add a small toolbar or menu with `Live Camera`, `Live Plots`, and `Reset Viewer Layout`.
+- Use each dock's `toggleViewAction()` for show/hide restore behavior.
+- Persist viewer layout separately from the controls layout using `QMainWindow.saveState()` / `restoreState()` in `QSettings`.
+- Suggested key: `viewer/layout_state`.
+- Do not couple this to the existing `controls/layout` settings.
+
+Important constraints:
+- Do not create duplicate camera or plot widgets. The live viewer and plot label should remain single widgets moved into dock containers.
+- Do not change video acquisition, plotting, buffers, IPC, or tracking behavior.
+- Avoid custom docking/window-management code unless Qt's native dock system cannot satisfy a requirement.
