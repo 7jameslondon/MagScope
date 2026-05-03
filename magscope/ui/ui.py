@@ -1041,7 +1041,7 @@ class UIManager(ManagerProcessBase):
         dock.show()
 
     def _create_view_menu(self, window: QMainWindow) -> None:
-        view_menu = window.menuBar().addMenu("View")
+        view_menu = window.menuBar().addMenu("Layout")
         if self.camera_dock is not None:
             view_menu.addAction(self.camera_dock.toggleViewAction())
         if self.plots_dock is not None:
