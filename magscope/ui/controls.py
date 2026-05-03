@@ -38,8 +38,10 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedLayout,
+    QTabWidget,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -90,32 +92,55 @@ if TYPE_CHECKING:
 
 
 class ControlPanelBase(QWidget):
-    def __init__(self, manager: 'UIManager', title: str, collapsed_by_default: bool = False):
+    def __init__(
+        self,
+        manager: 'UIManager',
+        title: str,
+        collapsed_by_default: bool = False,
+        collapsible: bool = True,
+    ):
         super().__init__()
         self.manager: UIManager = manager
-        self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(
-            title=title,
-            collapsed=collapsed_by_default,
-        )
+        self.groupbox: CollapsibleGroupBox | None = None
+        self._content_layout: QBoxLayout | None = None
 
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(self.groupbox)
         super().setLayout(outer_layout)
 
         content_layout = QVBoxLayout()
-        self.setLayout(content_layout)
+        if collapsible:
+            self.groupbox = CollapsibleGroupBox(
+                title=title,
+                collapsed=collapsed_by_default,
+            )
+            outer_layout.addWidget(self.groupbox)
+            self.setLayout(content_layout)
+        else:
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            outer_layout.addLayout(content_layout)
+            self._content_layout = content_layout
 
     def set_title(self, text: str) -> None:
-        self.groupbox.setTitle(text)
+        if self.groupbox is not None:
+            self.groupbox.setTitle(text)
 
     def setLayout(self, layout: QBoxLayout) -> None:
+        if self.groupbox is None:
+            self._content_layout = layout
+            super().layout().addLayout(layout)
+            return
         self.groupbox.setContentLayout(layout)
+        self._content_layout = self.groupbox.content_area.layout()
 
     def layout(self) -> QBoxLayout:
-        return self.groupbox.content_area.layout()
+        if self._content_layout is None:
+            raise RuntimeError('Control panel layout has not been initialized')
+        return self._content_layout
 
     def set_highlighted(self, enabled: bool) -> None:
+        if self.groupbox is None:
+            return
         highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
         if enabled:
             color_name = highlight_color.name()
@@ -362,8 +387,13 @@ class ResetPanel(QFrame):
 class MagScopeSettingsPanel(ControlPanelBase):
     """Allow importing, exporting, and editing MagScope configuration values."""
 
-    def __init__(self, manager: "UIManager"):
-        super().__init__(manager=manager, title="MagScope Settings", collapsed_by_default=True)
+    def __init__(self, manager: "UIManager", *, collapsible: bool = True):
+        super().__init__(
+            manager=manager,
+            title="MagScope Settings",
+            collapsed_by_default=True,
+            collapsible=collapsible,
+        )
 
         self._current_settings = manager.settings.clone()
         self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
@@ -1530,8 +1560,13 @@ class TrackingOptionsPanel(ControlPanelBase):
         'lookup_z': {'n_local': 7},
     }
 
-    def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Tracking Options', collapsed_by_default=True)
+    def __init__(self, manager: 'UIManager', *, collapsible: bool = True):
+        super().__init__(
+            manager=manager,
+            title='Tracking Options',
+            collapsed_by_default=True,
+            collapsible=collapsible,
+        )
         self._current_options: dict[str, Any] = copy.deepcopy(self._DEFAULTS)
         self._last_options_update: datetime.datetime | None = None
 
@@ -1996,6 +2031,61 @@ class TrackingOptionsPanel(ControlPanelBase):
 
     def reset_defaults(self) -> None:
         self._set_options(copy.deepcopy(self._DEFAULTS), 'Defaults restored', populate_inputs=True)
+
+
+class PreferencesDialog(QDialog):
+    """Modal dialog for global MagScope preferences."""
+
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager.windows[0] if getattr(manager, 'windows', None) else None)
+        self.manager = manager
+        self.setWindowTitle('Preferences')
+        self.setModal(True)
+        self.resize(760, 700)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        tabs = QTabWidget(self)
+        layout.addWidget(tabs, 1)
+
+        self.settings_panel = MagScopeSettingsPanel(manager, collapsible=False)
+        tabs.addTab(self._scrollable_tab(self.settings_panel), 'MagScope')
+
+        self.tracking_options_panel = TrackingOptionsPanel(manager, collapsible=False)
+        tabs.addTab(self._scrollable_tab(self.tracking_options_panel), 'Tracking')
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        reset_button = QPushButton('Reset GUI Layout')
+        reset_button.clicked.connect(self._reset_gui_layout)  # type: ignore[arg-type]
+        buttons.addWidget(reset_button)
+        close_button = QPushButton('Close')
+        close_button.clicked.connect(self.accept)  # type: ignore[arg-type]
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+    def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(widget)
+        return scroll
+
+    def _reset_gui_layout(self) -> None:
+        if self.manager.controls is None:
+            return
+        confirmation = QMessageBox.question(
+            self,
+            'Reset GUI',
+            'Reset panels to their default layout and states?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation == QMessageBox.StandardButton.Yes:
+            self.manager.controls.reset_to_defaults()
 
 
 class ScriptPanel(ControlPanelBase):

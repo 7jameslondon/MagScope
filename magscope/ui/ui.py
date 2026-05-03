@@ -9,8 +9,16 @@ from typing import Callable, Iterable
 from warnings import warn
 
 import numpy as np
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
-from PyQt6.QtGui import QAction, QFont, QFontDatabase, QGuiApplication, QImage, QPixmap
+from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer, QUrl
+from PyQt6.QtGui import (
+    QAction,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QImage,
+    QPixmap,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -41,14 +49,11 @@ from magscope.ui.controls import (
     CameraPanel,
     ControlPanelBase,
     HistogramPanel,
-    HelpPanel,
-    MagScopeSettingsPanel,
     PlotSettingsPanel,
+    PreferencesDialog,
     ProfilePanel,
-    ResetPanel,
     ScriptPanel,
     StatusPanel,
-    TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationDialog,
     ZLUTGenerationPanel,
@@ -135,6 +140,7 @@ class UIManager(ManagerProcessBase):
         self.plots_dock: QDockWidget | None = None
         self.plots_dock_header: QWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
+        self._preferences_dialog: PreferencesDialog | None = None
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
         self.reference_bead: int | None = None
@@ -368,7 +374,9 @@ class UIManager(ManagerProcessBase):
         window.setCentralWidget(self.central_widgets[0])
         self.windows.append(window)
         self._create_viewer_docks(window)
+        self._create_preferences_menu_action(window)
         self._create_view_menu(window)
+        self._create_help_menu_action(window)
         self._apply_default_viewer_layout()
         if self._restore_viewer_layout():
             window.show()
@@ -1149,6 +1157,25 @@ class UIManager(ManagerProcessBase):
         reset_action = QAction("Reset Viewer Layout", window)
         reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
         view_menu.addAction(reset_action)
+
+    def _create_preferences_menu_action(self, window: QMainWindow) -> None:
+        preferences_action = QAction("Preferences", window)
+        preferences_action.triggered.connect(lambda _checked=False: self._show_preferences_dialog())
+        window.menuBar().addAction(preferences_action)
+
+    def _create_help_menu_action(self, window: QMainWindow) -> None:
+        help_action = QAction("Help", window)
+        help_action.triggered.connect(
+            lambda _checked=False: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io"))
+        )
+        window.menuBar().addAction(help_action)
+
+    def _show_preferences_dialog(self) -> None:
+        if self._preferences_dialog is None:
+            self._preferences_dialog = PreferencesDialog(self)
+        self._preferences_dialog.show()
+        self._preferences_dialog.raise_()
+        self._preferences_dialog.activateWindow()
 
     def _dock_all_viewers(self) -> None:
         for dock in (self.camera_dock, self.plots_dock):
@@ -2226,7 +2253,7 @@ class Controls(QWidget):
         stored_layout = self.layout_manager.stored_layout()
         self._update_column_counter(stored_layout.keys())
 
-        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
+        self._add_column("left", index=0)
         for name in stored_layout.keys():
             if name in self.layout_manager.columns:
                 continue
@@ -2235,14 +2262,10 @@ class Controls(QWidget):
             self._add_column("right")
 
         # Instantiate standard panels
-        self.help_panel = HelpPanel(self.manager)
-        self.reset_panel = ResetPanel(self.manager)
-        self.settings_panel = MagScopeSettingsPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
         self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
-        self.tracking_options_panel = TrackingOptionsPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
         self.allan_deviation_panel = (
             AllanDeviationPanel(self.manager) if has_tweezepy_support() else None
@@ -2259,14 +2282,10 @@ class Controls(QWidget):
         self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
-            ("HelpPanel", self.help_panel, "left", False),
-            ("ResetPanel", self.reset_panel, "left", False),
-            ("MagScopeSettingsPanel", self.settings_panel, "left", True),
             ("StatusPanel", self.status_panel, "left", True),
             ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
-            ("TrackingOptionsPanel", self.tracking_options_panel, "left", True),
             ("HistogramPanel", self.histogram_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
@@ -2451,7 +2470,7 @@ class Controls(QWidget):
         self.layout_manager.columns = OrderedDict()
         self._column_counter = 1
 
-        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
+        self._add_column("left", index=0)
         self._add_column("right")
 
         for panel_id in self.layout_manager._default_order:

@@ -19,6 +19,7 @@ from magscope.ui.controls import (
     ControlPanelBase,
     HistogramPanel,
     PlotSettingsPanel,
+    PreferencesDialog,
     ScriptPanel,
     StatusPanel,
     TrackingOptionsPanel,

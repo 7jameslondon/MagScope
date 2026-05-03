@@ -1730,14 +1730,10 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
             self.zlut_clear_requested = FakeConnectSignal()
 
     for name in [
-        'HelpPanel',
-        'ResetPanel',
-        'MagScopeSettingsPanel',
         'AcquisitionPanel',
         'BeadSelectionPanel',
         'CameraPanel',
         'HistogramPanel',
-        'TrackingOptionsPanel',
         'PlotSettingsPanel',
         'ProfilePanel',
         'ScriptPanel',
