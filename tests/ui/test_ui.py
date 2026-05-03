@@ -1121,6 +1121,33 @@ def test_viewer_layout_save_restore_and_reset(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_invalid_viewer_layout_restore_clears_saved_state(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY, b'invalid geometry')
+    settings.setValue(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY, b'invalid dock state')
+
+    assert not manager._restore_viewer_layout()
+    assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
+    assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is None
+
+    clear_ui_manager_singleton()
+
+
 def test_ui_manager_does_not_expose_n_windows():
     clear_ui_manager_singleton()
     manager = UIManager()
