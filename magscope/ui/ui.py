@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from dataclasses import dataclass
 from importlib import resources
 from math import floor, ceil
 import os
@@ -9,7 +10,17 @@ from typing import Callable, Iterable
 from warnings import warn
 
 import numpy as np
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer, QUrl
+from PyQt6.QtCore import (
+    QEvent,
+    QPoint,
+    QRectF,
+    QSettings,
+    QStringListModel,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+)
 from PyQt6.QtGui import (
     QAction,
     QDesktopServices,
@@ -17,17 +28,21 @@ from PyQt6.QtGui import (
     QFontDatabase,
     QGuiApplication,
     QImage,
+    QPalette,
     QPixmap,
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QCompleter,
     QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QLayout,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QScrollArea,
     QSizePolicy,
@@ -76,6 +91,19 @@ from magscope.settings import MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("ui.ui")
+
+
+@dataclass(frozen=True)
+class _SearchTarget:
+    label: str
+    panel_id: str | None = None
+    widget_path: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+    target_type: str = "panel"
+    preference_setting_key: str | None = None
+    preference_tab: str | None = None
+    preference_widget_attr: str | None = None
+    menu_action_text: str | None = None
 
 
 class _StartupReadyWindow(QMainWindow):
@@ -166,6 +194,11 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
         self._shutdown_complete = False
+        self._search_box: QLineEdit | None = None
+        self._menu_row: QWidget | None = None
+        self._layout_menu: QMenu | None = None
+        self._search_targets: list[_SearchTarget] = []
+        self._search_highlight_original_styles: dict[QWidget, str] = {}
 
     @classmethod
     def _material_symbols_font(cls, point_size: int = 18) -> QFont:
@@ -377,6 +410,7 @@ class UIManager(ManagerProcessBase):
         self._create_preferences_menu_action(window)
         self._create_view_menu(window)
         self._create_help_menu_action(window)
+        self._create_search_menu_widget(window)
         self._apply_default_viewer_layout()
         if self._restore_viewer_layout():
             window.show()
@@ -1146,6 +1180,7 @@ class UIManager(ManagerProcessBase):
 
     def _create_view_menu(self, window: QMainWindow) -> None:
         view_menu = window.menuBar().addMenu("Layout")
+        self._layout_menu = view_menu
         if self.camera_dock is not None:
             view_menu.addAction(self.camera_dock.toggleViewAction())
         if self.plots_dock is not None:
@@ -1169,6 +1204,356 @@ class UIManager(ManagerProcessBase):
             lambda _checked=False: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io"))
         )
         window.menuBar().addAction(help_action)
+
+    def _create_search_menu_widget(self, window: QMainWindow) -> None:
+        self._search_targets = self._build_search_targets()
+        if self.controls is not None:
+            self._search_targets = [
+                target
+                for target in self._search_targets
+                if target.target_type != "panel" or target.panel_id in self.controls.panels
+            ]
+        menu_bar = window.menuBar()
+        menu_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+        menu_row = QWidget(window)
+        menu_row.setObjectName("MainMenuRow")
+        menu_row_layout = QHBoxLayout(menu_row)
+        menu_row_layout.setContentsMargins(0, 0, 0, 0)
+        menu_row_layout.setSpacing(0)
+        menu_row_layout.addWidget(menu_bar)
+
+        search_container = QWidget(window)
+        search_container.setObjectName("MenuSearchContainer")
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(6, 2, 0, 2)
+        search_layout.setSpacing(0)
+
+        search_box = QLineEdit(search_container)
+        search_box.setObjectName("MenuSearchBox")
+        search_box.setPlaceholderText("Search for controls ...")
+        search_box.setToolTip("Search for a control to show where it is in the UI")
+        search_box.setClearButtonEnabled(True)
+        search_box.setFixedWidth(300)
+        search_layout.addWidget(search_box)
+
+        completion_model = QStringListModel(self._search_completion_labels(""), search_box)
+        completer = QCompleter(completion_model, search_box)
+        completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        search_box.setCompleter(completer)
+
+        search_box.returnPressed.connect(lambda: self._guide_to_search_result(search_box.text()))
+        search_box.textEdited.connect(
+            lambda text: self._update_search_completion_model(completion_model, completer, text)
+        )
+        completer.activated.connect(lambda text: self._guide_to_search_result(str(text)))
+
+        menu_row_layout.addWidget(search_container)
+        menu_row_layout.addStretch(1)
+        window.setMenuWidget(menu_row)
+        self._menu_row = menu_row
+        self._search_box = search_box
+
+    def _build_search_targets(self) -> list[_SearchTarget]:
+        return [
+            _SearchTarget("Status", "StatusPanel"),
+            _SearchTarget("Bead Selection", "BeadSelectionPanel", aliases=("beads", "bead controls")),
+            _SearchTarget(
+                "Auto Bead Selection",
+                "BeadSelectionPanel",
+                ("auto_select_button",),
+                aliases=("auto bead", "automatic bead selection", "find bead", "find beads", "detect beads"),
+            ),
+            _SearchTarget(
+                "ROI Size",
+                aliases=("roi", "roi size", "bead roi", "region of interest"),
+                target_type="preferences_setting",
+                preference_setting_key="ROI",
+            ),
+            _SearchTarget(
+                "Dock All Windows",
+                aliases=("dock", "dock windows", "dock all", "dock viewers"),
+                target_type="menu_action",
+                menu_action_text="Dock All Windows",
+            ),
+            _SearchTarget(
+                "Reset Viewer Layout",
+                aliases=("reset layout", "viewer layout", "reset windows"),
+                target_type="menu_action",
+                menu_action_text="Reset Viewer Layout",
+            ),
+            _SearchTarget(
+                "Use FFT profile",
+                aliases=("fft profile", "enable fft profile"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="use_fft",
+            ),
+            _SearchTarget(
+                "FFT oversample",
+                aliases=("fft oversampling",),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="fft_oversample",
+            ),
+            _SearchTarget(
+                "FFT rmin",
+                aliases=("fft rmin", "rmin", "fft r min", "minimum fft radius"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="fft_rmin",
+            ),
+            _SearchTarget(
+                "FFT rmax",
+                aliases=("fft rmax", "rmax", "fft r max", "maximum fft radius"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="fft_rmax",
+            ),
+            _SearchTarget(
+                "FFT gaus_factor",
+                aliases=("fft gaussian factor", "fft gaus factor"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="fft_gaus_factor",
+            ),
+            _SearchTarget(
+                "Radial oversample",
+                aliases=("radial oversampling",),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="radial_oversample",
+            ),
+            _SearchTarget(
+                "lookup_z n_local",
+                aliases=("lookup z n local", "z lookup n local"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="lookup_n_local",
+            ),
+            _SearchTarget(
+                "Auto-conv iterations",
+                aliases=("auto conv iterations", "auto convolution iterations"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="iterations",
+            ),
+            _SearchTarget(
+                "Line ratio",
+                aliases=("tracking line ratio",),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="line_ratio",
+            ),
+            _SearchTarget(
+                "n_local (auto-conv)",
+                aliases=("n local auto conv", "auto conv n local"),
+                target_type="preferences_widget",
+                preference_tab="Tracking",
+                preference_widget_attr="n_local",
+            ),
+            _SearchTarget("Remove All Beads", "BeadSelectionPanel", ("clear_button",)),
+            _SearchTarget("Reassign IDs", "BeadSelectionPanel", ("reset_id_button",)),
+            _SearchTarget("Camera Settings", "CameraPanel", aliases=("camera",)),
+            _SearchTarget("Acquisition", "AcquisitionPanel", aliases=("recording", "saving")),
+            _SearchTarget("Histogram", "HistogramPanel"),
+            _SearchTarget("Radial Profile Monitor", "ProfilePanel", aliases=("profile",)),
+            _SearchTarget("Plot Settings", "PlotSettingsPanel", aliases=("plots",)),
+            _SearchTarget("Z-LUT", "ZLUTPanel", aliases=("zlut", "z lut")),
+            _SearchTarget("Z-LUT Generation", "ZLUTGenerationPanel", aliases=("generate z-lut",)),
+            _SearchTarget("Scripting", "ScriptPanel", aliases=("scripts",)),
+            _SearchTarget("XY-Lock", "XYLockPanel", aliases=("xy lock",)),
+            _SearchTarget("Z-Lock", "ZLockPanel", aliases=("z lock",)),
+            _SearchTarget("Allan Deviation", "AllanDeviationPanel", aliases=("allan",)),
+        ]
+
+    @staticmethod
+    def _normalize_search_text(text: str) -> str:
+        return " ".join(text.casefold().replace("-", " ").replace("_", " ").split())
+
+    def _search_target_haystacks(self) -> list[tuple[_SearchTarget, list[str]]]:
+        if not self._search_targets:
+            self._search_targets = self._build_search_targets()
+        return [
+            (target, [self._normalize_search_text(value) for value in (target.label, *target.aliases)])
+            for target in self._search_targets
+        ]
+
+    def _find_search_target(self, text: str) -> _SearchTarget | None:
+        query = self._normalize_search_text(text)
+        if not query:
+            return None
+
+        for target, haystacks in self._search_target_haystacks():
+            if query in haystacks:
+                return target
+
+        for target, haystacks in self._search_target_haystacks():
+            if any(haystack.startswith(query) or query in haystack for haystack in haystacks):
+                return target
+
+        query_terms = query.split()
+        for target, haystacks in self._search_target_haystacks():
+            if any(all(term in haystack for term in query_terms) for haystack in haystacks):
+                return target
+        return None
+
+    def _find_exact_search_target(self, text: str) -> _SearchTarget | None:
+        query = self._normalize_search_text(text)
+        if not query:
+            return None
+        for target, haystacks in self._search_target_haystacks():
+            if query in haystacks:
+                return target
+        return None
+
+    def _search_completion_labels(self, text: str) -> list[str]:
+        query = self._normalize_search_text(text)
+        labels: list[str] = []
+        for target, haystacks in self._search_target_haystacks():
+            if not query:
+                matched = True
+            else:
+                query_terms = query.split()
+                matched = any(
+                    query in haystack
+                    or haystack.startswith(query)
+                    or all(term in haystack for term in query_terms)
+                    for haystack in haystacks
+                )
+            if matched and target.label not in labels:
+                labels.append(target.label)
+        return labels
+
+    def _update_search_completion_model(
+        self,
+        model: QStringListModel,
+        completer: QCompleter,
+        text: str,
+    ) -> None:
+        labels = self._search_completion_labels(text)
+        model.setStringList(labels)
+        if labels and text.strip():
+            completer.complete()
+
+    def _guide_to_search_result(self, text: str) -> None:
+        target = self._find_search_target(text)
+        if target is None:
+            return
+
+        self._guide_to_target(target)
+
+    def _guide_to_target(self, target: _SearchTarget) -> None:
+        self._reveal_search_target(target)
+        if self._search_box is not None:
+            self._search_box.setText(target.label)
+            self._search_box.selectAll()
+
+    def _reveal_search_target(self, target: _SearchTarget) -> None:
+        if target.target_type == "preferences_setting":
+            self._reveal_preference_setting(target)
+            return
+        if target.target_type == "preferences_widget":
+            self._reveal_preference_widget(target)
+            return
+        if target.target_type == "menu_action":
+            self._reveal_menu_action(target)
+            return
+
+        if self.controls is None:
+            return
+
+        reveal_panel = getattr(self.controls, "reveal_panel", None)
+        if callable(reveal_panel):
+            reveal_panel(target.panel_id)
+
+        widget = self._search_target_widget(target)
+        if widget is not None:
+            self._highlight_search_widget(widget)
+
+    def _search_target_widget(self, target: _SearchTarget) -> QWidget | None:
+        if self.controls is None or target.panel_id is None:
+            return None
+
+        panel = self.controls.panels.get(target.panel_id)
+        if panel is None:
+            return None
+
+        if not target.widget_path:
+            groupbox = getattr(panel, "groupbox", None)
+            if isinstance(groupbox, QWidget):
+                return groupbox
+            return panel if isinstance(panel, QWidget) else None
+
+        widget = panel
+        for attr_name in target.widget_path:
+            widget = getattr(widget, attr_name, None)
+            if widget is None:
+                return panel if isinstance(panel, QWidget) else None
+        return widget if isinstance(widget, QWidget) else None
+
+    def _reveal_preference_setting(self, target: _SearchTarget) -> None:
+        if target.preference_setting_key is None:
+            return
+
+        self._show_preferences_dialog()
+        if self._preferences_dialog is None:
+            return
+
+        reveal_setting = getattr(self._preferences_dialog, "reveal_setting", None)
+        if callable(reveal_setting):
+            reveal_setting(target.preference_setting_key)
+
+    def _reveal_preference_widget(self, target: _SearchTarget) -> None:
+        if target.preference_tab is None or target.preference_widget_attr is None:
+            return
+
+        self._show_preferences_dialog()
+        if self._preferences_dialog is None:
+            return
+
+        reveal_widget = getattr(self._preferences_dialog, "reveal_widget", None)
+        if callable(reveal_widget):
+            reveal_widget(target.preference_tab, target.preference_widget_attr)
+
+    def _reveal_menu_action(self, target: _SearchTarget) -> None:
+        if target.menu_action_text is None or self._layout_menu is None:
+            return
+
+        action = next(
+            (action for action in self._layout_menu.actions() if action.text() == target.menu_action_text),
+            None,
+        )
+        if action is None:
+            return
+
+        self._layout_menu.setActiveAction(action)
+        if not self.windows:
+            return
+
+        menu_bar = self.windows[0].menuBar()
+        menu_action_geometry = menu_bar.actionGeometry(self._layout_menu.menuAction())
+        self._layout_menu.popup(menu_bar.mapToGlobal(menu_action_geometry.bottomLeft()))
+
+    def _highlight_search_widget(self, widget: QWidget) -> None:
+        if widget not in self._search_highlight_original_styles:
+            self._search_highlight_original_styles[widget] = widget.styleSheet()
+
+        highlight_color = widget.palette().color(QPalette.ColorRole.Highlight).name()
+        widget.setStyleSheet(
+            f"border: 2px solid {highlight_color}; border-radius: 4px; padding: 2px;"
+        )
+        QTimer.singleShot(2500, lambda w=widget: self._clear_search_highlight(w))
+
+    def _clear_search_highlight(self, widget: QWidget) -> None:
+        original_style = self._search_highlight_original_styles.pop(widget, None)
+        if original_style is None:
+            return
+        try:
+            widget.setStyleSheet(original_style)
+        except RuntimeError:
+            pass
 
     def _show_preferences_dialog(self) -> None:
         if self._preferences_dialog is None:
@@ -2442,6 +2827,22 @@ class Controls(QWidget):
             self._suppress_layout_callback = False
         self.layout_manager.layout_changed()
         self._add_column_target.refresh_visibility()
+
+    def reveal_panel(self, panel_id: str) -> None:
+        panel = self.panels.get(panel_id)
+        if panel is None:
+            return
+
+        groupbox = getattr(panel, "groupbox", None)
+        if isinstance(groupbox, CollapsibleGroupBox) and groupbox.collapsed:
+            groupbox._apply_collapsed_state(False, animate=False, persist=True)
+
+        wrapper = self.layout_manager.wrapper_for_id(panel_id)
+        if wrapper is None or wrapper.column is None:
+            return
+        scroll = self._column_scrolls.get(wrapper.column.name)
+        if scroll is not None:
+            scroll.ensureWidgetVisible(wrapper)
 
     def reset_to_defaults(self) -> None:
         """Restore panel visibility, order, and columns to defaults."""

@@ -14,7 +14,7 @@ import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
-from PyQt6.QtCore import QPointF, QSettings, QSize, QUrl, Qt, QVariant, pyqtSignal
+from PyQt6.QtCore import QPointF, QSettings, QSize, QTimer, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import (
     QDesktopServices,
     QFont,
@@ -2047,14 +2047,16 @@ class PreferencesDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        tabs = QTabWidget(self)
-        layout.addWidget(tabs, 1)
+        self.tabs = QTabWidget(self)
+        layout.addWidget(self.tabs, 1)
 
         self.settings_panel = MagScopeSettingsPanel(manager, collapsible=False)
-        tabs.addTab(self._scrollable_tab(self.settings_panel), 'MagScope')
+        self.settings_scroll = self._scrollable_tab(self.settings_panel)
+        self.tabs.addTab(self.settings_scroll, 'MagScope')
 
         self.tracking_options_panel = TrackingOptionsPanel(manager, collapsible=False)
-        tabs.addTab(self._scrollable_tab(self.tracking_options_panel), 'Tracking')
+        self.tracking_scroll = self._scrollable_tab(self.tracking_options_panel)
+        self.tabs.addTab(self.tracking_scroll, 'Tracking')
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -2073,6 +2075,45 @@ class PreferencesDialog(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(widget)
         return scroll
+
+    def reveal_setting(self, setting_key: str) -> None:
+        widget = self.settings_panel._setting_inputs.get(setting_key)
+        if widget is None:
+            return
+
+        self._reveal_widget(self.settings_scroll, widget)
+
+    def reveal_widget(self, tab_name: str, widget_attr: str) -> None:
+        if tab_name == 'Tracking':
+            scroll = self.tracking_scroll
+            panel = self.tracking_options_panel
+        elif tab_name == 'MagScope':
+            scroll = self.settings_scroll
+            panel = self.settings_panel
+        else:
+            return
+
+        widget = getattr(panel, widget_attr, None)
+        if not isinstance(widget, QWidget):
+            return
+
+        self._reveal_widget(scroll, widget)
+
+    def _reveal_widget(self, scroll: QScrollArea, widget: QWidget) -> None:
+        self.tabs.setCurrentWidget(scroll)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        scroll.ensureWidgetVisible(widget)
+        QTimer.singleShot(0, lambda: scroll.ensureWidgetVisible(widget))
+
+        highlight = getattr(self.manager, '_highlight_search_widget', None)
+        if callable(highlight):
+            highlight(widget)
+        lineedit = getattr(widget, 'lineedit', None)
+        if isinstance(lineedit, QLineEdit):
+            lineedit.setFocus()
+            lineedit.selectAll()
 
     def _reset_gui_layout(self) -> None:
         if self.manager.controls is None:

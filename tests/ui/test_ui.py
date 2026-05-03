@@ -18,7 +18,9 @@ from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
     QGraphicsScene,
+    QLineEdit,
     QMainWindow,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QWidget,
@@ -38,13 +40,14 @@ from magscope.ipc_commands import (
 from magscope.settings import MagScopeSettings
 from magscope.ui.controls import (
     AllanDeviationPanel,
+    PreferencesDialog,
     ZLUTGenerationDialog,
     ZLUTGenerationPanel,
     ZLUTSweepPreviewWidget,
 )
 from magscope.ui.plots import TracksTimeSeriesPlot
 from magscope.ui.ui import Controls, LoadingWindow, UIManager, _StartupReadyWindow
-from magscope.ui.widgets import BeadGraphic, ResizableLabel
+from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.utils import AcquisitionMode
 
 
@@ -1075,6 +1078,195 @@ def test_layout_menu_can_dock_all_windows(qtbot):
     assert not manager.plots_dock_header.isVisible()
 
     clear_ui_manager_singleton()
+
+
+def test_menu_bar_search_box_follows_help_menu_item(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_help_menu_action(window)
+    manager._create_search_menu_widget(window)
+
+    window.show()
+    qtbot.wait(0)
+
+    assert window.menuWidget() is manager._menu_row
+    assert window.menuBar().actions()[-1].text() == 'Help'
+    assert manager._menu_row.layout().itemAt(0).widget() is window.menuBar()
+    search_container = manager._menu_row.layout().itemAt(1).widget()
+    search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
+    assert manager._menu_row.objectName() == 'MainMenuRow'
+    assert search_container.objectName() == 'MenuSearchContainer'
+    assert isinstance(search_box, QLineEdit)
+    assert search_box.isVisible()
+    assert search_box.placeholderText() == 'Search for controls ...'
+    assert search_box.width() == 300
+    assert manager._find_search_target('Auto Bead').label == 'Auto Bead Selection'
+
+    clear_ui_manager_singleton()
+
+
+def test_search_guides_to_auto_bead_button_without_clicking(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    panel = QWidget()
+    qtbot.addWidget(panel)
+    panel.auto_select_button = QPushButton('Auto Bead Selection', panel)
+    clicks = []
+    panel.auto_select_button.clicked.connect(lambda: clicks.append(True))
+    reveal_calls = []
+
+    class FakeControls:
+        panels = {'BeadSelectionPanel': panel}
+
+        def reveal_panel(self, panel_id: str) -> None:
+            reveal_calls.append(panel_id)
+
+    manager.controls = FakeControls()
+
+    manager._guide_to_search_result('Auto Bead')
+
+    assert reveal_calls == ['BeadSelectionPanel']
+    assert 'border: 2px solid' in panel.auto_select_button.styleSheet()
+    assert clicks == []
+
+    clear_ui_manager_singleton()
+
+
+def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    panel = QWidget()
+    qtbot.addWidget(panel)
+    panel.auto_select_button = QPushButton('Auto Bead Selection', panel)
+    clicks = []
+    panel.auto_select_button.clicked.connect(lambda: clicks.append(True))
+    reveal_calls = []
+
+    class FakeControls:
+        panels = {'BeadSelectionPanel': panel}
+
+        def reveal_panel(self, panel_id: str) -> None:
+            reveal_calls.append(panel_id)
+
+    manager.controls = FakeControls()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    manager._search_box.setFocus()
+    qtbot.keyClicks(manager._search_box, 'find beads')
+
+    assert manager._search_completion_labels('find bead') == ['Auto Bead Selection']
+    assert reveal_calls == []
+
+    qtbot.keyClick(manager._search_box, Qt.Key.Key_Return)
+    qtbot.waitUntil(lambda: reveal_calls == ['BeadSelectionPanel'], timeout=1000)
+
+    assert manager._search_box.text() == 'Auto Bead Selection'
+    assert 'border: 2px solid' in panel.auto_select_button.styleSheet()
+    assert clicks == []
+
+    clear_ui_manager_singleton()
+
+
+def test_search_guides_to_roi_setting_in_preferences(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    highlighted_widgets = []
+    manager._highlight_search_widget = lambda widget: highlighted_widgets.append(widget)
+
+    manager._guide_to_search_result('ROI')
+
+    dialog = manager._preferences_dialog
+    assert isinstance(dialog, PreferencesDialog)
+    qtbot.addWidget(dialog)
+    roi_widget = dialog.settings_panel._setting_inputs['ROI']
+    assert dialog.tabs.currentWidget() is dialog.settings_scroll
+    assert highlighted_widgets == [roi_widget]
+    assert roi_widget.lineedit.selectedText() == roi_widget.lineedit.text()
+
+    clear_ui_manager_singleton()
+
+
+def test_search_suggests_dock_all_windows_without_executing(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    dock_calls = []
+    manager._dock_all_viewers = lambda: dock_calls.append(True)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_view_menu(window)
+    manager._create_search_menu_widget(window)
+
+    assert manager._search_completion_labels('dock') == ['Dock All Windows']
+
+    manager._guide_to_search_result('dock')
+
+    assert dock_calls == []
+    assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
+
+    clear_ui_manager_singleton()
+
+
+def test_search_guides_to_fft_rmin_in_tracking_preferences(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    highlighted_widgets = []
+    manager._highlight_search_widget = lambda widget: highlighted_widgets.append(widget)
+
+    assert manager._search_completion_labels('FFT Rmin') == ['FFT rmin']
+
+    manager._guide_to_search_result('FFT Rmin')
+
+    dialog = manager._preferences_dialog
+    assert isinstance(dialog, PreferencesDialog)
+    qtbot.addWidget(dialog)
+    assert dialog.tabs.currentWidget() is dialog.tracking_scroll
+    assert highlighted_widgets == [dialog.tracking_options_panel.fft_rmin]
+    assert dialog.tracking_options_panel.fft_rmin.lineedit.selectedText() == (
+        dialog.tracking_options_panel.fft_rmin.lineedit.text()
+    )
+
+    clear_ui_manager_singleton()
+
+
+def test_controls_reveal_panel_expands_and_scrolls(qtbot):
+    panel = QWidget()
+    qtbot.addWidget(panel)
+    panel.groupbox = CollapsibleGroupBox('Search Test Panel', collapsed=True)
+    qtbot.addWidget(panel.groupbox)
+    panel.groupbox._apply_collapsed_state(True, animate=False, persist=False)
+    wrapper = SimpleNamespace(column=SimpleNamespace(name='left'))
+    scrolled_widgets = []
+
+    class FakeLayoutManager:
+        def wrapper_for_id(self, panel_id: str):
+            return wrapper
+
+    class FakeScroll:
+        def ensureWidgetVisible(self, widget) -> None:
+            scrolled_widgets.append(widget)
+
+    controls = SimpleNamespace(
+        panels={'BeadSelectionPanel': panel},
+        layout_manager=FakeLayoutManager(),
+        _column_scrolls={'left': FakeScroll()},
+    )
+
+    Controls.reveal_panel(controls, 'BeadSelectionPanel')
+
+    assert panel.groupbox.collapsed is False
+    assert scrolled_widgets == [wrapper]
 
 
 def test_viewer_layout_save_restore_and_reset(qtbot):
