@@ -1045,7 +1045,6 @@ class ZaberLsqPositionPlot(magscope.TimeSeriesPlotBase):
 
 if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
-    scope.ui_manager.n_windows = 1
 
     scope.add_hardware(ZaberLsqMotor())
     scope.add_control(ZaberLsqControls, column=0)

@@ -646,7 +646,6 @@ class ForcePlot(magscope.TimeSeriesPlotBase):
 
 if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
-    scope.ui_manager.n_windows = 1
 
     # Add the motor
     scope.add_hardware(FakeLinearMotor())

@@ -484,7 +484,6 @@ class PiE709FocusPlot(magscope.TimeSeriesPlotBase):
 
 if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
-    scope.ui_manager.n_windows = 1
 
     scope.add_hardware(PiE709FocusMotor())
     scope.add_control(PiE709Controls, column=0)

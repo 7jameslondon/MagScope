@@ -927,8 +927,7 @@ def test_notify_startup_ready_sends_command_once(ui_manager, monkeypatch):
     assert commands == [StartupReadyCommand(process_name=ui_manager.name)]
 
 
-@pytest.mark.parametrize('n_windows', [1, 2, 3])
-def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot, n_windows):
+def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = QLabel('controls')
@@ -937,7 +936,6 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot,
     for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
         qtbot.addWidget(widget)
 
-    manager.n_windows = n_windows
     manager.create_central_widgets()
 
     assert len(manager.central_widgets) == 1
@@ -1036,6 +1034,98 @@ def test_floating_viewer_docks_show_dock_button(qtbot, dock_name):
 
     assert not dock.isFloating()
     assert not header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_layout_menu_can_dock_all_viewers(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._create_view_menu(window)
+
+    assert manager.camera_dock is not None
+    assert manager.plots_dock is not None
+    manager.camera_dock.setFloating(True)
+    manager.plots_dock.setFloating(True)
+    qtbot.wait(0)
+
+    layout_menu = window.menuBar().actions()[0].menu()
+    dock_all_action = next(
+        action for action in layout_menu.actions() if action.text() == 'Dock All Windows'
+    )
+    dock_all_action.trigger()
+
+    assert not manager.camera_dock.isFloating()
+    assert not manager.plots_dock.isFloating()
+    assert not manager.camera_dock.isHidden()
+    assert not manager.plots_dock.isHidden()
+    assert not manager.camera_dock_header.isVisible()
+    assert not manager.plots_dock_header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_viewer_layout_save_restore_and_reset(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    manager._apply_default_viewer_layout()
+
+    assert not manager._restore_viewer_layout()
+
+    manager.plots_dock.setFloating(True)
+    qtbot.wait(0)
+    manager._save_viewer_layout()
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is not None
+    assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is not None
+
+    manager.plots_dock.setFloating(False)
+    qtbot.wait(0)
+    assert manager._restore_viewer_layout()
+    assert manager.plots_dock.isFloating()
+
+    manager._reset_viewer_layout()
+
+    assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
+    assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is None
+    assert not manager.camera_dock.isFloating()
+    assert not manager.plots_dock.isFloating()
+    assert not manager.camera_dock_header.isVisible()
+    assert not manager.plots_dock_header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_ui_manager_does_not_expose_n_windows():
+    clear_ui_manager_singleton()
+    manager = UIManager()
+
+    assert not hasattr(manager, 'n_windows')
 
     clear_ui_manager_singleton()
 

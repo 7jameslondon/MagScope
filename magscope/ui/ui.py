@@ -6,7 +6,6 @@ import sys
 from time import time
 import traceback
 from typing import Callable, Iterable
-from warnings import warn
 
 import numpy as np
 from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
@@ -105,6 +104,9 @@ class _StartupReadyWindow(QMainWindow):
 
 class UIManager(ManagerProcessBase):
     _material_symbols_font_family: str | None = None
+    VIEWER_LAYOUT_STATE_VERSION = 1
+    VIEWER_GEOMETRY_SETTINGS_KEY = "viewer/main_window_geometry"
+    VIEWER_DOCK_STATE_SETTINGS_KEY = "viewer/dock_state"
 
     def __init__(self):
         super().__init__()
@@ -126,7 +128,6 @@ class UIManager(ManagerProcessBase):
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
-        self._n_windows: int | None = None
         self.plot_worker: PlotWorker
         self.plot_thread: QThread
         self.plots_widget: QLabel
@@ -323,10 +324,6 @@ class UIManager(ManagerProcessBase):
         if self.settings is not None:
             self._last_applied_roi = self.settings["ROI"]
 
-        # If the number of windows is not specified, then use the number of screens
-        if self._n_windows is None:
-            self._n_windows = len(QApplication.screens())
-
         # Create the live plots in a separate thread (but dont start it)
         self.plots_widget = ResizableLabel(ignore_pixmap_size_hint=True)
         self.plots_widget.setScaledContents(True)
@@ -371,8 +368,11 @@ class UIManager(ManagerProcessBase):
         self.windows.append(window)
         self._create_viewer_docks(window)
         self._create_view_menu(window)
-        window.showMaximized()
-        self._reset_viewer_layout()
+        self._apply_default_viewer_layout()
+        if self._restore_viewer_layout():
+            window.show()
+        else:
+            window.showMaximized()
 
         self._show_settings_persistence_warning_if_needed()
 
@@ -576,6 +576,8 @@ class UIManager(ManagerProcessBase):
             if callable(force_close):
                 force_close()
             self._zlut_generation_dialog = None
+
+        self._save_viewer_layout()
 
         for window in self.windows:
             self._close_widget(window)
@@ -965,22 +967,6 @@ class UIManager(ManagerProcessBase):
             self.live_profile_buffer.clear()
 
     @property
-    def n_windows(self):
-        return self._n_windows
-
-    @n_windows.setter
-    def n_windows(self, value):
-        if self._running:
-            warn("Application already running", RuntimeWarning)
-            return
-
-        if not 1 <= value <= 3:
-            warn("Number of windows must be between 1 and 3")
-            return
-
-        self._n_windows = value
-
-    @property
     def bead_roi_updates_suppressed(self) -> bool:
         return self._suppress_bead_roi_updates
 
@@ -1143,11 +1129,60 @@ class UIManager(ManagerProcessBase):
         if self.plots_dock is not None:
             view_menu.addAction(self.plots_dock.toggleViewAction())
         view_menu.addSeparator()
+        dock_all_action = QAction("Dock All Windows", window)
+        dock_all_action.triggered.connect(lambda _checked=False: self._dock_all_viewers())
+        view_menu.addAction(dock_all_action)
         reset_action = QAction("Reset Viewer Layout", window)
         reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
         view_menu.addAction(reset_action)
 
-    def _reset_viewer_layout(self) -> None:
+    def _dock_all_viewers(self) -> None:
+        for dock in (self.camera_dock, self.plots_dock):
+            if dock is not None:
+                self._dock_viewer_pane(dock)
+
+    def _viewer_layout_settings(self) -> QSettings:
+        return QSettings("MagScope", "MagScope")
+
+    def _save_viewer_layout(self) -> None:
+        if not self.windows:
+            return
+        window = self.windows[0]
+        if not hasattr(window, 'saveGeometry') or not hasattr(window, 'saveState'):
+            return
+        settings = self._viewer_layout_settings()
+        settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, window.saveGeometry())
+        settings.setValue(
+            self.VIEWER_DOCK_STATE_SETTINGS_KEY,
+            window.saveState(self.VIEWER_LAYOUT_STATE_VERSION),
+        )
+
+    def _restore_viewer_layout(self) -> bool:
+        if not self.windows:
+            return False
+        settings = self._viewer_layout_settings()
+        geometry = settings.value(self.VIEWER_GEOMETRY_SETTINGS_KEY)
+        dock_state = settings.value(self.VIEWER_DOCK_STATE_SETTINGS_KEY)
+        if geometry is None or dock_state is None:
+            return False
+
+        window = self.windows[0]
+        geometry_restored = window.restoreGeometry(geometry)
+        state_restored = window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+        self._sync_viewer_dock_headers()
+        return bool(geometry_restored and state_restored)
+
+    def _clear_viewer_layout(self) -> None:
+        settings = self._viewer_layout_settings()
+        settings.remove(self.VIEWER_GEOMETRY_SETTINGS_KEY)
+        settings.remove(self.VIEWER_DOCK_STATE_SETTINGS_KEY)
+
+    def _sync_viewer_dock_headers(self) -> None:
+        for dock in (self.camera_dock, self.plots_dock):
+            if dock is not None:
+                self._set_viewer_dock_header_visible(dock, dock.isFloating())
+
+    def _apply_default_viewer_layout(self) -> None:
         if not self.windows or self.camera_dock is None or self.plots_dock is None:
             return
 
@@ -1168,28 +1203,11 @@ class UIManager(ManagerProcessBase):
             [max(300, window.width() - self.central_widgets[0].sizeHint().width())],
             Qt.Orientation.Horizontal,
         )
+        self._sync_viewer_dock_headers()
 
-        if self.n_windows >= 2:
-            self._float_dock_on_screen(self.plots_dock, 1)
-        if self.n_windows >= 3:
-            self._float_dock_on_screen(self.camera_dock, 1)
-            self._float_dock_on_screen(self.plots_dock, 2)
-
-    def _float_dock_on_screen(self, dock: QDockWidget, screen_index: int) -> None:
-        screens = QApplication.screens()
-        if screen_index >= len(screens):
-            return
-
-        geometry = screens[screen_index].availableGeometry()
-        dock.setFloating(True)
-        self._configure_floating_dock_window(dock, True)
-        dock.setGeometry(
-            geometry.x(),
-            geometry.y(),
-            max(300, geometry.width()),
-            max(300, geometry.height()),
-        )
-        dock.show()
+    def _reset_viewer_layout(self) -> None:
+        self._clear_viewer_layout()
+        self._apply_default_viewer_layout()
 
     def create_one_window_widgets(self):
         for i in range(1):
