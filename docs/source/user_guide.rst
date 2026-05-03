@@ -18,8 +18,8 @@ This creates the default window layout and begins streaming data from the built-
 You can only launch MagScope once.
 After launching it if you want to start again you must close it and delete the instance (delete ``scope`` in the example).
 
-To close MagScope you can close any of the windows, you might need to wait up to a couple of minutes for it to finish.
-Or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
+To close MagScope, close the main MagScope window; shutdown might take up to a couple of minutes.
+Alternatively, call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
 
 Windows and Multiple Screens
 ----------------------------
@@ -27,28 +27,6 @@ It is often easier to see everything in MagScope with multiple screens.
 MagScope opens one main window with dockable Live Camera and Live Plots panes.
 You can undock either pane and move it to another screen, then dock it again by dragging it back into the main window.
 Use the Layout menu to show hidden viewer panes, dock all floating panes, or reset the viewer layout.
-
-.. list-table::
-   :widths: 15 85
-   :header-rows: 0
-
-   * - One Screen
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/One-Window_v1.jpg
-        :width: 200px
-
-   * - Two Screens
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-a_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-b_v1.jpg
-        :width: 200px
-
-   * - Three Screens
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-a_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-c_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-b_v1.jpg
-        :width: 200px
 
 Live Video Viewer
 -----------------
