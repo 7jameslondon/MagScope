@@ -1102,8 +1102,10 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert isinstance(search_box, QLineEdit)
     assert search_box.isVisible()
     assert search_box.placeholderText() == 'Search for controls ...'
+    assert search_box.toolTip() == 'Search shows where controls are; it does not run actions.'
     assert search_box.width() == 300
     assert manager._find_search_target('Auto Bead').label == 'Auto Bead Selection'
+    assert manager._menu_row.findChild(QLabel, 'MenuSearchStatusLabel') is manager._search_status_label
 
     clear_ui_manager_singleton()
 
@@ -1135,6 +1137,32 @@ def test_search_guides_to_auto_bead_button_without_clicking(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_search_focus_clear_and_status_helpers(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    manager._search_box.setText('find beads')
+    manager._focus_search_box(manager._search_box)
+    assert manager._search_box.hasFocus()
+    assert manager._search_box.selectedText() == 'find beads'
+    assert len(manager._search_shortcuts) == 3
+
+    manager._set_search_status('Showing: Auto Bead Selection - Bead Selection')
+    assert manager._search_status_label.isVisible()
+    assert manager._search_status_label.text() == 'Showing: Auto Bead Selection - Bead Selection'
+
+    manager._clear_search_box(manager._search_box)
+    assert manager._search_box.text() == ''
+    assert not manager._search_status_label.isVisible()
+
+    clear_ui_manager_singleton()
+
+
 def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1161,7 +1189,7 @@ def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot):
     manager._search_box.setFocus()
     qtbot.keyClicks(manager._search_box, 'find beads')
 
-    assert manager._search_completion_labels('find bead') == ['Auto Bead Selection']
+    assert manager._search_completion_labels('find bead') == ['Auto Bead Selection - Bead Selection']
     assert reveal_calls == []
 
     qtbot.keyClick(manager._search_box, Qt.Key.Key_Return)
@@ -1206,12 +1234,33 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
     manager._create_view_menu(window)
     manager._create_search_menu_widget(window)
 
-    assert manager._search_completion_labels('dock') == ['Dock All Windows']
+    assert manager._search_completion_labels('dock') == ['Dock All Windows - Layout Menu']
 
     manager._guide_to_search_result('dock')
 
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
+
+    clear_ui_manager_singleton()
+
+
+def test_search_suggests_reset_viewer_layout_without_executing(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    reset_calls = []
+    manager._reset_viewer_layout = lambda: reset_calls.append(True)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_view_menu(window)
+    manager._create_search_menu_widget(window)
+
+    assert manager._search_completion_labels('reset layout') == ['Reset Viewer Layout - Layout Menu']
+
+    manager._guide_to_search_result('reset layout')
+
+    assert reset_calls == []
+    assert manager._layout_menu.activeAction().text() == 'Reset Viewer Layout'
 
     clear_ui_manager_singleton()
 
@@ -1224,7 +1273,7 @@ def test_search_guides_to_fft_rmin_in_tracking_preferences(qtbot):
     highlighted_widgets = []
     manager._highlight_search_widget = lambda widget: highlighted_widgets.append(widget)
 
-    assert manager._search_completion_labels('FFT Rmin') == ['FFT rmin']
+    assert manager._search_completion_labels('FFT Rmin') == ['FFT rmin - Preferences > Tracking']
 
     manager._guide_to_search_result('FFT Rmin')
 

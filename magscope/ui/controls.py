@@ -77,6 +77,12 @@ from magscope.ipc_commands import (
 )
 from magscope.scripting import ScriptStatus
 from magscope.settings import MagScopeSettings
+from magscope.ui.search import (
+    PanelControlTarget,
+    PreferencesSettingTarget,
+    PreferencesWidgetTarget,
+    SearchTarget,
+)
 from magscope.ui.widgets import (
     CollapsibleGroupBox,
     FlashLabel,
@@ -440,6 +446,31 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self.status_label.setText(self._format_last_updated_text())
         self.layout().addWidget(self.status_label)
 
+    @staticmethod
+    def search_targets() -> list[SearchTarget]:
+        targets: list[SearchTarget] = []
+        for key in MagScopeSettings.defined_keys():
+            spec = MagScopeSettings.spec_for(key)
+            if key == 'ROI':
+                targets.append(
+                    PreferencesSettingTarget(
+                        label='ROI Size',
+                        aliases=('ROI', 'ROI size', 'ROI (pixels)', 'bead ROI', 'region of interest'),
+                        context='Preferences > MagScope',
+                        setting_key='ROI',
+                    )
+                )
+            else:
+                targets.append(
+                    PreferencesSettingTarget(
+                        label=spec.label,
+                        aliases=(key,),
+                        context='Preferences > MagScope',
+                        setting_key=key,
+                    )
+                )
+        return targets
+
     def _notify(self, text: str) -> None:
         self.status_label.setText(text)
 
@@ -679,6 +710,37 @@ class BeadSelectionPanel(ControlPanelBase):
         button_row.addWidget(self.auto_select_button)
 
         self.manager._update_auto_bead_selection_button_state()
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            PanelControlTarget(
+                label='Auto Bead Selection',
+                aliases=(
+                    'auto bead',
+                    'automatic bead selection',
+                    'find bead',
+                    'find beads',
+                    'detect beads',
+                ),
+                context='Bead Selection',
+                panel_id='BeadSelectionPanel',
+                widget_path=('auto_select_button',),
+            ),
+            PanelControlTarget(
+                label='Remove All Beads',
+                aliases=('clear beads', 'delete beads'),
+                context='Bead Selection',
+                panel_id='BeadSelectionPanel',
+                widget_path=('clear_button',),
+            ),
+            PanelControlTarget(
+                label='Reassign IDs',
+                aliases=('reset bead ids', 'renumber beads'),
+                context='Bead Selection',
+                panel_id='BeadSelectionPanel',
+                widget_path=('reset_id_button',),
+            ),
+        ]
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label.setText(f"Next Bead ID: {next_bead_id}")
@@ -1697,6 +1759,81 @@ class TrackingOptionsPanel(ControlPanelBase):
         self._update_value_labels()
         self._sync_fft_enabled_state()
 
+    @staticmethod
+    def search_targets() -> list[SearchTarget]:
+        return [
+            PreferencesWidgetTarget(
+                label='Use FFT profile',
+                aliases=('FFT profile', 'enable FFT profile'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='use_fft',
+            ),
+            PreferencesWidgetTarget(
+                label='FFT oversample',
+                aliases=('FFT oversampling',),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='fft_oversample',
+            ),
+            PreferencesWidgetTarget(
+                label='FFT rmin',
+                aliases=('FFT Rmin', 'rmin', 'FFT r min', 'minimum FFT radius'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='fft_rmin',
+            ),
+            PreferencesWidgetTarget(
+                label='FFT rmax',
+                aliases=('FFT Rmax', 'rmax', 'FFT r max', 'maximum FFT radius'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='fft_rmax',
+            ),
+            PreferencesWidgetTarget(
+                label='FFT gaus_factor',
+                aliases=('FFT gaussian factor', 'FFT gaus factor'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='fft_gaus_factor',
+            ),
+            PreferencesWidgetTarget(
+                label='Radial oversample',
+                aliases=('radial oversampling',),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='radial_oversample',
+            ),
+            PreferencesWidgetTarget(
+                label='lookup_z n_local',
+                aliases=('lookup z n local', 'z lookup n local'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='lookup_n_local',
+            ),
+            PreferencesWidgetTarget(
+                label='Auto-conv iterations',
+                aliases=('auto conv iterations', 'auto convolution iterations'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='iterations',
+            ),
+            PreferencesWidgetTarget(
+                label='Line ratio',
+                aliases=('tracking line ratio',),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='line_ratio',
+            ),
+            PreferencesWidgetTarget(
+                label='n_local (auto-conv)',
+                aliases=('n local auto conv', 'auto conv n local'),
+                context='Preferences > Tracking',
+                tab_name='Tracking',
+                widget_attr='n_local',
+            ),
+        ]
+
     def _parse_int(self, widget: LabeledLineEditWithValue, fallback: int, *, minimum: int | None = None) -> int:
         text = widget.lineedit.text().strip()
         widget.lineedit.setText('')
@@ -2077,11 +2214,17 @@ class PreferencesDialog(QDialog):
         return scroll
 
     def reveal_setting(self, setting_key: str) -> None:
+        self.reveal_magscope_setting(setting_key)
+
+    def reveal_magscope_setting(self, setting_key: str) -> None:
         widget = self.settings_panel._setting_inputs.get(setting_key)
         if widget is None:
             return
 
         self._reveal_widget(self.settings_scroll, widget)
+
+    def reveal_tracking_option(self, widget_attr: str) -> None:
+        self.reveal_widget('Tracking', widget_attr)
 
     def reveal_widget(self, tab_name: str, widget_attr: str) -> None:
         if tab_name == 'Tracking':
