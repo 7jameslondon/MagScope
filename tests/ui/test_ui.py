@@ -1446,11 +1446,14 @@ def test_search_logs_unmatched_queries(qtbot, caplog):
     window = QMainWindow()
     qtbot.addWidget(window)
     manager._create_search_menu_widget(window)
+    manager._set_search_status('Showing: Demo')
 
     with caplog.at_level(logging.DEBUG):
         manager._guide_to_search_result('not a real control')
 
     assert 'No UI search target matched query' in caplog.text
+    assert manager._search_status_label.text() == ''
+    assert not manager._search_status_label.isVisible()
 
     clear_ui_manager_singleton()
 

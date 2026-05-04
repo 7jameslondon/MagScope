@@ -1535,6 +1535,7 @@ class UIManager(ManagerProcessBase):
         target = self._find_search_target(text)
         if target is None:
             logger.debug("No UI search target matched query %r", text)
+            self._set_search_status("")
             return
 
         logger.debug("Guiding to UI search target %s", target.display_label)
