@@ -2920,6 +2920,73 @@ class ZLUTGenerationPanel(ControlPanelBase):
         _ = (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
 
 
+class ZLUTGenerationSetupDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        roi_size: int,
+        default_measurements: int,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle('New Z-LUT')
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        roi_row = QHBoxLayout()
+        roi_row.addWidget(QLabel('Current ROI:'))
+        roi_row.addWidget(QLabel(f'{roi_size} x {roi_size} pixels'))
+        roi_row.addStretch(1)
+        layout.addLayout(roi_row)
+
+        self.start_input = LabeledLineEdit(label_text='Start (nm):')
+        layout.addWidget(self.start_input)
+        self.step_input = LabeledLineEdit(label_text='Step (nm):')
+        layout.addWidget(self.step_input)
+        self.stop_input = LabeledLineEdit(label_text='Stop (nm):')
+        layout.addWidget(self.stop_input)
+        self.measurements_input = LabeledLineEdit(label_text='Measurements per step:')
+        self.measurements_input.lineedit.setText(str(default_measurements))
+        layout.addWidget(self.measurements_input)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self.reject)  # type: ignore
+        button_row.addWidget(self.cancel_button)
+        self.generate_button = QPushButton('Generate')
+        self.generate_button.clicked.connect(self._accept_if_valid)  # type: ignore
+        button_row.addWidget(self.generate_button)
+        layout.addLayout(button_row)
+
+        self._values: tuple[float, float, float, int] | None = None
+
+    @property
+    def values(self) -> tuple[float, float, float, int] | None:
+        return self._values
+
+    def _accept_if_valid(self) -> None:
+        try:
+            start_nm = float(self.start_input.lineedit.text())
+            step_nm = float(self.step_input.lineedit.text())
+            stop_nm = float(self.stop_input.lineedit.text())
+            profiles_per_bead = int(self.measurements_input.lineedit.text())
+        except ValueError:
+            QMessageBox.warning(self, 'Invalid Z-LUT settings', 'Enter numeric Z-LUT settings.')
+            return
+        if profiles_per_bead <= 0:
+            QMessageBox.warning(
+                self,
+                'Invalid Z-LUT settings',
+                'Measurements per step must be greater than zero.',
+            )
+            return
+
+        self._values = (start_nm, step_nm, stop_nm, profiles_per_bead)
+        self.accept()
+
+
 class ZLUTSweepPreviewWidget(MatplotlibCleanupMixin, QWidget):
     _STATE_LABELS = {
         0: 'Absent',
@@ -3280,6 +3347,146 @@ class ZLUTGenerationDialog(QDialog):
             self._close_callback()
             self._evaluation_active = False
         super().closeEvent(event)
+
+
+class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Current Z-LUT')
+        self.resize(720, 560)
+        layout = QVBoxLayout(self)
+
+        self.filepath_label = QLabel('No Z-LUT loaded')
+        self.filepath_label.setWordWrap(True)
+        self.filepath_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.filepath_label)
+
+        self.preview_status_label = QLabel('No Z-LUT loaded')
+        self.preview_status_label.setWordWrap(True)
+        layout.addWidget(self.preview_status_label)
+
+        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(280)
+        layout.addWidget(self.canvas, 1)
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.axes.set_facecolor('#1e1e1e')
+        self._image = self.axes.imshow(
+            np.zeros((1, 1), dtype=np.float64),
+            cmap=matplotlib.colormaps['gray'].copy(),
+            aspect='auto',
+            interpolation='nearest',
+            origin='lower',
+        )
+        self._clear_preview('No Z-LUT loaded')
+        self._init_matplotlib_cleanup()
+
+        metadata_layout = QVBoxLayout()
+        layout.addLayout(metadata_layout)
+        self.min_value = self._add_metadata_row(metadata_layout, 'Min (nm):')
+        self.max_value = self._add_metadata_row(metadata_layout, 'Max (nm):')
+        self.step_value = self._add_metadata_row(metadata_layout, 'Step (nm):')
+        self.profile_length_value = self._add_metadata_row(metadata_layout, 'Profile Length:')
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        close_button = QPushButton('Close')
+        close_button.clicked.connect(self.close)  # type: ignore
+        button_row.addWidget(close_button)
+        layout.addLayout(button_row)
+
+    def _add_metadata_row(self, layout: QVBoxLayout, label_text: str) -> QLabel:
+        row = QHBoxLayout()
+        label = QLabel(label_text)
+        value = QLabel('')
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        row.addWidget(label)
+        row.addStretch(1)
+        row.addWidget(value, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(row)
+        return value
+
+    def update_zlut(
+        self,
+        filepath: str | None,
+        *,
+        z_min: float | None = None,
+        z_max: float | None = None,
+        step_size: float | None = None,
+        profile_length: int | None = None,
+    ) -> None:
+        self.filepath_label.setText(filepath or 'No Z-LUT loaded')
+        self.min_value.setText(self._format_number(z_min, suffix=' nm'))
+        self.max_value.setText(self._format_number(z_max, suffix=' nm'))
+        self.step_value.setText(self._format_number(step_size, suffix=' nm'))
+        self.profile_length_value.setText('' if profile_length is None else f'{profile_length}')
+        self._update_preview(filepath)
+
+    def _clear_preview(self, message: str) -> None:
+        self.preview_status_label.setText(message)
+        self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+        self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
+        self._image.set_clim(0.0, 1.0)
+        self.axes.set_title('No Z-LUT preview available')
+        self.axes.set_xlabel('Z Position (nm)')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(-0.5, 0.5)
+        self.axes.set_ylim(-0.5, 0.5)
+        self.canvas.draw()
+
+    def _update_preview(self, filepath: str | None) -> None:
+        if not filepath:
+            self._clear_preview('No Z-LUT loaded')
+            return
+        try:
+            zlut_array = np.loadtxt(filepath)
+            if zlut_array.ndim != 2 or zlut_array.shape[0] < 2 or zlut_array.shape[1] < 2:
+                raise ValueError('Z-LUT must be a 2D array with z references and profile rows.')
+        except Exception as exc:
+            reason = str(exc).strip() or repr(exc)
+            self._clear_preview(f'Could not load Z-LUT preview: {reason}')
+            return
+
+        z_references = np.asarray(zlut_array[0, :], dtype=np.float64)
+        profiles = np.asarray(zlut_array[1:, :], dtype=np.float64)
+        finite_z_references = z_references[np.isfinite(z_references)]
+        if finite_z_references.size == 0:
+            self._clear_preview('No finite Z-LUT reference positions available')
+            return
+        finite_mask = np.isfinite(profiles)
+        if not np.any(finite_mask):
+            self._clear_preview('No finite Z-LUT profile values available')
+            return
+
+        finite_values = profiles[finite_mask]
+        vmin = float(np.min(finite_values))
+        vmax = float(np.max(finite_values))
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1.0
+
+        x_min = float(np.min(finite_z_references))
+        x_max = float(np.max(finite_z_references))
+        if np.isclose(x_min, x_max):
+            x_min -= 0.5
+            x_max += 0.5
+        self.preview_status_label.setText('')
+        self._image.set_data(np.ma.masked_invalid(profiles))
+        self._image.set_extent((x_min, x_max, -0.5, profiles.shape[0] - 0.5))
+        self._image.set_clim(vmin, vmax)
+        self.axes.set_title('Current Z-LUT')
+        self.axes.set_xlabel('Z Position (nm)')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(x_min, x_max)
+        self.axes.set_ylim(-0.5, profiles.shape[0] - 0.5)
+        self.canvas.draw()
+
+    @staticmethod
+    def _format_number(value: float | int | None, suffix: str = '') -> str:
+        if value is None:
+            return ''
+        if isinstance(value, float):
+            return f'{int(value):d}{suffix}'
+        return f'{value}{suffix}'
 
 
 class ZLUTPanel(ControlPanelBase):

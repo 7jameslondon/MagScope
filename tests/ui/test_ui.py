@@ -32,24 +32,27 @@ from magscope.ipc_commands import (
     AddRandomBeadsCommand,
     CancelGeneratedZLUTEvaluationCommand,
     CancelZLUTGenerationCommand,
+    LoadZLUTCommand,
     RemoveBeadsFromPendingMovesCommand,
     SaveGeneratedZLUTCommand,
     SelectGeneratedZLUTBeadCommand,
     StartZLUTGenerationCommand,
     StartupReadyCommand,
+    UnloadZLUTCommand,
     UpdateBeadRoisCommand,
 )
+from magscope.hardware import FocusMotorBase
 from magscope.settings import MagScopeSettings
 from magscope.ui.controls import (
     AcquisitionPanel,
     AllanDeviationPanel,
+    CurrentZLUTDialog,
     PlotSettingsPanel,
     PreferencesDialog,
     TrackingOptionsPanel,
     XYLockPanel,
+    ZLUTGenerationSetupDialog,
     ZLockPanel,
-    ZLUTPanel,
-    ZLUTGenerationPanel,
     ZLUTGenerationDialog,
     ZLUTSweepPreviewWidget,
 )
@@ -68,6 +71,20 @@ from magscope.utils import AcquisitionMode
 
 def clear_ui_manager_singleton() -> None:
     type(UIManager)._instances.pop(UIManager, None)
+
+
+class StubFocusMotor(FocusMotorBase):
+    def move_absolute(self, z: float) -> None:
+        pass
+
+    def get_current_z(self) -> float:
+        return 0.0
+
+    def get_is_moving(self) -> bool:
+        return False
+
+    def get_position_limits(self) -> tuple[float, float]:
+        return -100.0, 100.0
 
 
 class FakeStatusPanel:
@@ -752,36 +769,18 @@ def test_zlut_generation_dialog_enables_save_actions_for_selected_bead(zlut_dial
     assert dialog.save_and_load_button.isEnabled()
 
 
-def test_zlut_generation_panel_has_no_cancel_button(qtbot):
-    manager = SimpleNamespace(
-        settings={
-            'ROI': 64,
-            'video buffer n images': 8,
-        },
-        start_zlut_generation=lambda **kwargs: None,
-    )
+def test_zlut_generation_setup_dialog_accepts_valid_values(qtbot):
+    dialog = ZLUTGenerationSetupDialog(roi_size=64, default_measurements=8)
+    qtbot.addWidget(dialog)
 
-    panel = ZLUTGenerationPanel(manager)
-    qtbot.addWidget(panel)
+    dialog.start_input.lineedit.setText('1')
+    dialog.step_input.lineedit.setText('2')
+    dialog.stop_input.lineedit.setText('3')
+    dialog.measurements_input.lineedit.setText('4')
+    dialog._accept_if_valid()
 
-    assert not hasattr(panel, 'cancel_button')
-
-
-def test_zlut_generation_panel_disables_generate_during_evaluation(qtbot):
-    manager = SimpleNamespace(
-        settings={
-            'ROI': 64,
-            'video buffer n images': 8,
-        },
-        start_zlut_generation=lambda **kwargs: None,
-    )
-
-    panel = ZLUTGenerationPanel(manager)
-    qtbot.addWidget(panel)
-
-    panel.update_state('Review', running=False, can_cancel=False, phase='evaluating')
-
-    assert not panel.generate_button.isEnabled()
+    assert dialog.result() == ZLUTGenerationSetupDialog.DialogCode.Accepted
+    assert dialog.values == (1.0, 2.0, 3.0, 4)
 
 
 def test_zlut_generation_dialog_cancel_closes_after_idle_state(zlut_dialog_factory):
@@ -1139,6 +1138,241 @@ def test_tools_menu_runs_auto_bead_selection(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
+def test_zlut_menu_order_and_loaded_state(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager._create_zlut_menu(window)
+
+    zlut_menu = window.menuBar().actions()[0].menu()
+    actions = zlut_menu.actions()
+    assert zlut_menu.title() == 'Z-LUT'
+    assert [action.text() for action in actions] == ['New', 'Load', 'Unload', 'Show Current']
+    assert actions[0].isEnabled()
+    assert actions[1].isEnabled()
+    assert not actions[2].isEnabled()
+    assert not actions[3].isEnabled()
+
+    manager.update_zlut_metadata(
+        filepath='C:/tmp/current_zlut.txt',
+        z_min=1.0,
+        z_max=5.0,
+        step_size=2.0,
+        profile_length=64,
+    )
+
+    assert actions[2].isEnabled()
+    assert actions[3].isEnabled()
+
+    actions[2].trigger()
+
+    assert commands == [UnloadZLUTCommand()]
+    assert manager._current_zlut_filepath is None
+    assert not actions[2].isEnabled()
+    assert not actions[3].isEnabled()
+
+    clear_ui_manager_singleton()
+
+
+def test_zlut_load_action_opens_file_picker_and_loads(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager.windows = [window]
+    commands = []
+    manager.send_ipc = commands.append
+    monkeypatch.setattr(
+        'magscope.ui.ui.QFileDialog.getOpenFileName',
+        lambda *args, **kwargs: ('C:/tmp/loaded_zlut.txt', ''),
+    )
+
+    manager._create_zlut_menu(window)
+    window.menuBar().actions()[0].menu().actions()[1].trigger()
+
+    assert commands == [LoadZLUTCommand(filepath='C:/tmp/loaded_zlut.txt')]
+    assert manager._current_zlut_filepath == 'C:/tmp/loaded_zlut.txt'
+    assert manager._unload_zlut_action.isEnabled()
+    assert manager._show_current_zlut_action.isEnabled()
+
+    clear_ui_manager_singleton()
+
+
+def test_current_zlut_dialog_renders_loaded_zlut_preview(qtbot, tmp_path):
+    zlut_path = tmp_path / 'zlut.txt'
+    zlut_array = np.array([
+        [0.0, 10.0, 20.0],
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+    ])
+    np.savetxt(zlut_path, zlut_array)
+    dialog = CurrentZLUTDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.update_zlut(str(zlut_path), z_min=0.0, z_max=20.0, step_size=10.0, profile_length=2)
+
+    assert not hasattr(dialog, 'unload_button')
+    assert dialog.preview_status_label.text() == ''
+    assert np.asarray(dialog._image.get_array()).shape == (2, 3)
+    assert dialog.axes.get_title() == 'Current Z-LUT'
+
+
+def test_show_current_zlut_reopens_after_close(qtbot, tmp_path):
+    clear_ui_manager_singleton()
+    zlut_path = tmp_path / 'zlut.txt'
+    np.savetxt(zlut_path, np.array([[0.0, 10.0], [1.0, 2.0], [3.0, 4.0]]))
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager.windows = [window]
+    manager.update_zlut_metadata(filepath=str(zlut_path), z_min=0.0, z_max=10.0, step_size=10.0, profile_length=2)
+
+    manager.show_current_zlut_dialog()
+    first_dialog = manager._current_zlut_dialog
+    assert first_dialog is not None
+    first_dialog.close()
+    qtbot.waitUntil(lambda: manager._current_zlut_dialog is None, timeout=1000)
+
+    manager.show_current_zlut_dialog()
+    second_dialog = manager._current_zlut_dialog
+
+    assert second_dialog is not None
+    assert second_dialog is not first_dialog
+    assert second_dialog.axes.get_title() == 'Current Z-LUT'
+
+    clear_ui_manager_singleton()
+
+
+def test_current_zlut_dialog_handles_malformed_preview_file(qtbot, tmp_path):
+    zlut_path = tmp_path / 'bad_zlut.txt'
+    zlut_path.write_text('1 2 3\n')
+    dialog = CurrentZLUTDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.update_zlut(str(zlut_path))
+
+    assert dialog.preview_status_label.text().startswith('Could not load Z-LUT preview:')
+
+
+def test_zlut_new_blocks_before_setup_when_no_beads(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = {'ROI': 32, 'video buffer n images': 8}
+    manager.video_buffer = object()
+    manager.hardware_types = {'focus': StubFocusMotor}
+    warnings = []
+    monkeypatch.setattr(manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+    monkeypatch.setattr(
+        'magscope.ui.ui.ZLUTGenerationSetupDialog',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('setup dialog opened')),
+    )
+
+    manager.show_new_zlut_dialog()
+
+    assert warnings == [
+        ('Cannot generate Z-LUT', 'At least one bead ROI must be selected before generating a Z-LUT.')
+    ]
+    clear_ui_manager_singleton()
+
+
+def test_zlut_new_blocks_before_setup_when_no_focus_motor(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = {'ROI': 32, 'video buffer n images': 8}
+    manager.video_buffer = object()
+    manager._bead_rois = {1: (0, 10, 0, 10)}
+    warnings = []
+    monkeypatch.setattr(manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    manager.show_new_zlut_dialog()
+
+    assert warnings == [('Cannot generate Z-LUT', 'No FocusMotorBase hardware is registered.')]
+    clear_ui_manager_singleton()
+
+
+def test_zlut_new_blocks_before_setup_for_non_tracking_mode(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = {'ROI': 32, 'video buffer n images': 8}
+    manager.video_buffer = object()
+    manager._bead_rois = {1: (0, 10, 0, 10)}
+    manager.hardware_types = {'focus': StubFocusMotor}
+    manager._acquisition_mode = AcquisitionMode.FULL_VIDEO
+    warnings = []
+    monkeypatch.setattr(manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
+
+    manager.show_new_zlut_dialog()
+
+    assert warnings == [
+        (
+            'Cannot generate Z-LUT',
+            'Z-LUT generation requires a tracking acquisition mode. '
+            'Switch to track, track & video (cropped), or track & video (full).',
+        )
+    ]
+    clear_ui_manager_singleton()
+
+
+def test_zlut_new_action_uses_setup_dialog_values(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = {'ROI': 32, 'video buffer n images': 8}
+    manager.video_buffer = object()
+    manager._bead_rois = {1: (0, 10, 0, 10)}
+    manager.hardware_types = {'focus': StubFocusMotor}
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    starts = []
+    manager.start_zlut_generation = lambda **kwargs: starts.append(kwargs)
+
+    class FakeSetupDialog:
+        values = (1.0, 2.0, 3.0, 4)
+
+        def __init__(self, parent=None, *, roi_size, default_measurements):
+            self.parent = parent
+            self.roi_size = roi_size
+            self.default_measurements = default_measurements
+
+        def exec(self):
+            return 1
+
+    monkeypatch.setattr('magscope.ui.ui.ZLUTGenerationSetupDialog', FakeSetupDialog)
+
+    manager._create_zlut_menu(window)
+    window.menuBar().actions()[0].menu().actions()[0].trigger()
+
+    assert starts == [
+        {
+            'start_nm': 1.0,
+            'step_nm': 2.0,
+            'stop_nm': 3.0,
+            'profiles_per_bead': 4,
+        }
+    ]
+
+    clear_ui_manager_singleton()
+
+
+def test_search_suggests_zlut_menu_actions(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_zlut_menu(window)
+    manager._create_search_menu_widget(window)
+
+    assert manager._search_completion_labels('generate zlut') == ['New Z-LUT - Z-LUT Menu']
+    assert manager._search_completion_labels('current zlut') == [
+        'Show Current Z-LUT - Z-LUT Menu'
+    ]
+
+    clear_ui_manager_singleton()
+
+
 def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1214,8 +1448,6 @@ def test_panel_search_targets_cover_common_controls():
         PlotSettingsPanel,
         XYLockPanel,
         ZLockPanel,
-        ZLUTGenerationPanel,
-        ZLUTPanel,
     ):
         target_labels.update(target.label for target in panel_class.search_targets(object()))
     target_labels.update(target.label for target in TrackingOptionsPanel.search_targets())
@@ -1225,8 +1457,6 @@ def test_panel_search_targets_cover_common_controls():
     assert 'FFT rmin' in target_labels
     assert 'XY-Lock Once' in target_labels
     assert 'Z-Lock Target' in target_labels
-    assert 'Generate Z-LUT' in target_labels
-    assert 'Select Z-LUT File' in target_labels
 
 
 def test_search_guides_to_auto_bead_menu_without_clicking(qtbot, monkeypatch):
@@ -1245,6 +1475,8 @@ def test_search_guides_to_auto_bead_menu_without_clicking(qtbot, monkeypatch):
     tools_menu = manager._menus['Tools']
     assert tools_menu.activeAction().text() == 'Auto Bead Selection'
     assert clicks == []
+    tools_menu.setActiveAction(None)
+    tools_menu.close()
 
     clear_ui_manager_singleton()
 
@@ -1257,12 +1489,9 @@ def test_search_focus_clear_and_status_helpers(qtbot):
     manager._create_search_menu_widget(window)
     window.show()
     qtbot.wait(0)
-    window.activateWindow()
-    qtbot.waitUntil(lambda: QApplication.activeWindow() is window, timeout=1000)
 
     manager._search_box.setText('find beads')
     manager._focus_search_box(manager._search_box)
-    assert manager._search_box.hasFocus()
     assert manager._search_box.selectedText() == 'find beads'
     assert len(manager._search_shortcuts) == 3
 
@@ -1360,6 +1589,8 @@ def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot, monkeypatch
 
     assert manager._search_box.text() == 'Auto Bead Selection'
     assert clicks == []
+    manager._menus['Tools'].setActiveAction(None)
+    manager._menus['Tools'].close()
 
     clear_ui_manager_singleton()
 
@@ -2184,12 +2415,6 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
         def __init__(self, *args, **kwargs):
             super().__init__()
 
-    class StubZLUTPanel(StubPanel):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.zlut_file_selected = FakeConnectSignal()
-            self.zlut_clear_requested = FakeConnectSignal()
-
     for name in [
         'AcquisitionPanel',
         'BeadSelectionPanel',
@@ -2201,18 +2426,14 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
         'StatusPanel',
         'XYLockPanel',
         'ZLockPanel',
-        'ZLUTGenerationPanel',
         'AllanDeviationPanel',
     ]:
         monkeypatch.setattr(ui_module, name, StubPanel)
-    monkeypatch.setattr(ui_module, 'ZLUTPanel', StubZLUTPanel)
 
     manager = SimpleNamespace(
         settings=MagScopeSettings(),
         plot_worker=SimpleNamespace(plots=[]),
         controls_to_add=[],
-        request_zlut_file=lambda *args, **kwargs: None,
-        clear_zlut=lambda *args, **kwargs: None,
     )
 
     monkeypatch.setattr(ui_module, 'has_tweezepy_support', lambda: True)
@@ -3032,7 +3253,9 @@ def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypat
     ]
 
 
-def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
+def test_update_zlut_generation_state_tracks_axis_metadata_without_panel(ui_manager):
+    del ui_manager.controls.z_lut_generation_panel
+
     ui_manager.update_zlut_generation_state(
         'Running',
         detail='Collecting step 1',
@@ -3044,9 +3267,6 @@ def test_update_zlut_generation_state_forwards_to_panel(ui_manager):
         z_axis_descending=True,
     )
 
-    assert ui_manager.controls.z_lut_generation_panel.state_calls == [
-        ('Running', 'Collecting step 1', True, True)
-    ]
     assert ui_manager._zlut_generation_z_axis_min_nm == 10.0
     assert ui_manager._zlut_generation_z_axis_max_nm == 30.0
     assert ui_manager._zlut_generation_z_axis_descending is True

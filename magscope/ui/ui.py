@@ -70,6 +70,7 @@ from magscope.ui.controls import (
     BeadSelectionPanel,
     CameraPanel,
     ControlPanelBase,
+    CurrentZLUTDialog,
     HistogramPanel,
     PlotSettingsPanel,
     PreferencesDialog,
@@ -80,8 +81,7 @@ from magscope.ui.controls import (
     TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationDialog,
-    ZLUTGenerationPanel,
-    ZLUTPanel,
+    ZLUTGenerationSetupDialog,
     ZLockPanel,
     has_tweezepy_support,
 )
@@ -187,6 +187,11 @@ class UIManager(ManagerProcessBase):
     VIEWER_LAYOUT_STATE_VERSION = 1
     VIEWER_GEOMETRY_SETTINGS_KEY = "viewer/main_window_geometry"
     VIEWER_DOCK_STATE_SETTINGS_KEY = "viewer/dock_state"
+    _ZLUT_TRACKING_ACQUISITION_MODES = {
+        AcquisitionMode.TRACK,
+        AcquisitionMode.TRACK_AND_CROP_VIDEO,
+        AcquisitionMode.TRACK_AND_FULL_VIDEO,
+    }
 
     def __init__(self):
         super().__init__()
@@ -231,6 +236,15 @@ class UIManager(ManagerProcessBase):
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
         self._startup_ready_sent = False
         self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
+        self._zlut_generation_setup_dialog: ZLUTGenerationSetupDialog | None = None
+        self._current_zlut_dialog: CurrentZLUTDialog | None = None
+        self._current_zlut_filepath: str | None = None
+        self._current_zlut_metadata: dict[str, float | int | None] = {
+            'z_min': None,
+            'z_max': None,
+            'step_size': None,
+            'profile_length': None,
+        }
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -247,6 +261,11 @@ class UIManager(ManagerProcessBase):
         self._menu_bar: QMenuBar | None = None
         self._layout_menu: QMenu | None = None
         self._auto_bead_selection_action: QAction | None = None
+        self._zlut_menu: QMenu | None = None
+        self._new_zlut_action: QAction | None = None
+        self._load_zlut_action: QAction | None = None
+        self._unload_zlut_action: QAction | None = None
+        self._show_current_zlut_action: QAction | None = None
         self._menus: dict[str, QMenu] = {}
         self._search_shortcuts: list[QShortcut] = []
         self._search_registry = SearchRegistry()
@@ -518,6 +537,7 @@ class UIManager(ManagerProcessBase):
         self._create_preferences_menu_action(window)
         self._create_view_menu(window)
         self._create_tools_menu(window)
+        self._create_zlut_menu(window)
         self._create_help_menu_action(window)
         self._create_search_menu_widget(window)
         self._apply_default_viewer_layout()
@@ -1321,10 +1341,46 @@ class UIManager(ManagerProcessBase):
         self._auto_bead_selection_action = auto_bead_selection_action
         self._update_auto_bead_selection_action_state()
 
+    def _create_zlut_menu(self, window: QMainWindow) -> None:
+        zlut_menu = window.menuBar().addMenu("Z-LUT")
+        self._register_menu("Z-LUT", zlut_menu)
+
+        new_action = QAction("New", window)
+        new_action.triggered.connect(lambda _checked=False: self.show_new_zlut_dialog())
+        zlut_menu.addAction(new_action)
+
+        load_action = QAction("Load", window)
+        load_action.triggered.connect(lambda _checked=False: self.load_zlut_file_dialog())
+        zlut_menu.addAction(load_action)
+
+        unload_action = QAction("Unload", window)
+        unload_action.triggered.connect(lambda _checked=False: self.unload_zlut())
+        zlut_menu.addAction(unload_action)
+
+        show_current_action = QAction("Show Current", window)
+        show_current_action.triggered.connect(lambda _checked=False: self.show_current_zlut_dialog())
+        zlut_menu.addAction(show_current_action)
+
+        self._zlut_menu = zlut_menu
+        self._new_zlut_action = new_action
+        self._load_zlut_action = load_action
+        self._unload_zlut_action = unload_action
+        self._show_current_zlut_action = show_current_action
+        self._update_zlut_menu_action_state()
+
+    def _update_zlut_menu_action_state(self) -> None:
+        has_loaded_zlut = self._current_zlut_filepath is not None
+        if self._unload_zlut_action is not None:
+            self._unload_zlut_action.setEnabled(has_loaded_zlut)
+        if self._show_current_zlut_action is not None:
+            self._show_current_zlut_action.setEnabled(has_loaded_zlut)
+
     def _register_menu(self, name: str, menu: QMenu) -> None:
         self._menus[name] = menu
         if name == "Layout":
             self._layout_menu = menu
+        elif name == "Z-LUT":
+            self._zlut_menu = menu
 
     def _create_preferences_menu_action(self, window: QMainWindow) -> None:
         preferences_action = QAction("Preferences", window)
@@ -1449,6 +1505,34 @@ class UIManager(ManagerProcessBase):
                 action_text="Auto Bead Selection",
             ),
             MenuActionTarget(
+                label="New Z-LUT",
+                aliases=("new zlut", "generate zlut", "generate z-lut", "z lut generation"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="New",
+            ),
+            MenuActionTarget(
+                label="Load Z-LUT",
+                aliases=("load zlut", "select z-lut file", "choose z-lut file"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Load",
+            ),
+            MenuActionTarget(
+                label="Unload Z-LUT",
+                aliases=("clear zlut", "clear z-lut", "remove zlut", "remove z-lut"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Unload",
+            ),
+            MenuActionTarget(
+                label="Show Current Z-LUT",
+                aliases=("current zlut", "current z-lut", "show zlut", "show z-lut"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Show Current",
+            ),
+            MenuActionTarget(
                 label="Dock All Windows",
                 aliases=("dock", "dock windows", "dock all", "dock viewers"),
                 context="Layout Menu",
@@ -1473,8 +1557,6 @@ class UIManager(ManagerProcessBase):
             ("Histogram", "HistogramPanel", ()),
             ("Radial Profile Monitor", "ProfilePanel", ("profile",)),
             ("Plot Settings", "PlotSettingsPanel", ("plots",)),
-            ("Z-LUT", "ZLUTPanel", ("zlut", "z lut")),
-            ("Z-LUT Generation", "ZLUTGenerationPanel", ("generate z-lut",)),
             ("Scripting", "ScriptPanel", ("scripts",)),
             ("XY-Lock", "XYLockPanel", ("xy lock",)),
             ("Z-Lock", "ZLockPanel", ("z lock",)),
@@ -1665,6 +1747,9 @@ class UIManager(ManagerProcessBase):
             return
 
         menu.setActiveAction(action)
+        if QGuiApplication.platformName() == "offscreen":
+            return
+
         menu_bar = self._menu_bar
         if menu_bar is None:
             logger.warning("Search target menu bar is not available for %s", target.display_label)
@@ -2134,9 +2219,9 @@ class UIManager(ManagerProcessBase):
         self.controls.bead_selection_panel.roi_size_label.setText(
             f"{roi} x {roi} pixels"
         )
-        self.controls.z_lut_generation_panel.roi_size_label.setText(
-            f"{roi} x {roi} pixels"
-        )
+        zlut_generation_panel = getattr(self.controls, 'z_lut_generation_panel', None)
+        if zlut_generation_panel is not None:
+            zlut_generation_panel.roi_size_label.setText(f"{roi} x {roi} pixels")
 
     def _update_next_bead_id_label(self) -> None:
         if self.controls is None:
@@ -2347,12 +2432,150 @@ class UIManager(ManagerProcessBase):
         if not filepath:
             return
 
+        self._set_current_zlut(filepath=filepath)
         command = LoadZLUTCommand(filepath=filepath)
         self.send_ipc(command)
 
     def clear_zlut(self) -> None:
+        self.unload_zlut()
+
+    def unload_zlut(self) -> None:
+        self._set_current_zlut(filepath=None)
         command = UnloadZLUTCommand()
         self.send_ipc(command)
+
+    def load_zlut_file_dialog(self) -> None:
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value(
+            'last zlut directory',
+            os.path.expanduser('~'),
+            type=str,
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self.windows[0] if self.windows else None,
+            'Load Z-LUT',
+            last_value,
+            'Text Files (*.txt)',
+        )
+        if not path:
+            return
+
+        directory = os.path.dirname(path) or last_value
+        settings.setValue('last zlut directory', directory)
+        self.request_zlut_file(path)
+
+    def show_current_zlut_dialog(self) -> None:
+        if self._current_zlut_filepath is None:
+            return
+
+        parent = self.windows[0] if self.windows else None
+        if (
+            self._current_zlut_dialog is not None
+            and getattr(self._current_zlut_dialog, '_matplotlib_disposed', False)
+        ):
+            self._current_zlut_dialog = None
+
+        if self._current_zlut_dialog is None:
+            dialog = CurrentZLUTDialog(parent)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            dialog.destroyed.connect(lambda *_: self._clear_current_zlut_dialog_ref())
+            self._current_zlut_dialog = dialog
+        self._update_current_zlut_dialog()
+        self._current_zlut_dialog.show()
+        self._current_zlut_dialog.raise_()
+        self._current_zlut_dialog.activateWindow()
+
+    def _clear_current_zlut_dialog_ref(self) -> None:
+        self._current_zlut_dialog = None
+
+    def show_new_zlut_dialog(self) -> None:
+        preflight_error = self._zlut_generation_preflight_error()
+        if preflight_error is not None:
+            self.show_warning('Cannot generate Z-LUT', preflight_error)
+            return
+
+        parent = self.windows[0] if self.windows else None
+        dialog = ZLUTGenerationSetupDialog(
+            parent,
+            roi_size=int(self.settings['ROI']),
+            default_measurements=int(self.settings['video buffer n images']),
+        )
+        self._zlut_generation_setup_dialog = dialog
+        try:
+            if not dialog.exec():
+                return
+            values = dialog.values
+            if values is None:
+                return
+            start_nm, step_nm, stop_nm, profiles_per_bead = values
+            self.start_zlut_generation(
+                start_nm=start_nm,
+                step_nm=step_nm,
+                stop_nm=stop_nm,
+                profiles_per_bead=profiles_per_bead,
+            )
+        finally:
+            self._zlut_generation_setup_dialog = None
+
+    def _zlut_generation_preflight_error(self) -> str | None:
+        if not self._bead_rois:
+            return 'At least one bead ROI must be selected before generating a Z-LUT.'
+        if self.video_buffer is None:
+            return 'Video buffer is not available.'
+        if self._acquisition_mode not in self._ZLUT_TRACKING_ACQUISITION_MODES:
+            return (
+                'Z-LUT generation requires a tracking acquisition mode. '
+                'Switch to track, track & video (cropped), or track & video (full).'
+            )
+
+        focus_motor_names = self._registered_focus_motor_names()
+        if not focus_motor_names:
+            return 'No FocusMotorBase hardware is registered.'
+        if len(focus_motor_names) > 1:
+            return 'Z-LUT generation requires exactly one registered FocusMotorBase hardware manager.'
+        return None
+
+    def _registered_focus_motor_names(self) -> list[str]:
+        from magscope.hardware import FocusMotorBase
+
+        focus_motor_names: list[str] = []
+        for name, hardware_type in self.hardware_types.items():
+            try:
+                if issubclass(hardware_type, FocusMotorBase):
+                    focus_motor_names.append(name)
+            except TypeError:
+                continue
+        return focus_motor_names
+
+    def _set_current_zlut(
+        self,
+        *,
+        filepath: str | None,
+        z_min: float | None = None,
+        z_max: float | None = None,
+        step_size: float | None = None,
+        profile_length: int | None = None,
+    ) -> None:
+        self._current_zlut_filepath = filepath
+        self._current_zlut_metadata = {
+            'z_min': z_min,
+            'z_max': z_max,
+            'step_size': step_size,
+            'profile_length': profile_length,
+        }
+        self._update_zlut_menu_action_state()
+        self._update_current_zlut_dialog()
+
+    def _update_current_zlut_dialog(self) -> None:
+        if self._current_zlut_dialog is None:
+            return
+        self._current_zlut_dialog.update_zlut(
+            self._current_zlut_filepath,
+            z_min=self._current_zlut_metadata['z_min'],
+            z_max=self._current_zlut_metadata['z_max'],
+            step_size=self._current_zlut_metadata['step_size'],
+            profile_length=self._current_zlut_metadata['profile_length'],
+        )
 
     def _clear_zlut_generation_preview(
         self,
@@ -2502,12 +2725,13 @@ class UIManager(ManagerProcessBase):
                              z_max: float | None = None,
                              step_size: float | None = None,
                              profile_length: int | None = None) -> None:
-        if self.controls is None:
-            return
-
-        panel = self.controls.zlut_panel
-        panel.set_filepath(filepath)
-        panel.update_metadata(z_min, z_max, step_size, profile_length)
+        self._set_current_zlut(
+            filepath=filepath,
+            z_min=z_min,
+            z_max=z_max,
+            step_size=step_size,
+            profile_length=profile_length,
+        )
 
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:
@@ -2525,19 +2749,19 @@ class UIManager(ManagerProcessBase):
         z_axis_max_nm: float | None = None,
         z_axis_descending: bool = False,
     ) -> None:
-        if self.controls is None:
-            return
         self._zlut_generation_phase = phase
         self._zlut_generation_z_axis_min_nm = z_axis_min_nm
         self._zlut_generation_z_axis_max_nm = z_axis_max_nm
         self._zlut_generation_z_axis_descending = bool(z_axis_descending)
-        self.controls.z_lut_generation_panel.update_state(
-            status,
-            detail,
-            running=running,
-            can_cancel=can_cancel,
-            phase=phase,
-        )
+        panel = getattr(self.controls, 'z_lut_generation_panel', None) if self.controls is not None else None
+        if panel is not None:
+            panel.update_state(
+                status,
+                detail,
+                running=running,
+                can_cancel=can_cancel,
+                phase=phase,
+            )
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_state(
                 status,
@@ -2576,8 +2800,6 @@ class UIManager(ManagerProcessBase):
         capture_capacity: int,
         motor_z_value: float | None = None,
     ) -> None:
-        if self.controls is None:
-            return
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_progress(
                 current_step,
@@ -2832,11 +3054,6 @@ class LegacyDraggableControls(QWidget):
         self.status_panel = StatusPanel(self.manager)
         self.xy_lock_panel = XYLockPanel(self.manager)
         self.z_lock_panel = ZLockPanel(self.manager)
-        self.zlut_panel = ZLUTPanel(self.manager)
-        self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
-
-        self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
-        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("StatusPanel", self.status_panel, "left", True),
@@ -2846,15 +3063,13 @@ class LegacyDraggableControls(QWidget):
             ("HistogramPanel", self.histogram_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
-            ("ZLUTPanel", self.zlut_panel, "right", True),
-            ("ZLUTGenerationPanel", self.z_lut_generation_panel, "right", True),
             ("ScriptPanel", self.script_panel, "right", True),
             ("XYLockPanel", self.xy_lock_panel, "right", True),
             ("ZLockPanel", self.z_lock_panel, "right", True),
         ]
         if self.allan_deviation_panel is not None:
             definitions.insert(
-                definitions.index(("ZLUTPanel", self.zlut_panel, "right", True)),
+                definitions.index(("ScriptPanel", self.script_panel, "right", True)),
                 ("AllanDeviationPanel", self.allan_deviation_panel, "right", True),
             )
 
@@ -3222,13 +3437,13 @@ class Controls(QWidget):
     WORKFLOW_COLUMNS_SETTINGS_KEY = "controls/workflow_columns"
     MIN_COLUMN_WIDTH = 360
     MAX_COLUMNS = 4
-    WORKFLOW_ORDER = ["Run", "Analysis", "Z-LUT", "Locking", "Custom"]
+    WORKFLOW_ORDER = ["Run", "Analysis", "Locking", "Custom"]
 
     DEFAULT_LAYOUTS = {
-        1: [["Run", "Analysis", "Z-LUT", "Locking", "Custom"]],
-        2: [["Run", "Custom"], ["Analysis", "Z-LUT", "Locking"]],
-        3: [["Run", "Custom"], ["Analysis"], ["Z-LUT", "Locking"]],
-        4: [["Run"], ["Analysis"], ["Z-LUT", "Locking"], ["Custom"]],
+        1: [["Run", "Analysis", "Locking", "Custom"]],
+        2: [["Run", "Custom"], ["Analysis", "Locking"]],
+        3: [["Run", "Custom"], ["Analysis"], ["Locking"]],
+        4: [["Run"], ["Analysis"], ["Locking"], ["Custom"]],
     }
 
     def __init__(self, manager: UIManager):
@@ -3282,11 +3497,6 @@ class Controls(QWidget):
         self.status_panel = StatusPanel(self.manager)
         self.xy_lock_panel = XYLockPanel(self.manager)
         self.z_lock_panel = ZLockPanel(self.manager)
-        self.zlut_panel = ZLUTPanel(self.manager)
-        self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
-
-        self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
-        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         panel_tabs: list[tuple[str, QWidget, str]] = [
             ("StatusPanel", self.status_panel, "Run"),
@@ -3297,14 +3507,12 @@ class Controls(QWidget):
             ("PlotSettingsPanel", self.plot_settings_panel, "Analysis"),
             ("HistogramPanel", self.histogram_panel, "Analysis"),
             ("ProfilePanel", self.profile_panel, "Analysis"),
-            ("ZLUTPanel", self.zlut_panel, "Z-LUT"),
-            ("ZLUTGenerationPanel", self.z_lut_generation_panel, "Z-LUT"),
             ("XYLockPanel", self.xy_lock_panel, "Locking"),
             ("ZLockPanel", self.z_lock_panel, "Locking"),
         ]
         if self.allan_deviation_panel is not None:
             panel_tabs.insert(
-                panel_tabs.index(("ZLUTPanel", self.zlut_panel, "Z-LUT")),
+                panel_tabs.index(("XYLockPanel", self.xy_lock_panel, "Locking")),
                 ("AllanDeviationPanel", self.allan_deviation_panel, "Analysis"),
             )
 
