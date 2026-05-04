@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from importlib import resources
+import json
 from math import floor, ceil
 import os
 import sys
@@ -12,6 +13,7 @@ import numpy as np
 from PyQt6.QtCore import (
     QEvent,
     QObject,
+    QMimeData,
     QPoint,
     QRectF,
     QSettings,
@@ -26,6 +28,7 @@ from PyQt6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
+    QDrag,
     QGuiApplication,
     QImage,
     QKeySequence,
@@ -48,6 +51,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSizePolicy,
+    QTabBar,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -2754,7 +2759,7 @@ class AddColumnDropTarget(QFrame):
         self._controls.create_new_column_with_panel(wrapper)
         event.acceptProposedAction()
 
-class Controls(QWidget):
+class LegacyDraggableControls(QWidget):
     """Container widget hosting draggable, persistent control panels."""
 
     LAYOUT_SETTINGS_GROUP = "controls/layout"
@@ -3059,3 +3064,497 @@ class Controls(QWidget):
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
         self._add_column_target.refresh_visibility()
+
+
+WORKFLOW_TAB_MIME_TYPE = "application/x-magscope-workflow-tab"
+
+
+class WorkflowTabBar(QTabBar):
+    """Tab bar that supports moving workflow tabs between control columns."""
+
+    def __init__(self, tab_widget: "WorkflowTabWidget") -> None:
+        super().__init__(tab_widget)
+        self._tab_widget = tab_widget
+        self._drag_start_pos: QPoint | None = None
+        self.setAcceptDrops(True)
+
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # type: ignore[override]
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        if self._drag_start_pos is None:
+            super().mouseMoveEvent(event)
+            return
+        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        index = self.tabAt(self._drag_start_pos)
+        tab_id = self._tab_widget.tab_id_at(index)
+        if tab_id is None:
+            super().mouseMoveEvent(event)
+            return
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        payload = json.dumps(
+            {
+                "tab_id": tab_id,
+                "source_column": self._tab_widget.column_index,
+            }
+        )
+        mime.setData(WORKFLOW_TAB_MIME_TYPE, payload.encode("utf-8"))
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        if not event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.ignore()
+            return
+
+        try:
+            payload = json.loads(bytes(event.mimeData().data(WORKFLOW_TAB_MIME_TYPE)).decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError):
+            event.ignore()
+            return
+
+        tab_id = payload.get("tab_id")
+        if not isinstance(tab_id, str):
+            event.ignore()
+            return
+
+        target_index = self.tabAt(event.position().toPoint())
+        if target_index < 0:
+            target_index = self.count()
+        self._tab_widget.controls.move_workflow_tab(
+            tab_id,
+            self._tab_widget.column_index,
+            target_index,
+        )
+        event.acceptProposedAction()
+
+
+class WorkflowTabWidget(QTabWidget):
+    """A tab widget representing one adaptive workflow control column."""
+
+    def __init__(self, controls: "Controls", column_index: int) -> None:
+        super().__init__(controls)
+        self.controls = controls
+        self.column_index = column_index
+        self.setTabBar(WorkflowTabBar(self))
+        self.setDocumentMode(True)
+        self.setUsesScrollButtons(True)
+        self.setAcceptDrops(True)
+        self.setMinimumWidth(Controls.MIN_COLUMN_WIDTH)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def tab_id_at(self, index: int) -> str | None:
+        if index < 0:
+            return None
+        value = self.tabBar().tabData(index)
+        return str(value) if value else None
+
+    def _dragged_tab_id(self, event) -> str | None:
+        if not event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            return None
+        try:
+            payload = json.loads(bytes(event.mimeData().data(WORKFLOW_TAB_MIME_TYPE)).decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return None
+        tab_id = payload.get("tab_id")
+        return tab_id if isinstance(tab_id, str) else None
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if self._dragged_tab_id(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._dragged_tab_id(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        tab_id = self._dragged_tab_id(event)
+        if tab_id is None:
+            event.ignore()
+            return
+        self.controls.move_workflow_tab(tab_id, self.column_index, self.count())
+        event.acceptProposedAction()
+
+
+class Controls(QWidget):
+    """Adaptive workflow controls with movable tabs and responsive columns."""
+
+    LAYOUT_SETTINGS_GROUP = "controls/layout"
+    WORKFLOW_COLUMNS_SETTINGS_KEY = "controls/workflow_columns"
+    MIN_COLUMN_WIDTH = 360
+    MAX_COLUMNS = 4
+    WORKFLOW_ORDER = ["Run", "Analysis", "Z-LUT", "Locking", "Custom"]
+
+    DEFAULT_LAYOUTS = {
+        1: [["Run", "Analysis", "Z-LUT", "Locking", "Custom"]],
+        2: [["Run", "Custom"], ["Analysis", "Z-LUT", "Locking"]],
+        3: [["Run", "Custom"], ["Analysis"], ["Z-LUT", "Locking"]],
+        4: [["Run"], ["Analysis"], ["Z-LUT", "Locking"], ["Custom"]],
+    }
+
+    def __init__(self, manager: UIManager):
+        super().__init__()
+        self.manager = manager
+        self.panels: dict[str, ControlPanelBase | QWidget] = {}
+        self._settings = QSettings("MagScope", "MagScope")
+        self._tab_widgets: list[WorkflowTabWidget] = []
+        self._tab_pages: dict[str, QScrollArea] = {}
+        self._tab_content_layouts: dict[str, QVBoxLayout] = {}
+        self._panel_to_tab: dict[str, str] = {}
+        self._current_column_count = 0
+        self._loading_layout = False
+
+        self.setMinimumWidth(self.MIN_COLUMN_WIDTH)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(6)
+
+        self._columns_layout = QHBoxLayout()
+        self._columns_layout.setContentsMargins(0, 0, 0, 0)
+        self._columns_layout.setSpacing(6)
+        root_layout.addLayout(self._columns_layout, 1)
+
+        self._create_standard_panels()
+        self._create_workflow_pages()
+        self._populate_workflow_pages()
+        self._apply_workflow_layout(self._default_layout_for_count(1), save=False)
+
+    @property
+    def settings(self):
+        return self.manager.settings
+
+    @settings.setter
+    def settings(self, value):
+        raise AttributeError("Read-only attribute.")
+
+    def _create_standard_panels(self) -> None:
+        self.acquisition_panel = AcquisitionPanel(self.manager)
+        self.bead_selection_panel = BeadSelectionPanel(self.manager)
+        self.camera_panel = CameraPanel(self.manager)
+        self.histogram_panel = HistogramPanel(self.manager)
+        self.plot_settings_panel = PlotSettingsPanel(self.manager)
+        self.allan_deviation_panel = (
+            AllanDeviationPanel(self.manager) if has_tweezepy_support() else None
+        )
+        self.profile_panel = ProfilePanel(self.manager)
+        self.script_panel = ScriptPanel(self.manager)
+        self.status_panel = StatusPanel(self.manager)
+        self.xy_lock_panel = XYLockPanel(self.manager)
+        self.z_lock_panel = ZLockPanel(self.manager)
+        self.zlut_panel = ZLUTPanel(self.manager)
+        self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
+
+        self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
+        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
+
+        panel_tabs: list[tuple[str, QWidget, str]] = [
+            ("StatusPanel", self.status_panel, "Run"),
+            ("AcquisitionPanel", self.acquisition_panel, "Run"),
+            ("CameraPanel", self.camera_panel, "Run"),
+            ("BeadSelectionPanel", self.bead_selection_panel, "Run"),
+            ("ScriptPanel", self.script_panel, "Run"),
+            ("PlotSettingsPanel", self.plot_settings_panel, "Analysis"),
+            ("HistogramPanel", self.histogram_panel, "Analysis"),
+            ("ProfilePanel", self.profile_panel, "Analysis"),
+            ("ZLUTPanel", self.zlut_panel, "Z-LUT"),
+            ("ZLUTGenerationPanel", self.z_lut_generation_panel, "Z-LUT"),
+            ("XYLockPanel", self.xy_lock_panel, "Locking"),
+            ("ZLockPanel", self.z_lock_panel, "Locking"),
+        ]
+        if self.allan_deviation_panel is not None:
+            panel_tabs.insert(
+                panel_tabs.index(("ZLUTPanel", self.zlut_panel, "Z-LUT")),
+                ("AllanDeviationPanel", self.allan_deviation_panel, "Analysis"),
+            )
+
+        for panel_id, panel, tab_id in panel_tabs:
+            self.panels[panel_id] = panel
+            self._panel_to_tab[panel_id] = tab_id
+
+        for control_factory, _column in self.manager.controls_to_add:
+            widget = control_factory(self.manager)
+            panel_id = widget.__class__.__name__
+            self.panels[panel_id] = widget
+            self._panel_to_tab[panel_id] = "Custom"
+
+    def _create_workflow_pages(self) -> None:
+        for tab_id in self.WORKFLOW_ORDER:
+            content = QWidget(self)
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(6, 6, 6, 6)
+            content_layout.setSpacing(6)
+            content_layout.addStretch(1)
+
+            scroll = QScrollArea(self)
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(content)
+
+            self._tab_pages[tab_id] = scroll
+            self._tab_content_layouts[tab_id] = content_layout
+
+    def _populate_workflow_pages(self) -> None:
+        for panel_id, panel in self.panels.items():
+            tab_id = self._panel_to_tab.get(panel_id, "Custom")
+            layout = self._tab_content_layouts[tab_id]
+            layout.insertWidget(max(0, layout.count() - 1), panel)
+
+    def _desired_column_count(self) -> int:
+        width = max(self.width(), self.MIN_COLUMN_WIDTH)
+        count = max(1, width // self.MIN_COLUMN_WIDTH)
+        return min(self.MAX_COLUMNS, len(self.WORKFLOW_ORDER), int(count))
+
+    def _default_layout_for_count(self, count: int) -> list[list[str]]:
+        return [list(column) for column in self.DEFAULT_LAYOUTS.get(count, self.DEFAULT_LAYOUTS[self.MAX_COLUMNS])]
+
+    def _load_saved_layout(self) -> list[list[str]] | None:
+        raw_value = self._settings.value(self.WORKFLOW_COLUMNS_SETTINGS_KEY, "", type=str)
+        if not raw_value:
+            return None
+        try:
+            value = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(value, list):
+            return None
+        normalized: list[list[str]] = []
+        used: set[str] = set()
+        for column in value:
+            if not isinstance(column, list):
+                continue
+            normalized_column: list[str] = []
+            for tab_id in column:
+                tab_id = str(tab_id)
+                if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
+                    normalized_column.append(tab_id)
+                    used.add(tab_id)
+            normalized.append(normalized_column)
+        for tab_id in self.WORKFLOW_ORDER:
+            if tab_id not in used:
+                if not normalized:
+                    normalized.append([])
+                normalized[-1].append(tab_id)
+        return normalized
+
+    def _save_workflow_layout(self) -> None:
+        if self._loading_layout:
+            return
+        self._settings.setValue(
+            self.WORKFLOW_COLUMNS_SETTINGS_KEY,
+            json.dumps(self._current_workflow_layout()),
+        )
+
+    def _current_workflow_layout(self) -> list[list[str]]:
+        columns: list[list[str]] = []
+        for tab_widget in self._tab_widgets:
+            column: list[str] = []
+            tab_bar = tab_widget.tabBar()
+            for index in range(tab_widget.count()):
+                value = tab_bar.tabData(index)
+                if value:
+                    column.append(str(value))
+            columns.append(column)
+        return columns
+
+    def _layout_for_column_count(self, count: int) -> list[list[str]]:
+        saved = self._load_saved_layout()
+        if saved is None:
+            return self._default_layout_for_count(count)
+
+        columns = [list(column) for column in saved]
+        if len(columns) > count:
+            merged = columns[: count - 1]
+            overflow: list[str] = []
+            for column in columns[count - 1 :]:
+                overflow.extend(column)
+            merged.append(overflow)
+            columns = merged
+        elif len(columns) < count:
+            columns = self._expand_layout_to_count(columns, count)
+        else:
+            columns = self._fill_empty_columns(columns, self._default_layout_for_count(count))
+        return columns[:count]
+
+    def _expand_layout_to_count(self, columns: list[list[str]], count: int) -> list[list[str]]:
+        expanded = [list(column) for column in columns]
+        while len(expanded) < count:
+            expanded.append([])
+        return self._fill_empty_columns(expanded, self._default_layout_for_count(count))
+
+    def _fill_empty_columns(
+        self,
+        columns: list[list[str]],
+        preferred_layout: list[list[str]],
+    ) -> list[list[str]]:
+        for empty_index, column in enumerate(columns):
+            if column:
+                continue
+
+            moved_tabs = self._tabs_for_empty_column(columns, preferred_layout, empty_index)
+            if not moved_tabs:
+                continue
+            columns[empty_index].extend(moved_tabs)
+        return columns
+
+    def _tabs_for_empty_column(
+        self,
+        columns: list[list[str]],
+        preferred_layout: list[list[str]],
+        empty_index: int,
+    ) -> list[str]:
+        preferred_tabs = preferred_layout[empty_index] if empty_index < len(preferred_layout) else []
+        for source in columns:
+            if len(source) <= 1:
+                continue
+            movable_tabs = [tab_id for tab_id in preferred_tabs if tab_id in source]
+            if not movable_tabs or len(source) - len(movable_tabs) < 1:
+                continue
+            for tab_id in movable_tabs:
+                source.remove(tab_id)
+            return movable_tabs
+
+        source = max((column for column in columns if len(column) > 1), key=len, default=None)
+        if source is None:
+            return []
+        return [source.pop()]
+
+    def _clear_tab_widgets(self) -> None:
+        while self._tab_widgets:
+            tab_widget = self._tab_widgets.pop()
+            while tab_widget.count():
+                tab_widget.removeTab(0)
+            self._columns_layout.removeWidget(tab_widget)
+            tab_widget.deleteLater()
+
+    def _apply_workflow_layout(self, layout: list[list[str]], *, save: bool) -> None:
+        self._loading_layout = True
+        try:
+            self._clear_tab_widgets()
+            for column_index, tab_ids in enumerate(layout):
+                tab_widget = WorkflowTabWidget(self, column_index)
+                self._columns_layout.addWidget(tab_widget, 1)
+                self._tab_widgets.append(tab_widget)
+                for tab_id in tab_ids:
+                    page = self._tab_pages.get(tab_id)
+                    if page is None:
+                        continue
+                    index = tab_widget.addTab(page, tab_id)
+                    tab_widget.tabBar().setTabData(index, tab_id)
+        finally:
+            self._current_column_count = len(layout)
+            self._loading_layout = False
+        if save:
+            self._save_workflow_layout()
+
+    def _sync_column_count_to_width(self) -> None:
+        desired = self._desired_column_count()
+        if desired == self._current_column_count:
+            return
+        self._apply_workflow_layout(self._layout_for_column_count(desired), save=False)
+
+    def move_workflow_tab(self, tab_id: str, target_column: int, target_index: int) -> None:
+        if tab_id not in self._tab_pages or not self._tab_widgets:
+            return
+        target_column = max(0, min(target_column, len(self._tab_widgets) - 1))
+        target_widget = self._tab_widgets[target_column]
+        source_widget: WorkflowTabWidget | None = None
+        source_index = -1
+        for tab_widget in self._tab_widgets:
+            for index in range(tab_widget.count()):
+                if tab_widget.tab_id_at(index) == tab_id:
+                    source_widget = tab_widget
+                    source_index = index
+                    break
+            if source_widget is not None:
+                break
+        if source_widget is None or source_index < 0:
+            return
+
+        page = self._tab_pages[tab_id]
+        if source_widget is target_widget and source_index < target_index:
+            target_index -= 1
+        source_widget.removeTab(source_index)
+        target_index = max(0, min(target_index, target_widget.count()))
+        new_index = target_widget.insertTab(target_index, page, tab_id)
+        target_widget.tabBar().setTabData(new_index, tab_id)
+        target_widget.setCurrentIndex(new_index)
+        self._save_workflow_layout()
+
+    def reveal_panel(self, panel_id: str) -> None:
+        if not hasattr(self, "_panel_to_tab"):
+            Controls._reveal_legacy_panel(self, panel_id)
+            return
+
+        tab_id = self._panel_to_tab.get(panel_id)
+        if tab_id is None:
+            return
+        for tab_widget in self._tab_widgets:
+            for index in range(tab_widget.count()):
+                if tab_widget.tab_id_at(index) == tab_id:
+                    tab_widget.setCurrentIndex(index)
+                    panel = self.panels.get(panel_id)
+                    page = self._tab_pages.get(tab_id)
+                    if isinstance(panel, QWidget) and page is not None:
+                        QTimer.singleShot(0, lambda p=page, w=panel: p.ensureWidgetVisible(w))
+                    return
+
+    def _reveal_legacy_panel(self, panel_id: str) -> None:
+        panel = getattr(self, "panels", {}).get(panel_id)
+        if panel is None:
+            return
+
+        groupbox = getattr(panel, "groupbox", None)
+        if isinstance(groupbox, CollapsibleGroupBox):
+            groupbox._apply_collapsed_state(False, animate=False, persist=True)
+
+        layout_manager = getattr(self, "layout_manager", None)
+        wrapper_for_id = getattr(layout_manager, "wrapper_for_id", None)
+        wrapper = wrapper_for_id(panel_id) if callable(wrapper_for_id) else None
+        column = getattr(wrapper, "column", None)
+        column_name = getattr(column, "name", None)
+        scroll = getattr(self, "_column_scrolls", {}).get(column_name)
+        ensure_visible = getattr(scroll, "ensureWidgetVisible", None)
+        if callable(ensure_visible):
+            ensure_visible(wrapper if wrapper is not None else panel)
+
+    def reset_to_defaults(self) -> None:
+        self._settings.remove(self.WORKFLOW_COLUMNS_SETTINGS_KEY)
+        for panel in self.panels.values():
+            groupbox = getattr(panel, "groupbox", None)
+            if isinstance(groupbox, CollapsibleGroupBox):
+                self._settings.remove(groupbox.settings_key)
+                groupbox.reset_to_default()
+        self._apply_workflow_layout(self._default_layout_for_count(self._desired_column_count()), save=False)
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        super().resizeEvent(event)
+        self._sync_column_count_to_width()

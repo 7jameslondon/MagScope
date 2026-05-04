@@ -144,7 +144,7 @@ class ControlPanelBase(QWidget):
         manager: 'UIManager',
         title: str,
         collapsed_by_default: bool = False,
-        collapsible: bool = True,
+        collapsible: bool = False,
     ):
         super().__init__()
         self.manager: UIManager = manager
@@ -156,17 +156,13 @@ class ControlPanelBase(QWidget):
         super().setLayout(outer_layout)
 
         content_layout = QVBoxLayout()
-        if collapsible:
-            self.groupbox = CollapsibleGroupBox(
-                title=title,
-                collapsed=collapsed_by_default,
-            )
-            outer_layout.addWidget(self.groupbox)
-            self.setLayout(content_layout)
-        else:
-            content_layout.setContentsMargins(0, 0, 0, 0)
-            outer_layout.addLayout(content_layout)
-            self._content_layout = content_layout
+        self.groupbox = CollapsibleGroupBox(
+            title=title,
+            collapsed=collapsed_by_default,
+            collapsible=collapsible,
+        )
+        outer_layout.addWidget(self.groupbox)
+        self.setLayout(content_layout)
 
     def set_title(self, text: str) -> None:
         if self.groupbox is not None:

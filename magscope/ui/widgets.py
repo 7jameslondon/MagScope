@@ -182,23 +182,24 @@ class LabeledStepperLineEdit(QWidget):
 
 
 class CollapsibleGroupBox(QGroupBox):
-    """A collapsible QGroupBox with the title text as a toggle button to show/hide its content"""
+    """A titled QGroupBox that can optionally collapse its content."""
 
-    def __init__(self, title="", collapsed=False):
+    def __init__(self, title="", collapsed=False, *, collapsible: bool = True):
         super().__init__()
 
         self.title = title
-        self.default_collapsed = collapsed
+        self.collapsible = collapsible
+        self.default_collapsed = collapsed if collapsible else False
         self._settings_key = f"{self.title}_Group Box Collapsed"
 
         # Retrieve last collapse state
         settings = QSettings('MagScope', 'MagScope')
-        collapsed = settings.value(self._settings_key, collapsed, type=bool)
+        collapsed = settings.value(self._settings_key, collapsed, type=bool) if collapsible else False
 
         # Set up the toggle button (will be the groupbox's title)
         self.toggle_button = QPushButton(
-            self._get_toggle_text(title, not collapsed))
-        self.toggle_button.setCheckable(True)
+            self._get_toggle_text(title, not collapsed, collapsible=collapsible))
+        self.toggle_button.setCheckable(collapsible)
         self.toggle_button.setChecked(not collapsed)
         self.toggle_button.setStyleSheet("""
                 text-align: left;
@@ -208,7 +209,8 @@ class CollapsibleGroupBox(QGroupBox):
                 font-size: 14px;
         """)
 
-        self.toggle_button.toggled.connect(self.toggle) # type: ignore
+        if collapsible:
+            self.toggle_button.toggled.connect(self.toggle) # type: ignore
 
         # Replace the groupbox's default title with the button
         self.setLayout(QVBoxLayout())
@@ -229,6 +231,7 @@ class CollapsibleGroupBox(QGroupBox):
         self.drag_handle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.drag_handle.setStyleSheet("font-size: 16px;")
         title_layout.addWidget(self.drag_handle)
+        self.drag_handle.setVisible(collapsible)
         self.setTitle("")
         self.layout().addWidget(title_widget)
         self.layout().setSpacing(0)
@@ -264,18 +267,26 @@ class CollapsibleGroupBox(QGroupBox):
         return self._settings_key
 
     def toggle(self, checked):
+        if not self.collapsible:
+            return
         self._apply_collapsed_state(not checked, animate=True, persist=True)
 
     def reset_to_default(self) -> None:
         self._apply_collapsed_state(self.default_collapsed, animate=False, persist=True)
 
     def _apply_collapsed_state(self, collapsed: bool, *, animate: bool, persist: bool) -> None:
+        if not self.collapsible:
+            collapsed = False
+            animate = False
+            persist = False
         expanded = not collapsed
         self.collapsed = collapsed
         self.toggle_button.blockSignals(True)
         self.toggle_button.setChecked(expanded)
         self.toggle_button.blockSignals(False)
-        self.toggle_button.setText(self._get_toggle_text(self.title, expanded))
+        self.toggle_button.setText(
+            self._get_toggle_text(self.title, expanded, collapsible=self.collapsible)
+        )
 
         if persist:
             settings = QSettings('MagScope', 'MagScope')
@@ -317,7 +328,9 @@ class CollapsibleGroupBox(QGroupBox):
         self.content_area.setLayout(wrapper_layout)
 
     @staticmethod
-    def _get_toggle_text(title, expanded):
+    def _get_toggle_text(title, expanded, *, collapsible: bool = True):
+        if not collapsible:
+            return f' {title}'
         arrow = '▼' if expanded else '❯'
         return f' {arrow} {title}'
 
