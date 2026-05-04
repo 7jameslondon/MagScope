@@ -78,6 +78,24 @@ def test_overlay_cache_invalidates_when_view_changes(qtbot):
     assert viewer._overlay_cache_dirty is True
 
 
+@pytest.mark.parametrize(
+    ("zoom_percent", "expected"),
+    [(100.0, "1.0x"), (325.0, "3.3x")],
+)
+def test_minimap_zoom_label_uses_multiplier(qtbot, monkeypatch, zoom_percent, expected):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(360, 320)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.zoom(1)
+
+    monkeypatch.setattr(viewer, "_current_zoom_percent", lambda: zoom_percent)
+    viewer._refresh_minimap()
+
+    assert viewer._minimap_zoom_label.text() == expected
+
+
 def test_overlay_cache_excludes_active_bead_label(qtbot):
     viewer = VideoViewer()
     qtbot.addWidget(viewer)
