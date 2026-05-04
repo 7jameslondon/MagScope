@@ -703,29 +703,8 @@ class BeadSelectionPanel(ControlPanelBase):
         self.clear_button.clicked.connect(self.manager.clear_beads)  # type: ignore
         button_row.addWidget(self.clear_button)
 
-        self.auto_select_button = QPushButton('Auto Bead Selection')
-        self.auto_select_button.clicked.connect(self.manager.start_auto_bead_selection)  # type: ignore
-        button_row.addWidget(self.auto_select_button)
-
-        self.manager._update_auto_bead_selection_button_state()
-
     def search_targets(self) -> list[SearchTarget]:
         return [
-            PanelControlTarget(
-                label='Auto Bead Selection',
-                aliases=(
-                    'auto bead',
-                    'automatic bead selection',
-                    'find bead',
-                    'find beads',
-                    'detect beads',
-                ),
-                context='Bead Selection',
-                description='Shows the button used to open automatic bead selection.',
-                keywords=('bead finder', 'select beads automatically'),
-                panel_id='BeadSelectionPanel',
-                widget_path=('auto_select_button',),
-            ),
             PanelControlTarget(
                 label='Remove All Beads',
                 aliases=('clear beads', 'delete beads'),

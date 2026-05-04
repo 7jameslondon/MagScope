@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QToolButton,
     QWidget,
@@ -221,7 +220,6 @@ class FakeBeadSelectionPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
         self.next_bead_id_label = None
-        self.auto_select_button = FakeButton()
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label = next_bead_id
@@ -1118,6 +1116,29 @@ def test_layout_menu_can_dock_all_windows(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_tools_menu_runs_auto_bead_selection(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    starts = []
+    monkeypatch.setattr(manager, '_can_start_auto_bead_selection', lambda: True)
+    monkeypatch.setattr(manager, 'start_auto_bead_selection', lambda: starts.append(True))
+
+    manager._create_tools_menu(window)
+
+    tools_menu = window.menuBar().actions()[0].menu()
+    auto_bead_selection_action = tools_menu.actions()[0]
+    auto_bead_selection_action.trigger()
+
+    assert tools_menu.title() == 'Tools'
+    assert auto_bead_selection_action.text() == 'Auto Bead Selection'
+    assert auto_bead_selection_action.isEnabled()
+    assert starts == [True]
+
+    clear_ui_manager_singleton()
+
+
 def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1208,28 +1229,21 @@ def test_panel_search_targets_cover_common_controls():
     assert 'Select Z-LUT File' in target_labels
 
 
-def test_search_guides_to_auto_bead_button_without_clicking(qtbot):
+def test_search_guides_to_auto_bead_menu_without_clicking(qtbot, monkeypatch):
     clear_ui_manager_singleton()
     manager = UIManager()
-    panel = QWidget()
-    qtbot.addWidget(panel)
-    panel.auto_select_button = QPushButton('Auto Bead Selection', panel)
     clicks = []
-    panel.auto_select_button.clicked.connect(lambda: clicks.append(True))
-    reveal_calls = []
-
-    class FakeControls:
-        panels = {'BeadSelectionPanel': panel}
-
-        def reveal_panel(self, panel_id: str) -> None:
-            reveal_calls.append(panel_id)
-
-    manager.controls = FakeControls()
+    monkeypatch.setattr(manager, '_can_start_auto_bead_selection', lambda: True)
+    monkeypatch.setattr(manager, 'start_auto_bead_selection', lambda: clicks.append(True))
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_tools_menu(window)
+    manager._create_search_menu_widget(window)
 
     manager._guide_to_search_result('Auto Bead')
 
-    assert reveal_calls == ['BeadSelectionPanel']
-    assert 'border: 2px solid' in panel.auto_select_button.styleSheet()
+    tools_menu = manager._menus['Tools']
+    assert tools_menu.activeAction().text() == 'Auto Bead Selection'
     assert clicks == []
 
     clear_ui_manager_singleton()
@@ -1252,9 +1266,9 @@ def test_search_focus_clear_and_status_helpers(qtbot):
     assert manager._search_box.selectedText() == 'find beads'
     assert len(manager._search_shortcuts) == 3
 
-    manager._set_search_status('Showing: Auto Bead Selection - Bead Selection')
+    manager._set_search_status('Showing: Auto Bead Selection - Tools Menu')
     assert manager._search_status_label.isVisible()
-    assert manager._search_status_label.text() == 'Showing: Auto Bead Selection - Bead Selection'
+    assert manager._search_status_label.text() == 'Showing: Auto Bead Selection - Tools Menu'
 
     manager._clear_search_box(manager._search_box)
     assert manager._search_box.text() == ''
@@ -1319,25 +1333,15 @@ def test_search_status_clear_handles_deleted_label(qtbot):
     clear_ui_manager_singleton()
 
 
-def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot):
+def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot, monkeypatch):
     clear_ui_manager_singleton()
     manager = UIManager()
-    panel = QWidget()
-    qtbot.addWidget(panel)
-    panel.auto_select_button = QPushButton('Auto Bead Selection', panel)
     clicks = []
-    panel.auto_select_button.clicked.connect(lambda: clicks.append(True))
-    reveal_calls = []
-
-    class FakeControls:
-        panels = {'BeadSelectionPanel': panel}
-
-        def reveal_panel(self, panel_id: str) -> None:
-            reveal_calls.append(panel_id)
-
-    manager.controls = FakeControls()
+    monkeypatch.setattr(manager, '_can_start_auto_bead_selection', lambda: True)
+    monkeypatch.setattr(manager, 'start_auto_bead_selection', lambda: clicks.append(True))
     window = QMainWindow()
     qtbot.addWidget(window)
+    manager._create_tools_menu(window)
     manager._create_search_menu_widget(window)
     window.show()
     qtbot.wait(0)
@@ -1345,14 +1349,16 @@ def test_search_suggests_find_beads_alias_and_guides_on_enter(qtbot):
     manager._search_box.setFocus()
     qtbot.keyClicks(manager._search_box, 'find beads')
 
-    assert manager._search_completion_labels('find bead') == ['Auto Bead Selection - Bead Selection']
-    assert reveal_calls == []
+    assert manager._search_completion_labels('find bead') == ['Auto Bead Selection - Tools Menu']
+    assert manager._menus['Tools'].activeAction() is None
 
     qtbot.keyClick(manager._search_box, Qt.Key.Key_Return)
-    qtbot.waitUntil(lambda: reveal_calls == ['BeadSelectionPanel'], timeout=1000)
+    qtbot.waitUntil(
+        lambda: manager._menus['Tools'].activeAction() is manager._auto_bead_selection_action,
+        timeout=1000,
+    )
 
     assert manager._search_box.text() == 'Auto Bead Selection'
-    assert 'border: 2px solid' in panel.auto_select_button.styleSheet()
     assert clicks == []
 
     clear_ui_manager_singleton()
@@ -2753,18 +2759,19 @@ def test_clear_beads_resets_selection_so_next_add_activates_first_bead(ui_manage
 def test_auto_bead_selection_button_state_tracks_conflicts(ui_manager):
     ui_manager.video_viewer = FakeVideoViewer()
     ui_manager.video_buffer = SimpleNamespace(dtype=np.uint16)
+    ui_manager._auto_bead_selection_action = FakeButton()
 
-    ui_manager._update_auto_bead_selection_button_state()
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is True
+    ui_manager._update_auto_bead_selection_action_state()
+    assert ui_manager._auto_bead_selection_action.enabled is True
 
     ui_manager._pending_bead_add_id = 4
-    ui_manager._update_auto_bead_selection_button_state()
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+    ui_manager._update_auto_bead_selection_action_state()
+    assert ui_manager._auto_bead_selection_action.enabled is False
 
     ui_manager._pending_bead_add_id = None
     ui_manager._auto_bead_selection_dialog = object()
-    ui_manager._update_auto_bead_selection_button_state()
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+    ui_manager._update_auto_bead_selection_action_state()
+    assert ui_manager._auto_bead_selection_action.enabled is False
 
 
 def test_start_auto_bead_selection_opens_dialog_and_reenables_button(ui_manager, monkeypatch):
@@ -2796,6 +2803,7 @@ def test_start_auto_bead_selection_opens_dialog_and_reenables_button(ui_manager,
 
     ui_manager.video_viewer = FakeVideoViewer()
     ui_manager.video_buffer = SimpleNamespace(dtype=np.uint16)
+    ui_manager._auto_bead_selection_action = FakeButton()
     ui_manager.settings['ROI'] = 20
     monkeypatch.setattr(ui_manager, '_snapshot_recent_image', lambda: np.zeros((32, 32), dtype=np.uint16))
     monkeypatch.setattr('magscope.ui.ui.AutoBeadSelectionDialog', lambda **kwargs: created.append(FakeDialog(**kwargs)) or created[-1])
@@ -2805,11 +2813,11 @@ def test_start_auto_bead_selection_opens_dialog_and_reenables_button(ui_manager,
     assert len(created) == 1
     assert created[0].opened is True
     assert created[0].kwargs['roi_size'] == 20
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is False
+    assert ui_manager._auto_bead_selection_action.enabled is False
 
     created[0].finished.emit(0)
 
-    assert ui_manager.controls.bead_selection_panel.auto_select_button.enabled is True
+    assert ui_manager._auto_bead_selection_action.enabled is True
 
 
 def test_apply_auto_bead_selection_respects_remaining_capacity(ui_manager, monkeypatch):

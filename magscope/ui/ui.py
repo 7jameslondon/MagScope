@@ -246,6 +246,7 @@ class UIManager(ManagerProcessBase):
         self._menu_row: QWidget | None = None
         self._menu_bar: QMenuBar | None = None
         self._layout_menu: QMenu | None = None
+        self._auto_bead_selection_action: QAction | None = None
         self._menus: dict[str, QMenu] = {}
         self._search_shortcuts: list[QShortcut] = []
         self._search_registry = SearchRegistry()
@@ -516,6 +517,7 @@ class UIManager(ManagerProcessBase):
         self._create_viewer_docks(window)
         self._create_preferences_menu_action(window)
         self._create_view_menu(window)
+        self._create_tools_menu(window)
         self._create_help_menu_action(window)
         self._create_search_menu_widget(window)
         self._apply_default_viewer_layout()
@@ -869,15 +871,13 @@ class UIManager(ManagerProcessBase):
                 self._normalize_bead_id(self.reference_bead),
             )
             self.video_viewer.viewport().update()
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
 
-    def _update_auto_bead_selection_button_state(self) -> None:
-        if self.controls is None:
+    def _update_auto_bead_selection_action_state(self) -> None:
+        action = self._auto_bead_selection_action
+        if action is None:
             return
-        button = getattr(self.controls.bead_selection_panel, 'auto_select_button', None)
-        if button is None:
-            return
-        button.setEnabled(self._can_start_auto_bead_selection())
+        action.setEnabled(self._can_start_auto_bead_selection())
 
     def _can_start_auto_bead_selection(self) -> bool:
         return (
@@ -1310,6 +1310,17 @@ class UIManager(ManagerProcessBase):
         reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
         view_menu.addAction(reset_action)
 
+    def _create_tools_menu(self, window: QMainWindow) -> None:
+        tools_menu = window.menuBar().addMenu("Tools")
+        self._register_menu("Tools", tools_menu)
+        auto_bead_selection_action = QAction("Auto Bead Selection", window)
+        auto_bead_selection_action.triggered.connect(
+            lambda _checked=False: self.start_auto_bead_selection()
+        )
+        tools_menu.addAction(auto_bead_selection_action)
+        self._auto_bead_selection_action = auto_bead_selection_action
+        self._update_auto_bead_selection_action_state()
+
     def _register_menu(self, name: str, menu: QMenu) -> None:
         self._menus[name] = menu
         if name == "Layout":
@@ -1423,6 +1434,21 @@ class UIManager(ManagerProcessBase):
     def _menu_search_targets(self) -> list[SearchTarget]:
         return [
             MenuActionTarget(
+                label="Auto Bead Selection",
+                aliases=(
+                    "auto bead",
+                    "automatic bead selection",
+                    "find bead",
+                    "find beads",
+                    "detect beads",
+                ),
+                context="Tools Menu",
+                description="Opens automatic bead selection.",
+                keywords=("bead finder", "select beads automatically"),
+                menu_name="Tools",
+                action_text="Auto Bead Selection",
+            ),
+            MenuActionTarget(
                 label="Dock All Windows",
                 aliases=("dock", "dock windows", "dock all", "dock viewers"),
                 context="Layout Menu",
@@ -1474,19 +1500,6 @@ class UIManager(ManagerProcessBase):
         if panels and "BeadSelectionPanel" not in panels:
             return []
         return [
-            PanelControlTarget(
-                label="Auto Bead Selection",
-                aliases=(
-                    "auto bead",
-                    "automatic bead selection",
-                    "find bead",
-                    "find beads",
-                    "detect beads",
-                ),
-                context="Bead Selection",
-                panel_id="BeadSelectionPanel",
-                widget_path=("auto_select_button",),
-            ),
             PanelControlTarget(
                 label="Remove All Beads",
                 aliases=("clear beads", "delete beads"),
@@ -2003,7 +2016,7 @@ class UIManager(ManagerProcessBase):
         dialog.finished.connect(self._on_auto_bead_selection_dialog_finished)
         dialog.selectionAccepted.connect(self._apply_auto_bead_selection)
         self._auto_bead_selection_dialog = dialog
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
         dialog.open()
 
     def _apply_auto_bead_selection(self, rois: list[tuple[int, int, int, int]]) -> None:
@@ -2041,7 +2054,7 @@ class UIManager(ManagerProcessBase):
 
     def _on_auto_bead_selection_dialog_finished(self, _result: int) -> None:
         self._auto_bead_selection_dialog = None
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
 
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
@@ -2136,7 +2149,7 @@ class UIManager(ManagerProcessBase):
     def _clear_pending_bead_add(self) -> None:
         self._pending_bead_add_id = None
         self._pending_bead_add_roi = None
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
 
     def _calculate_next_bead_id(self) -> int:
         if not self._bead_rois:
