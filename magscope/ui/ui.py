@@ -1669,6 +1669,7 @@ class UIManager(ManagerProcessBase):
             shortcut.activated.connect(lambda box=search_box: self._focus_search_box(box))
             self._search_shortcuts.append(shortcut)
         escape_shortcut = QShortcut(QKeySequence("Escape"), search_box)
+        escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         escape_shortcut.activated.connect(lambda box=search_box: self._clear_search_box(box))
         self._search_shortcuts.append(escape_shortcut)
 

@@ -146,6 +146,8 @@ class SearchRegistry:
         return labels
 
     def best(self, text: str) -> SearchTarget | None:
+        if not normalize_search_text(text):
+            return None
         matches = self.matches(text)
         return matches[0].target if matches else None
 

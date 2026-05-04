@@ -1133,8 +1133,8 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert window.menuBar().actions()[-1].text() == 'Help'
-    assert manager._menu_row.layout().itemAt(0).widget() is window.menuBar()
+    assert manager._menu_bar.actions()[-1].text() == 'Help'
+    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
     search_container = manager._menu_row.layout().itemAt(1).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
@@ -1181,6 +1181,8 @@ def test_search_registry_ranks_exact_alias_and_fuzzy_matches():
     assert registry.best('ROI').label == 'ROI Size'
     assert registry.best('dock').label == 'Dock All Windows'
     assert registry.best('fft rmn').label == 'FFT rmin'
+    assert registry.best('') is None
+    assert registry.best('   ') is None
     assert registry.labels('minimum radius') == ['FFT rmin - Preferences > Tracking']
 
 
@@ -1241,6 +1243,8 @@ def test_search_focus_clear_and_status_helpers(qtbot):
     manager._create_search_menu_widget(window)
     window.show()
     qtbot.wait(0)
+    window.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is window, timeout=1000)
 
     manager._search_box.setText('find beads')
     manager._focus_search_box(manager._search_box)
@@ -1255,6 +1259,18 @@ def test_search_focus_clear_and_status_helpers(qtbot):
     manager._clear_search_box(manager._search_box)
     assert manager._search_box.text() == ''
     assert not manager._search_status_label.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_search_escape_shortcut_is_widget_scoped(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_search_menu_widget(window)
+
+    assert manager._search_shortcuts[-1].context() == Qt.ShortcutContext.WidgetShortcut
 
     clear_ui_manager_singleton()
 
