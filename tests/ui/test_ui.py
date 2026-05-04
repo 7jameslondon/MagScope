@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QPointF, QRect, QRectF, QSettings, Qt
+from PyQt6.QtCore import QEvent, QPointF, QRect, QRectF, QSettings, Qt
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -56,7 +56,13 @@ from magscope.ui.controls import (
 )
 from magscope.ui.plots import TracksTimeSeriesPlot
 from magscope.ui.search import PanelControlTarget, SearchRegistry
-from magscope.ui.ui import Controls, LoadingWindow, UIManager, _StartupReadyWindow
+from magscope.ui.ui import (
+    Controls,
+    LoadingWindow,
+    UIManager,
+    VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY,
+    _StartupReadyWindow,
+)
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.utils import AcquisitionMode
 
@@ -976,10 +982,22 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     assert 'QMainWindow::separator:vertical' in window.styleSheet()
     assert 'QMainWindow::separator:horizontal' in window.styleSheet()
     assert '#808080' in window.styleSheet()
-    assert 'QMainWindow::separator:hover' in window.styleSheet()
+    assert (
+        f'QMainWindow[{VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY}="true"]::separator:hover'
+        in window.styleSheet()
+    )
     assert 'background: #78c7ff;' in window.styleSheet()
     assert 'width: 5px;' in window.styleSheet()
     assert 'height: 5px;' in window.styleSheet()
+    assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is False
+
+    hover_filter = window._viewer_dock_separator_hover_delay_filter
+    hover_filter.eventFilter(window, QEvent(QEvent.Type.MouseMove))
+    assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is False
+    qtbot.wait(550)
+    assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is True
+    hover_filter.eventFilter(window, QEvent(QEvent.Type.MouseMove))
+    assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is False
 
     clear_ui_manager_singleton()
 

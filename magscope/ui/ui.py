@@ -11,6 +11,7 @@ from warnings import warn
 import numpy as np
 from PyQt6.QtCore import (
     QEvent,
+    QObject,
     QPoint,
     QRectF,
     QSettings,
@@ -106,6 +107,10 @@ from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 logger = get_logger("ui.ui")
 
 
+VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS = 500
+VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY = "viewerDockSeparatorHoverReady"
+
+
 class _StartupReadyWindow(QMainWindow):
     def __init__(self, on_ready: Callable[[], None]):
         super().__init__()
@@ -134,6 +139,42 @@ class _StartupReadyWindow(QMainWindow):
 
         self._startup_ready_scheduled = True
         QTimer.singleShot(0, self._on_ready)
+
+
+class _DockSeparatorHoverDelayFilter(QObject):
+    def __init__(self, window: QMainWindow):
+        super().__init__(window)
+        self._window = window
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS)
+        self._timer.timeout.connect(lambda: self._set_hover_ready(True))
+        self._set_hover_ready(False)
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if watched is self._window:
+            event_type = event.type()
+            if event_type in (QEvent.Type.MouseMove, QEvent.Type.HoverMove):
+                self._set_hover_ready(False)
+                self._timer.start()
+            elif event_type in (
+                QEvent.Type.Leave,
+                QEvent.Type.HoverLeave,
+                QEvent.Type.Hide,
+                QEvent.Type.WindowDeactivate,
+            ):
+                self._timer.stop()
+                self._set_hover_ready(False)
+        return super().eventFilter(watched, event)
+
+    def _set_hover_ready(self, ready: bool) -> None:
+        if self._window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) == ready:
+            return
+
+        self._window.setProperty(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY, ready)
+        self._window.style().unpolish(self._window)
+        self._window.style().polish(self._window)
+        self._window.update()
 
 
 class UIManager(ManagerProcessBase):
@@ -266,12 +307,24 @@ class UIManager(ManagerProcessBase):
                     stop: 1 transparent
                 );
             }
-            QMainWindow::separator:hover {
+            QMainWindow[viewerDockSeparatorHoverReady="true"]::separator:hover {
                 background: #78c7ff;
             }
         """
 
+    @staticmethod
+    def _install_viewer_dock_separator_hover_delay(window: QMainWindow) -> None:
+        if getattr(window, "_viewer_dock_separator_hover_delay_filter", None) is not None:
+            return
+
+        window.setMouseTracking(True)
+        window.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        hover_filter = _DockSeparatorHoverDelayFilter(window)
+        window.installEventFilter(hover_filter)
+        window._viewer_dock_separator_hover_delay_filter = hover_filter
+
     def _apply_viewer_dock_separator_style(self, window: QMainWindow) -> None:
+        self._install_viewer_dock_separator_hover_delay(window)
         separator_style = self._viewer_dock_separator_stylesheet().strip()
         existing_style = window.styleSheet().strip()
         if separator_style in existing_style:
