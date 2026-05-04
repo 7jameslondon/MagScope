@@ -1408,12 +1408,15 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
 
     assert manager._menus['Layout'] is manager._layout_menu
     assert manager._search_completion_labels('dock') == ['Dock All Windows - Layout Menu']
-    assert window.menuWidget() is manager._menu_row
+    menu_container = window.menuWidget()
+    assert menu_container.objectName() == 'MainMenuContainer'
+    assert menu_container.layout().itemAt(0).widget() is manager._menu_row
     assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
 
     manager._guide_to_search_result('dock')
 
-    assert window.menuWidget() is manager._menu_row
+    assert window.menuWidget() is menu_container
+    assert menu_container.layout().itemAt(0).widget() is manager._menu_row
     assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
