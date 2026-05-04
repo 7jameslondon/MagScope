@@ -80,7 +80,7 @@ def test_overlay_cache_invalidates_when_view_changes(qtbot):
 
 @pytest.mark.parametrize(
     ("zoom_percent", "expected"),
-    [(100.0, "1.0x"), (325.0, "3.3x")],
+    [(100.0, "1.0x"), (124.99999999999997, "1.3x"), (325.0, "3.3x")],
 )
 def test_minimap_zoom_label_uses_multiplier(qtbot, monkeypatch, zoom_percent, expected):
     viewer = VideoViewer()

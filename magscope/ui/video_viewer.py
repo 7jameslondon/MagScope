@@ -455,7 +455,7 @@ class VideoViewer(QGraphicsView):
 
         zoom_percent = self._current_zoom_percent()
         if zoom_percent is not None:
-            zoom_multiplier = int(zoom_percent / 10 + 0.5) / 10
+            zoom_multiplier = int((zoom_percent + 1e-9) / 10 + 0.5) / 10
             self._minimap_zoom_label.setText(f"{zoom_multiplier:.1f}x")
             self._minimap_zoom_label.show()
             self._minimap_reset_button.show()
@@ -470,7 +470,7 @@ class VideoViewer(QGraphicsView):
 
         size = min(
             max(
-                min(viewport_size.width(), viewport_size.height()) // 4,
+                min(viewport_size.width(), viewport_size.height()) // 3,
                 self._MINIMAP_MIN_SIZE,
             ),
             self._MINIMAP_MAX_SIZE,
@@ -496,9 +496,7 @@ class VideoViewer(QGraphicsView):
         left = viewport_size.width() - size - self._MINIMAP_MARGIN
         self._minimap_label.setGeometry(left, top, size, size)
         available_width = size
-        button_hint_width = int(round(
-            self._minimap_reset_button.sizeHint().width() * 2 / 3
-        ))
+        button_hint_width = self._minimap_reset_button.sizeHint().width()
         button_width = min(button_hint_width, available_width)
         spacing = (
             self._MINIMAP_BUTTON_SPACING if available_width > button_width else 0
