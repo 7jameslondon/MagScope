@@ -186,12 +186,9 @@ class ControlPanelBase(QWidget):
             return
         highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
         if enabled:
-            color_name = highlight_color.name()
-            self.groupbox.setStyleSheet(
-                f"QGroupBox {{ border: 2px solid {color_name}; border-radius: 6px; }}"
-            )
+            self.groupbox.set_highlight_border(highlight_color.name())
         else:
-            self.groupbox.setStyleSheet("")
+            self.groupbox.set_highlight_border(None)
 
 
 class MatplotlibCleanupMixin:

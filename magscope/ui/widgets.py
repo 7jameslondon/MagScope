@@ -184,13 +184,19 @@ class LabeledStepperLineEdit(QWidget):
 class CollapsibleGroupBox(QGroupBox):
     """A titled QGroupBox that can optionally collapse its content."""
 
+    _DEFAULT_BORDER_COLOR = "palette(mid)"
+    _DEFAULT_BORDER_WIDTH = 1
+
     def __init__(self, title="", collapsed=False, *, collapsible: bool = True):
         super().__init__()
 
         self.title = title
         self.collapsible = collapsible
         self.default_collapsed = collapsed if collapsible else False
+        self._border_color = self._DEFAULT_BORDER_COLOR
+        self._border_width = self._DEFAULT_BORDER_WIDTH
         self._settings_key = f"{self.title}_Group Box Collapsed"
+        self._apply_panel_style()
 
         # Retrieve last collapse state
         settings = QSettings('MagScope', 'MagScope')
@@ -255,6 +261,25 @@ class CollapsibleGroupBox(QGroupBox):
             self.content_area.setMaximumHeight(0)
         else:
             self.content_area.setMaximumHeight(16777215)  # QT default maximum
+
+    def set_highlight_border(self, color_name: str | None) -> None:
+        if color_name is None:
+            self._border_color = self._DEFAULT_BORDER_COLOR
+            self._border_width = self._DEFAULT_BORDER_WIDTH
+        else:
+            self._border_color = color_name
+            self._border_width = 2
+        self._apply_panel_style()
+
+    def _apply_panel_style(self) -> None:
+        self.setStyleSheet(
+            f"""
+            QGroupBox {{
+                border: {self._border_width}px solid {self._border_color};
+                border-radius: 0px;
+            }}
+            """
+        )
 
     def _animation_finished(self) -> None:
         if self.collapsed:

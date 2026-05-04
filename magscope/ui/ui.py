@@ -2946,7 +2946,7 @@ class AddColumnDropTarget(QFrame):
     def _set_active(self, active: bool) -> None:
         color = "palette(highlight)" if active else "palette(midlight)"
         self.setStyleSheet(
-            "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
+            "#add_column_drop_target { border: 2px dashed %s; border-radius: 0px; }" % color
         )
 
     def _wrapper_from_event(self, event) -> PanelWrapper | None:
