@@ -1216,6 +1216,8 @@ def test_current_zlut_dialog_renders_loaded_zlut_preview(qtbot, tmp_path):
     dialog.update_zlut(str(zlut_path), z_min=0.0, z_max=20.0, step_size=10.0, profile_length=2)
 
     assert not hasattr(dialog, 'unload_button')
+    assert dialog.filepath_label.text() == f'File: {zlut_path}'
+    assert dialog.layout().indexOf(dialog.filepath_label) > dialog.layout().indexOf(dialog.canvas)
     assert dialog.preview_status_label.text() == ''
     assert np.asarray(dialog._image.get_array()).shape == (2, 3)
     assert dialog.axes.get_title() == 'Current Z-LUT'

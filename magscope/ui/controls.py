@@ -3356,11 +3356,6 @@ class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
         self.resize(720, 560)
         layout = QVBoxLayout(self)
 
-        self.filepath_label = QLabel('No Z-LUT loaded')
-        self.filepath_label.setWordWrap(True)
-        self.filepath_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.filepath_label)
-
         self.preview_status_label = QLabel('No Z-LUT loaded')
         self.preview_status_label.setWordWrap(True)
         layout.addWidget(self.preview_status_label)
@@ -3387,6 +3382,11 @@ class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
         self.max_value = self._add_metadata_row(metadata_layout, 'Max (nm):')
         self.step_value = self._add_metadata_row(metadata_layout, 'Step (nm):')
         self.profile_length_value = self._add_metadata_row(metadata_layout, 'Profile Length:')
+
+        self.filepath_label = QLabel('File: No Z-LUT loaded')
+        self.filepath_label.setWordWrap(True)
+        self.filepath_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.filepath_label)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -3415,7 +3415,7 @@ class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
         step_size: float | None = None,
         profile_length: int | None = None,
     ) -> None:
-        self.filepath_label.setText(filepath or 'No Z-LUT loaded')
+        self.filepath_label.setText(f'File: {filepath}' if filepath else 'File: No Z-LUT loaded')
         self.min_value.setText(self._format_number(z_min, suffix=' nm'))
         self.max_value.setText(self._format_number(z_max, suffix=' nm'))
         self.step_value.setText(self._format_number(step_size, suffix=' nm'))
