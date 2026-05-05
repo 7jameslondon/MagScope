@@ -202,8 +202,8 @@ class UIManager(ManagerProcessBase):
     VIEWER_DOCK_STATE_SETTINGS_KEY = "viewer/dock_state"
     _ZLUT_TRACKING_ACQUISITION_MODES = {
         AcquisitionMode.TRACK,
-        AcquisitionMode.TRACK_AND_CROP_VIDEO,
-        AcquisitionMode.TRACK_AND_FULL_VIDEO,
+        AcquisitionMode.TRACK_AND_VIDEO_ROIS,
+        AcquisitionMode.TRACK_AND_VIDEO_FULL,
     }
 
     def __init__(self):
@@ -1673,7 +1673,7 @@ class UIManager(ManagerProcessBase):
         panel_definitions = [
             ("Status", "StatusPanel", ()),
             ("Camera Settings", "CameraPanel", ("camera",)),
-            ("Acquisition", "AcquisitionPanel", ("recording", "saving")),
+            ("Recording and Saving", "AcquisitionPanel", ("acquisition", "recording", "saving")),
             ("Histogram", "HistogramPanel", ()),
             ("Radial Profile Monitor", "ProfilePanel", ("profile",)),
             ("Plot Settings", "PlotSettingsPanel", ("plots",)),
@@ -2530,9 +2530,10 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_dir(self, value: str | None):
         super().set_acquisition_dir(value)
-        textedit = self.controls.acquisition_panel.acquisition_dir_textedit
+        panel = self.controls.acquisition_panel
+        textedit = panel.acquisition_dir_textedit
         textedit.blockSignals(True) # to prevent a loop
-        textedit.setText(value or '')
+        panel.set_acquisition_dir_text(value)
         textedit.blockSignals(False)
 
     @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
@@ -2689,7 +2690,7 @@ class UIManager(ManagerProcessBase):
         if self._acquisition_mode not in self._ZLUT_TRACKING_ACQUISITION_MODES:
             return (
                 'Z-LUT generation requires a tracking acquisition mode. '
-                'Switch to track, track & video (cropped), or track & video (full).'
+                'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
             )
 
         focus_motor_names = self._registered_focus_motor_names()

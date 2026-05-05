@@ -3,6 +3,7 @@ from importlib import resources
 
 def _load_logo_pixmap():
     from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QApplication
 
     logo_resource = resources.files("magscope").joinpath("assets/logo.png")
     if not logo_resource.is_file():
@@ -13,6 +14,10 @@ def _load_logo_pixmap():
 
     if pixmap.isNull():
         return None
+
+    app = QApplication.instance()
+    if app is not None and (screen := app.primaryScreen()):
+        pixmap.setDevicePixelRatio(screen.devicePixelRatio())
 
     return pixmap
 
@@ -54,20 +59,14 @@ def _build_startup_splash_window():
 
     content = QWidget()
     content_layout = QVBoxLayout(content)
-    content_layout.setContentsMargins(36, 36, 36, 20)
+    content_layout.setContentsMargins(15, 15, 15, 15)
     content_layout.setSpacing(0)
 
     logo = QLabel()
+    logo.setObjectName("startupSplashLogo")
     logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
     if pixmap := _load_logo_pixmap():
-        logo.setPixmap(
-            pixmap.scaled(
-                568,
-                288,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        logo.setPixmap(pixmap)
     content_layout.addWidget(logo)
     layout.addWidget(content, 1)
 
@@ -90,7 +89,7 @@ def _build_startup_splash_window():
 
     layout.addWidget(progress_container)
 
-    window.resize(640, 360)
+    window.resize(window.sizeHint())
     return window
 
 

@@ -33,7 +33,7 @@ exclude_patterns = []
 
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
-html_logo = "../../assets/logo.png"
+html_logo = "../../assets/logo.svg"
 
 html_theme_options = {
     "repository_url": "https://github.com/7jameslondon/MagScope",

@@ -7,7 +7,7 @@ my_script = Script()
 
 # Change the acquisition
 my_script.append(SleepCommand(2.0 * Units.sec))
-my_script.append(SetAcquisitionModeCommand(AcquisitionMode.CROP_VIDEO))
+my_script.append(SetAcquisitionModeCommand(AcquisitionMode.VIDEO_ROIS))
 my_script.append(SetAcquisitionOnCommand(False))
 my_script.append(SleepCommand(2.0 * Units.sec))
 my_script.append(SetAcquisitionOnCommand(True))

@@ -533,31 +533,37 @@ class MagScopeSettingsPanel(ControlPanelBase):
 
 
 class AcquisitionPanel(ControlPanelBase):
-    NO_DIRECTORY_SELECTED_TEXT = 'No save directory selected'
+    NO_DIRECTORY_SELECTED_TEXT = 'No save folder selected'
 
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Acquisition', collapsed_by_default=True)
-        acquisition_controls_row = QHBoxLayout()
-        self.layout().addLayout(acquisition_controls_row)
+        super().__init__(manager=manager, title='Recording and Saving', collapsed_by_default=True)
+        self.layout().setSpacing(4)
+        controls_grid = QGridLayout()
+        controls_grid.setContentsMargins(0, 0, 0, 0)
+        controls_grid.setHorizontalSpacing(6)
+        controls_grid.setVerticalSpacing(4)
+        self.layout().addLayout(controls_grid)
 
         self.acquisition_on_checkbox = LabeledCheckbox(
             label_text='Acquire',
             default=self.manager._acquisition_on,
             callback=self.callback_acquisition_on)
-        acquisition_controls_row.addWidget(self.acquisition_on_checkbox)
+        self.acquisition_on_checkbox.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+        controls_grid.addWidget(self.acquisition_on_checkbox, 0, 0)
 
-        mode_selection_layout = QHBoxLayout()
-        acquisition_controls_row.addLayout(mode_selection_layout)
-        mode_selection_label = QLabel('Mode:')
-        mode_selection_layout.addWidget(mode_selection_label)
+        mode_selection_label = QLabel('Data:')
+        controls_grid.addWidget(mode_selection_label, 0, 1)
         self.acquisition_mode_combobox = QComboBox()
-        mode_selection_layout.addWidget(self.acquisition_mode_combobox, stretch=1)
+        controls_grid.addWidget(self.acquisition_mode_combobox, 0, 2, 1, 2)
         acquisition_modes = [
             AcquisitionMode.TRACK,
-            AcquisitionMode.TRACK_AND_CROP_VIDEO,
-            AcquisitionMode.TRACK_AND_FULL_VIDEO,
-            AcquisitionMode.CROP_VIDEO,
-            AcquisitionMode.FULL_VIDEO,
+            AcquisitionMode.TRACK_AND_VIDEO_ROIS,
+            AcquisitionMode.TRACK_AND_VIDEO_FULL,
+            AcquisitionMode.VIDEO_ROIS,
+            AcquisitionMode.VIDEO_FULL,
         ]
         for mode in acquisition_modes:
             self.acquisition_mode_combobox.addItem(mode)
@@ -565,29 +571,44 @@ class AcquisitionPanel(ControlPanelBase):
         self.acquisition_mode_combobox.currentIndexChanged.connect(
             self.callback_acquisition_mode)  # type: ignore
 
-        save_controls_row = QHBoxLayout()
-        self.layout().addLayout(save_controls_row)
-
         self.acquisition_dir_on_checkbox = LabeledCheckbox(
-            label_text='Save',
+            label_text='Saving',
             default=self.manager._acquisition_dir_on,
             callback=self.callback_acquisition_dir_on)
-        save_controls_row.addWidget(self.acquisition_dir_on_checkbox)
+        self.acquisition_dir_on_checkbox.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+        controls_grid.addWidget(self.acquisition_dir_on_checkbox, 1, 0)
 
-        self.acquisition_dir_button = QPushButton('Select Directory to Save To')
-        self.acquisition_dir_button.setMinimumWidth(200)
+        directory_label = QLabel('Folder:')
+        controls_grid.addWidget(directory_label, 1, 1)
+
+        self.acquisition_dir_textedit = QLineEdit()
+        self.acquisition_dir_textedit.setReadOnly(True)
+        self.acquisition_dir_textedit.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.acquisition_dir_textedit.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls_grid.addWidget(self.acquisition_dir_textedit, 1, 2)
+
+        self.acquisition_dir_button = QPushButton('Browse...')
         self.acquisition_dir_button.clicked.connect(self.callback_acquisition_dir)  # type: ignore
-        save_controls_row.addWidget(self.acquisition_dir_button)
+        controls_grid.addWidget(self.acquisition_dir_button, 1, 3)
+        controls_grid.setColumnStretch(2, 1)
 
-        self.acquisition_dir_textedit = QTextEdit(self.NO_DIRECTORY_SELECTED_TEXT)
-        self.acquisition_dir_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.acquisition_dir_textedit.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.acquisition_dir_textedit.setFixedHeight(40)
-        self.acquisition_dir_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
-        self.acquisition_dir_textedit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.layout().addWidget(self.acquisition_dir_textedit)
+        self.set_acquisition_dir_text(self.manager._acquisition_dir)
 
         self.update_save_highlight(self.acquisition_dir_on_checkbox.checkbox.isChecked())
+
+    def set_acquisition_dir_text(self, path: str | None) -> None:
+        display_text = path or self.NO_DIRECTORY_SELECTED_TEXT
+        self.acquisition_dir_textedit.setText(display_text)
+        self.acquisition_dir_textedit.setToolTip(path or '')
+        self.acquisition_dir_textedit.setCursorPosition(0)
 
     def callback_acquisition_on(self):
         is_enabled: bool = self.acquisition_on_checkbox.checkbox.isChecked()
@@ -618,11 +639,11 @@ class AcquisitionPanel(ControlPanelBase):
             last_directory)
 
         if selected_directory:
-            self.acquisition_dir_textedit.setText(selected_directory)
+            self.set_acquisition_dir_text(selected_directory)
             settings.setValue('last acquisition_dir', QVariant(selected_directory))
         else:
             selected_directory = None
-            self.acquisition_dir_textedit.setText(self.NO_DIRECTORY_SELECTED_TEXT)
+            self.set_acquisition_dir_text(None)
 
         command = SetAcquisitionDirCommand(value=selected_directory)
         self.manager.send_ipc(command)
@@ -636,28 +657,28 @@ class AcquisitionPanel(ControlPanelBase):
                 'Acquire',
                 'AcquisitionPanel',
                 'acquisition_on_checkbox',
-                context='Acquisition',
+                context='Recording and Saving',
                 aliases=('acquisition on', 'start acquisition', 'record'),
             ),
             _panel_control_target(
-                'Acquisition Mode',
+                'Data Mode',
                 'AcquisitionPanel',
                 'acquisition_mode_combobox',
-                context='Acquisition',
-                aliases=('mode', 'recording mode', 'save mode'),
+                context='Recording and Saving',
+                aliases=('acquisition mode', 'mode', 'recording mode', 'save mode'),
             ),
             _panel_control_target(
-                'Save Acquisition',
+                'Save Recording',
                 'AcquisitionPanel',
                 'acquisition_dir_on_checkbox',
-                context='Acquisition',
+                context='Recording and Saving',
                 aliases=('save', 'save data', 'save acquisition'),
             ),
             _panel_control_target(
-                'Select Directory to Save To',
+                'Save Folder',
                 'AcquisitionPanel',
                 'acquisition_dir_button',
-                context='Acquisition',
+                context='Recording and Saving',
                 aliases=('save directory', 'output folder', 'acquisition folder'),
             ),
         ]

@@ -225,14 +225,14 @@ def test_prepare_session_freezes_bead_roi_snapshot():
 def test_prepare_session_requires_tracking_acquisition_mode():
     manager = make_manager()
     manager._cleanup_runtime_state = lambda destroy_dataset: None
-    manager._acquisition_mode = AcquisitionMode.FULL_VIDEO
+    manager._acquisition_mode = AcquisitionMode.VIDEO_FULL
 
     try:
         manager._prepare_session(0.0, 5.0, 10.0, 7)
     except RuntimeError as exc:
         assert str(exc) == (
             'Z-LUT generation requires a tracking acquisition mode. '
-            'Switch to track, track & video (cropped), or track & video (full).'
+            'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
         )
     else:
         raise AssertionError('Expected RuntimeError for non-tracking acquisition mode')
@@ -242,7 +242,7 @@ def test_start_generation_fails_fast_for_non_tracking_acquisition_mode():
     manager = make_manager()
     state_updates = []
     manager._send_state = lambda *args, **kwargs: state_updates.append((args, kwargs))
-    manager._acquisition_mode = AcquisitionMode.CROP_VIDEO
+    manager._acquisition_mode = AcquisitionMode.VIDEO_ROIS
 
     manager.start_generation(0.0, 5.0, 10.0, 7)
 
@@ -251,7 +251,7 @@ def test_start_generation_fails_fast_for_non_tracking_acquisition_mode():
     assert error_command.text == 'Could not start Z-LUT generation'
     assert error_command.details == (
         'Z-LUT generation requires a tracking acquisition mode. '
-        'Switch to track, track & video (cropped), or track & video (full).'
+        'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
     )
     assert state_updates == [
         (
@@ -259,7 +259,7 @@ def test_start_generation_fails_fast_for_non_tracking_acquisition_mode():
             {
                 'detail': (
                     'Z-LUT generation requires a tracking acquisition mode. '
-                    'Switch to track, track & video (cropped), or track & video (full).'
+                    'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
                 ),
                 'phase': 'idle',
             },

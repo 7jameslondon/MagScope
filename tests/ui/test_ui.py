@@ -215,12 +215,17 @@ class FakeComboBox:
 
 
 class FakeAcquisitionPanel:
+    NO_DIRECTORY_SELECTED_TEXT = 'No save folder selected'
+
     def __init__(self):
         self.acquisition_on_checkbox = SimpleNamespace(checkbox=FakeCheckable())
         self.acquisition_dir_textedit = FakeTextEdit()
         self.acquisition_dir_on_checkbox = SimpleNamespace(checkbox=FakeCheckable())
         self.acquisition_mode_combobox = FakeComboBox()
         self.save_highlight_calls: list[bool] = []
+
+    def set_acquisition_dir_text(self, path: str | None) -> None:
+        self.acquisition_dir_textedit.setText(path or self.NO_DIRECTORY_SELECTED_TEXT)
 
     def update_save_highlight(self, should_save: bool) -> None:
         self.save_highlight_calls.append(should_save)
@@ -1340,7 +1345,7 @@ def test_zlut_new_blocks_before_setup_for_non_tracking_mode(qtbot, monkeypatch):
     manager.video_buffer = object()
     manager._bead_rois = {1: (0, 10, 0, 10)}
     manager.hardware_types = {'focus': StubFocusMotor}
-    manager._acquisition_mode = AcquisitionMode.FULL_VIDEO
+    manager._acquisition_mode = AcquisitionMode.VIDEO_FULL
     warnings = []
     monkeypatch.setattr(manager, 'show_warning', lambda text, details=None: warnings.append((text, details)))
 
@@ -1350,7 +1355,7 @@ def test_zlut_new_blocks_before_setup_for_non_tracking_mode(qtbot, monkeypatch):
         (
             'Cannot generate Z-LUT',
             'Z-LUT generation requires a tracking acquisition mode. '
-            'Switch to track, track & video (cropped), or track & video (full).',
+            'Switch to Track, Track and Video (ROIs), or Track and Video (Full).',
         )
     ]
     clear_ui_manager_singleton()
@@ -2872,10 +2877,10 @@ def test_acquisition_setters_update_controls_and_state(ui_manager):
     assert panel.acquisition_dir_on_checkbox.checkbox.block_calls == [True, False]
     assert panel.acquisition_dir_on_checkbox.checkbox.checked is True
 
-    ui_manager.set_acquisition_mode(AcquisitionMode.FULL_VIDEO)
-    assert ui_manager._acquisition_mode == AcquisitionMode.FULL_VIDEO
+    ui_manager.set_acquisition_mode(AcquisitionMode.VIDEO_FULL)
+    assert ui_manager._acquisition_mode == AcquisitionMode.VIDEO_FULL
     assert panel.acquisition_mode_combobox.block_calls == [True, False]
-    assert panel.acquisition_mode_combobox.current_text == AcquisitionMode.FULL_VIDEO
+    assert panel.acquisition_mode_combobox.current_text == AcquisitionMode.VIDEO_FULL
 
 
 def test_settings_persistence_warning_is_shown_once(qtbot, ui_manager, monkeypatch):
