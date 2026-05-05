@@ -821,6 +821,8 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         # ===== First Row ===== #
         controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(8)
         self.layout().addLayout(controls_row)
 
         self.enable_checkbox = LabeledCheckbox(
@@ -834,31 +836,42 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
         self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
         self.only_beads_checkbox = LabeledCheckbox(
-            label_text='Only Bead ROIs', default=False)
+            label_text='Only ROIs', default=False)
         controls_row.addWidget(self.only_beads_checkbox)
+        controls_row.addStretch(1)
 
         # ===== Plot ===== #
         self.n_bins = 256
-        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setFixedHeight(100)
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
+        self.figure.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0.0, wspace=0.0)
+        self.canvas = ResponsivePlotCanvas(
+            self.figure,
+            minimum_height=102,
+            maximum_height=123,
+            height_for_width=0.32,
+        )
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.figure.tight_layout()
-        self.figure.subplots_adjust(bottom=0.2, top=1)
 
         _, _, self.bars = self.axes.hist(
             [],
             bins=self.n_bins,
             edgecolor=None,
-            facecolor='white'
+            facecolor=get_accent_color(),
         )
 
         self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Intensity')
         self.axes.set_ylabel('Count')
+        plot_font_size = self.font().pointSizeF()
+        if plot_font_size <= 0:
+            plot_font_size = float(self.font().pointSize() or 9)
+        plot_font_size = max(6.0, plot_font_size - 1.5)
+        self.axes.xaxis.label.set_size(plot_font_size)
+        self.axes.yaxis.label.set_size(plot_font_size)
+        self.axes.tick_params(axis='both', labelsize=plot_font_size)
         self.axes.set_yticks([])
         self.axes.set_xticks([])
-        self.axes.spines['left'].set_visible(False)
+        self.axes.spines['left'].set_visible(True)
         self.axes.spines['top'].set_visible(False)
         self.axes.spines['right'].set_visible(False)
         self.axes.set_xlim(0, 1)
@@ -907,6 +920,7 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         for count, rect in zip(counts, self.bars.patches):
             rect.set_height(count)
+            rect.set_facecolor(get_accent_color())
 
         max_count = counts.max() if len(counts) > 0 else 1
         self.axes.set_ylim(0, max_count * 1.1)
