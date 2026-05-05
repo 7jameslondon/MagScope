@@ -105,12 +105,12 @@ from magscope.ui.search import (
     SearchTarget,
     normalize_search_text,
 )
-from magscope.ui.theme import APP_BACKGROUND_COLOR
+from magscope.ui.theme import APP_BACKGROUND_COLOR, get_accent_color, set_accent_color
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
-from magscope.settings import MagScopeSettings
+from magscope.settings import GUI_ACCENT_COLOR_SETTING, MagScopeSettings
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("ui.ui")
@@ -324,13 +324,14 @@ class UIManager(ManagerProcessBase):
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
-        return """
-            QMainWindow::separator {
+        accent_color = get_accent_color()
+        return f"""
+            QMainWindow::separator {{
                 background: transparent;
                 width: 5px;
                 height: 5px;
-            }
-            QMainWindow::separator:vertical {
+            }}
+            QMainWindow::separator:vertical {{
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 1, y2: 0,
                     stop: 0 transparent,
@@ -340,8 +341,8 @@ class UIManager(ManagerProcessBase):
                     stop: 0.6 transparent,
                     stop: 1 transparent
                 );
-            }
-            QMainWindow::separator:horizontal {
+            }}
+            QMainWindow::separator:horizontal {{
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 0, y2: 1,
                     stop: 0 transparent,
@@ -351,10 +352,10 @@ class UIManager(ManagerProcessBase):
                     stop: 0.6 transparent,
                     stop: 1 transparent
                 );
-            }
-            QMainWindow[viewerDockSeparatorHoverReady="true"]::separator:hover {
-                background: #78c7ff;
-            }
+            }}
+            QMainWindow[viewerDockSeparatorHoverReady="true"]::separator:hover {{
+                background: {accent_color};
+            }}
         """
 
     @staticmethod
@@ -372,11 +373,15 @@ class UIManager(ManagerProcessBase):
         self._install_viewer_dock_separator_hover_delay(window)
         separator_style = self._viewer_dock_separator_stylesheet().strip()
         existing_style = window.styleSheet().strip()
+        previous_style = getattr(window, "_viewer_dock_separator_stylesheet", "")
+        if previous_style and previous_style in existing_style:
+            existing_style = existing_style.replace(previous_style, "").strip()
         if separator_style in existing_style:
             return
         window.setStyleSheet(
             f"{existing_style}\n\n{separator_style}" if existing_style else separator_style
         )
+        window._viewer_dock_separator_stylesheet = separator_style
 
     @staticmethod
     def _zlut_requested_sweep_edges(
@@ -510,6 +515,7 @@ class UIManager(ManagerProcessBase):
         palette = self.qt_app.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(APP_BACKGROUND_COLOR))
         self.qt_app.setPalette(palette)
+        self._apply_accent_color(self._current_accent_color())
 
         if self.settings is not None:
             self._last_applied_roi = self.settings["ROI"]
@@ -608,6 +614,7 @@ class UIManager(ManagerProcessBase):
 
         previous_roi = self._last_applied_roi
         super().set_settings(settings)
+        self._apply_accent_color(self._current_accent_color())
         self._show_settings_persistence_warning_if_needed()
 
         new_roi = self.settings["ROI"]
@@ -616,6 +623,28 @@ class UIManager(ManagerProcessBase):
 
         self._last_applied_roi = new_roi
         self._update_roi_labels(new_roi)
+
+    def _current_accent_color(self) -> str:
+        if self.settings is None:
+            return get_accent_color()
+        try:
+            return self.settings[GUI_ACCENT_COLOR_SETTING]
+        except (KeyError, TypeError):
+            return get_accent_color()
+
+    def _apply_accent_color(self, color: str) -> None:
+        accent_color = set_accent_color(color)
+        if getattr(self, 'qt_app', None) is not None:
+            palette = self.qt_app.palette()
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(accent_color))
+            palette.setColor(QPalette.ColorRole.Link, QColor(accent_color))
+            accent_role = getattr(QPalette.ColorRole, "Accent", None)
+            if accent_role is not None:
+                palette.setColor(accent_role, QColor(accent_color))
+            self.qt_app.setPalette(palette)
+        for window in getattr(self, 'windows', []):
+            if isinstance(window, QMainWindow):
+                self._apply_viewer_dock_separator_style(window)
 
     def _show_settings_persistence_warning_if_needed(self) -> None:
         if self._settings_persistence_warning_shown:
@@ -3079,7 +3108,7 @@ class AddColumnDropTarget(QFrame):
             self._set_active(False)
 
     def _set_active(self, active: bool) -> None:
-        color = "palette(highlight)" if active else "palette(midlight)"
+        color = get_accent_color() if active else "palette(midlight)"
         self.setStyleSheet(
             "#add_column_drop_target { border: 2px dashed %s; border-radius: 0px; }" % color
         )

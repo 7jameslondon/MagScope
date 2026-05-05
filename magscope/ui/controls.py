@@ -16,6 +16,7 @@ from matplotlib.figure import Figure
 import numpy as np
 from PyQt6.QtCore import QPointF, QSettings, QSize, QTimer, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import (
+    QColor,
     QDesktopServices,
     QFont,
     QIcon,
@@ -27,6 +28,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QBoxLayout,
+    QColorDialog,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -76,14 +78,18 @@ from magscope.ipc_commands import (
     UpdateSettingsCommand,
 )
 from magscope.scripting import ScriptStatus
-from magscope.settings import MagScopeSettings
+from magscope.settings import (
+    DEFAULT_GUI_ACCENT_COLOR,
+    GUI_ACCENT_COLOR_SETTING,
+    MagScopeSettings,
+)
 from magscope.ui.search import (
     PanelControlTarget,
     PreferencesSettingTarget,
     PreferencesWidgetTarget,
     SearchTarget,
 )
-from magscope.ui.theme import PANEL_BACKGROUND_COLOR
+from magscope.ui.theme import PANEL_BACKGROUND_COLOR, get_accent_color
 from magscope.ui.widgets import (
     CollapsibleGroupBox,
     FlashLabel,
@@ -157,12 +163,15 @@ class ControlPanelBase(QWidget):
         super().setLayout(outer_layout)
 
         content_layout = QVBoxLayout()
-        self.groupbox = CollapsibleGroupBox(
-            title=title,
-            collapsed=collapsed_by_default,
-            collapsible=collapsible,
-        )
-        outer_layout.addWidget(self.groupbox)
+        if title or collapsible:
+            self.groupbox = CollapsibleGroupBox(
+                title=title,
+                collapsed=collapsed_by_default,
+                collapsible=collapsible,
+            )
+            outer_layout.addWidget(self.groupbox)
+        else:
+            content_layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(content_layout)
 
     def set_title(self, text: str) -> None:
@@ -185,9 +194,8 @@ class ControlPanelBase(QWidget):
     def set_highlighted(self, enabled: bool) -> None:
         if self.groupbox is None:
             return
-        highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
         if enabled:
-            self.groupbox.set_highlight_border(highlight_color.name())
+            self.groupbox.set_highlight_border(get_accent_color())
         else:
             self.groupbox.set_highlight_border(None)
 
@@ -360,7 +368,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
     def __init__(self, manager: "UIManager", *, collapsible: bool = True):
         super().__init__(
             manager=manager,
-            title="MagScope Settings",
+            title="MagScope Settings" if collapsible else "",
             collapsed_by_default=True,
             collapsible=collapsible,
         )
@@ -395,7 +403,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self.apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         bottom_row.addWidget(self.apply_button)
 
-        for key in MagScopeSettings.defined_keys():
+        for key in MagScopeSettings.magscope_panel_keys():
             spec = MagScopeSettings.spec_for(key)
             widget = LabeledLineEditWithValue(
                 label_text=spec.label,
@@ -413,7 +421,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
     @staticmethod
     def search_targets() -> list[SearchTarget]:
         targets: list[SearchTarget] = []
-        for key in MagScopeSettings.defined_keys():
+        for key in MagScopeSettings.magscope_panel_keys():
             spec = MagScopeSettings.spec_for(key)
             if key == 'ROI':
                 targets.append(
@@ -462,6 +470,9 @@ class MagScopeSettingsPanel(ControlPanelBase):
     def _push_settings(self, settings: MagScopeSettings) -> None:
         self._current_settings = settings.clone()
         self.manager.settings = settings.clone()
+        apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+        if callable(apply_accent_color):
+            apply_accent_color(settings[GUI_ACCENT_COLOR_SETTING])
         command = UpdateSettingsCommand(settings=settings.clone())
         self.manager.send_ipc(command)
         self._refresh_fields()
@@ -481,7 +492,9 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self._push_settings(pending)
 
     def _on_defaults_clicked(self) -> None:
-        self._push_settings(MagScopeSettings())
+        defaults = MagScopeSettings()
+        defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
+        self._push_settings(defaults)
 
     def _on_load_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -1655,7 +1668,7 @@ class TrackingOptionsPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager', *, collapsible: bool = True):
         super().__init__(
             manager=manager,
-            title='Tracking Options',
+            title='Tracking Options' if collapsible else '',
             collapsed_by_default=True,
             collapsible=collapsible,
         )
@@ -2185,15 +2198,106 @@ class PreferencesDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        description = QLabel('Reset panels to their default layout and collapsed states.', tab)
+        description = QLabel(
+            'Customize GUI appearance and reset panels to their default layout and collapsed states.',
+            tab,
+        )
         description.setWordWrap(True)
         layout.addWidget(description)
+
+        accent_row = QHBoxLayout()
+        accent_label = QLabel('Accent color', tab)
+        accent_label.setFixedWidth(100)
+        accent_row.addWidget(accent_label)
+
+        self.accent_color_input = QLineEdit(
+            self.manager.settings[GUI_ACCENT_COLOR_SETTING],
+            tab,
+        )
+        self.accent_color_input.setObjectName('AccentColorInput')
+        self.accent_color_input.setToolTip(
+            f'Use #RRGGBB hex format, for example {DEFAULT_GUI_ACCENT_COLOR}.'
+        )
+        self.accent_color_input.editingFinished.connect(  # type: ignore[arg-type]
+            self._apply_accent_color_setting
+        )
+        accent_row.addWidget(self.accent_color_input)
+
+        self.accent_color_swatch = QPushButton('', tab)
+        self.accent_color_swatch.setObjectName('AccentColorSwatch')
+        self.accent_color_swatch.setFixedSize(42, 22)
+        self.accent_color_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.accent_color_swatch.setToolTip('Choose accent color')
+        self.accent_color_swatch.clicked.connect(  # type: ignore[arg-type]
+            self._choose_accent_color
+        )
+        accent_row.addWidget(self.accent_color_swatch)
+
+        self.choose_accent_color_button = QPushButton('Choose...', tab)
+        self.choose_accent_color_button.clicked.connect(  # type: ignore[arg-type]
+            self._choose_accent_color
+        )
+        accent_row.addWidget(self.choose_accent_color_button)
+
+        layout.addLayout(accent_row)
+        self._update_accent_color_swatch(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
 
         self.reset_gui_layout_button = QPushButton('Reset GUI Layout', tab)
         self.reset_gui_layout_button.clicked.connect(self._reset_gui_layout)  # type: ignore[arg-type]
         layout.addWidget(self.reset_gui_layout_button, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addStretch(1)
         return tab
+
+    def _choose_accent_color(self) -> None:
+        current_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        color = QColorDialog.getColor(
+            QColor(current_color),
+            self,
+            'Choose accent color',
+        )
+        if color.isValid():
+            self.accent_color_input.setText(color.name())
+            self._apply_accent_color_setting()
+
+    def _update_accent_color_swatch(self, color: str) -> None:
+        self.accent_color_swatch.setStyleSheet(
+            f"""
+            #AccentColorSwatch {{
+                background-color: {color};
+                border: 1px solid palette(mid);
+                border-radius: 3px;
+            }}
+            #AccentColorSwatch:hover {{
+                border: 1px solid palette(light);
+            }}
+            """
+        )
+
+    def _apply_accent_color_setting(self) -> None:
+        settings = self.manager.settings.clone()
+        try:
+            settings[GUI_ACCENT_COLOR_SETTING] = self.accent_color_input.text()
+        except ValueError as exc:
+            QMessageBox.critical(self, 'Accent Color', str(exc))
+            current_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+            self.accent_color_input.setText(current_color)
+            self._update_accent_color_swatch(current_color)
+            return
+
+        accent_color = settings[GUI_ACCENT_COLOR_SETTING]
+        if accent_color == self.manager.settings[GUI_ACCENT_COLOR_SETTING]:
+            self.accent_color_input.setText(accent_color)
+            self._update_accent_color_swatch(accent_color)
+            return
+
+        self.manager.settings = settings.clone()
+        self.settings_panel._current_settings = settings.clone()
+        apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+        if callable(apply_accent_color):
+            apply_accent_color(accent_color)
+        self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+        self.accent_color_input.setText(accent_color)
+        self._update_accent_color_swatch(accent_color)
 
     def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
         scroll = QScrollArea(self)

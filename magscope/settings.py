@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, MutableMapping
 
 from PyQt6.QtCore import QSettings
 import yaml
+
+
+DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
+GUI_ACCENT_COLOR_SETTING = 'gui accent color'
+_HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def normalize_hex_color(value: str) -> str:
+    value = value.strip()
+    if not _HEX_COLOR_RE.fullmatch(value):
+        raise ValueError("Accent color must use #RRGGBB hex format.")
+    return value.lower()
 
 
 @dataclass(frozen=True)
@@ -18,6 +31,7 @@ class SettingSpec:
     minimum: float | None = None
     maximum: float | None = None
     must_be_even: bool = False
+    validator: Callable[[Any], Any] | None = None
 
     def coerce(self, value: Any) -> Any:
         if isinstance(value, str):
@@ -57,6 +71,9 @@ class SettingSpec:
                     f"Setting '{self.key}' must be an even integer, not {coerced}."
                 )
 
+        if self.validator is not None:
+            coerced = self.validator(coerced)
+
         return coerced
 
     def default_value(self) -> Any:
@@ -77,6 +94,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
     _QSETTINGS_ORGANIZATION = "MagScope"
     _QSETTINGS_APPLICATION = "MagScope"
     _QSETTINGS_GROUP = "MagScopeSettings"
+    _MAG_SCOPE_PANEL_EXCLUDED_KEYS = {GUI_ACCENT_COLOR_SETTING}
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
         "ROI": SettingSpec(
@@ -164,6 +182,13 @@ class MagScopeSettings(MutableMapping[str, Any]):
             default=10,
             display_name="Z-lock default window",
             minimum=1,
+        ),
+        GUI_ACCENT_COLOR_SETTING: SettingSpec(
+            GUI_ACCENT_COLOR_SETTING,
+            value_type=str,
+            default=DEFAULT_GUI_ACCENT_COLOR,
+            display_name="Accent color",
+            validator=normalize_hex_color,
         ),
     }
 
@@ -318,3 +343,10 @@ class MagScopeSettings(MutableMapping[str, Any]):
     @classmethod
     def defined_keys(cls) -> Iterable[str]:
         return cls._SETTING_SPECS.keys()
+
+    @classmethod
+    def magscope_panel_keys(cls) -> Iterable[str]:
+        return (
+            key for key in cls._SETTING_SPECS.keys()
+            if key not in cls._MAG_SCOPE_PANEL_EXCLUDED_KEYS
+        )

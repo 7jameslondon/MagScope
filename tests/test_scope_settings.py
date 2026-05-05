@@ -7,7 +7,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from magscope.settings import MagScopeSettings, SettingSpec
+from magscope.settings import (
+    DEFAULT_GUI_ACCENT_COLOR,
+    GUI_ACCENT_COLOR_SETTING,
+    MagScopeSettings,
+    SettingSpec,
+)
 
 
 class FakeQSettings:
@@ -115,6 +120,21 @@ def test_settings_validation_and_coercion():
 
     with pytest.raises(KeyError):
         settings["unknown"] = 1
+
+
+def test_gui_accent_color_setting_validates_hex_color():
+    settings = MagScopeSettings()
+
+    assert settings[GUI_ACCENT_COLOR_SETTING] == DEFAULT_GUI_ACCENT_COLOR
+
+    settings[GUI_ACCENT_COLOR_SETTING] = ' #AABBCC '
+    assert settings[GUI_ACCENT_COLOR_SETTING] == '#aabbcc'
+
+    with pytest.raises(ValueError):
+        settings[GUI_ACCENT_COLOR_SETTING] = 'blue'
+
+    with pytest.raises(ValueError):
+        settings[GUI_ACCENT_COLOR_SETTING] = '#abcd'
 
 
 def test_roi_must_be_even():

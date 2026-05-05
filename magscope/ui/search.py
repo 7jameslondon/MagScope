@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QWidget
+
+from magscope.ui.theme import get_accent_color
 
 
 def normalize_search_text(text: str) -> str:
@@ -167,9 +168,8 @@ class SearchHighlighter:
     def highlight(self, widget: QWidget, *, duration_ms: int = 2500) -> None:
         self.clear()
         self._original_styles[widget] = widget.styleSheet()
-        highlight_color = widget.palette().color(QPalette.ColorRole.Highlight).name()
         widget.setStyleSheet(
-            f"border: 2px solid {highlight_color}; border-radius: 4px; padding: 2px;"
+            f"border: 2px solid {get_accent_color()}; border-radius: 4px; padding: 2px;"
         )
         QTimer.singleShot(duration_ms, lambda w=widget: self.clear_widget(w))
 
