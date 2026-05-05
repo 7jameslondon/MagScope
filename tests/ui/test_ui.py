@@ -1836,8 +1836,8 @@ def test_live_camera_dock_includes_bead_toolbar(qtbot):
     assert manager.bead_toolbar is not None
     assert isinstance(manager.bead_instructions_button, QPushButton)
     assert manager.bead_instructions_button.text() == 'Add/Remove Beads'
-    assert manager.bead_roi_size_label.text() == 'ROI (px): 32 px'
-    assert manager.bead_total_count_label.text() == 'Total # of Beads: 2'
+    assert manager.bead_roi_size_label.text() == 'ROI: 32 px'
+    assert manager.bead_total_count_label.text() == 'Total Beads: 2'
     assert manager.bead_next_id_label.text() == 'Next Bead ID: 6'
     assert manager.bead_reassign_ids_button.text() == 'Reassign IDs'
     assert manager.bead_remove_all_button.text() == 'Remove All'
