@@ -1575,32 +1575,39 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Radial Profile Monitor', collapsed_by_default=True)
 
-        # Enable
+        # Controls
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(8)
+        self.layout().addLayout(controls_row)
+
         self.enable = LabeledCheckbox(
             label_text='Enabled',
             callback=self.enabled_callback,
         )
-        self.layout().addWidget(self.enable)
+        controls_row.addWidget(self.enable)
         self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
-        # Selected bead
-        selected_bead_row = QHBoxLayout()
-        self.layout().addLayout(selected_bead_row)
-        selected_bead_row.addWidget(QLabel('Selected bead:'))
+        controls_row.addWidget(QLabel('Bead:'))
         self.selected_bead_label = QLabel('')
-        selected_bead_row.addWidget(self.selected_bead_label)
+        self.selected_bead_label.setMinimumWidth(24)
+        controls_row.addWidget(self.selected_bead_label)
 
-        profile_length_row = QHBoxLayout()
-        self.layout().addLayout(profile_length_row)
-        profile_length_row.addWidget(QLabel('Profile length:'))
+        controls_row.addWidget(QLabel('Length:'))
         self.profile_length_label = QLabel('')
-        profile_length_row.addWidget(self.profile_length_label)
+        self.profile_length_label.setMinimumWidth(36)
+        controls_row.addWidget(self.profile_length_label)
+        controls_row.addStretch(1)
 
         # Figure
-        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setFixedHeight(100)
-        self.figure.tight_layout()
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
+        self.figure.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0.0, wspace=0.0)
+        self.canvas = ResponsivePlotCanvas(
+            self.figure,
+            minimum_height=102,
+            maximum_height=123,
+            height_for_width=0.32,
+        )
         self.layout().addWidget(self.canvas)
 
         # Plot
@@ -1608,11 +1615,18 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
         self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Radius (pixels)')
         self.axes.set_ylabel('Intensity')
+        plot_font_size = self.font().pointSizeF()
+        if plot_font_size <= 0:
+            plot_font_size = float(self.font().pointSize() or 9)
+        plot_font_size = max(6.0, plot_font_size - 1.5)
+        self.axes.xaxis.label.set_size(plot_font_size)
+        self.axes.yaxis.label.set_size(plot_font_size)
+        self.axes.tick_params(axis='both', labelsize=plot_font_size)
         self.axes.spines['top'].set_visible(False)
         self.axes.spines['right'].set_visible(False)
-        self.axes.spines['left'].set_visible(False)
+        self.axes.spines['left'].set_visible(True)
         self.axes.set_yticks([])
-        self.line, = self.axes.plot([], [], 'w')
+        self.line, = self.axes.plot([], [], color=get_accent_color(), linewidth=1.0)
         self._init_matplotlib_cleanup()
 
     def enabled_callback(self, enabled: bool) -> None:
@@ -1660,6 +1674,7 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         self.line.set_xdata(radial_distances)
         self.line.set_ydata(cleaned_profile)
+        self.line.set_color(get_accent_color())
 
         if len(cleaned_profile) > 0:
             self.axes.set_xlim(0, max(radial_distances))
