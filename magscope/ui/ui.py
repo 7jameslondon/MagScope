@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QTabBar,
@@ -222,6 +223,13 @@ class UIManager(ManagerProcessBase):
         self.controls_to_add = []
         self.camera_dock: QDockWidget | None = None
         self.camera_dock_header: QWidget | None = None
+        self.bead_toolbar: QWidget | None = None
+        self.bead_instructions_button: QPushButton | None = None
+        self.bead_roi_size_label: QLabel | None = None
+        self.bead_total_count_label: QLabel | None = None
+        self.bead_next_id_label: QLabel | None = None
+        self.bead_reassign_ids_button: QPushButton | None = None
+        self.bead_remove_all_button: QPushButton | None = None
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
@@ -906,6 +914,7 @@ class UIManager(ManagerProcessBase):
                 self._normalize_bead_id(self.reference_bead),
             )
             self.video_viewer.viewport().update()
+        self._update_bead_count_label()
         self._update_auto_bead_selection_action_state()
 
     def _update_auto_bead_selection_action_state(self) -> None:
@@ -1221,9 +1230,11 @@ class UIManager(ManagerProcessBase):
 
         self.camera_dock = QDockWidget("Live Camera", window)
         self.camera_dock.setObjectName("LiveCameraDock")
+        self.bead_toolbar = self._create_live_bead_toolbar()
         camera_container, self.camera_dock_header = self._create_viewer_dock_content(
             self.camera_dock,
             self.video_viewer,
+            self.bead_toolbar,
         )
         self.camera_dock.setWidget(camera_container)
         self.camera_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
@@ -1260,6 +1271,7 @@ class UIManager(ManagerProcessBase):
         self,
         dock: QDockWidget,
         viewer: QWidget,
+        toolbar: QWidget | None = None,
     ) -> tuple[QWidget, QWidget]:
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1286,8 +1298,72 @@ class UIManager(ManagerProcessBase):
         header.hide()
 
         container_layout.addWidget(header, 0)
+        if toolbar is not None:
+            container_layout.addWidget(toolbar, 0)
         container_layout.addWidget(viewer, 1)
         return container, header
+
+    def _create_live_bead_toolbar(self) -> QWidget:
+        toolbar = QWidget()
+        toolbar.setObjectName("LiveBeadToolbar")
+        toolbar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(6, 3, 6, 3)
+        toolbar_layout.setSpacing(8)
+
+        self.bead_instructions_button = QPushButton("Add/Remove Beads", toolbar)
+        self.bead_instructions_button.setObjectName("LiveBeadInstructionsButton")
+        self.bead_instructions_button.setToolTip("Show bead selection instructions")
+        self.bead_instructions_button.clicked.connect(
+            lambda _checked=False: self.show_bead_selection_instructions()
+        )
+        toolbar_layout.addWidget(self.bead_instructions_button)
+
+        self.bead_roi_size_label = QLabel(toolbar)
+        self.bead_roi_size_label.setObjectName("LiveBeadRoiSizeLabel")
+        toolbar_layout.addWidget(self.bead_roi_size_label)
+
+        self.bead_total_count_label = QLabel(toolbar)
+        self.bead_total_count_label.setObjectName("LiveBeadTotalCountLabel")
+        toolbar_layout.addWidget(self.bead_total_count_label)
+
+        self.bead_next_id_label = QLabel(toolbar)
+        self.bead_next_id_label.setObjectName("LiveBeadNextIdLabel")
+        toolbar_layout.addWidget(self.bead_next_id_label)
+
+        toolbar_layout.addStretch(1)
+
+        self.bead_reassign_ids_button = QPushButton("Reassign IDs", toolbar)
+        self.bead_reassign_ids_button.setObjectName("LiveBeadReassignIdsButton")
+        self.bead_reassign_ids_button.clicked.connect(
+            lambda _checked=False: self.reset_bead_ids()
+        )
+        toolbar_layout.addWidget(self.bead_reassign_ids_button)
+
+        self.bead_remove_all_button = QPushButton("Remove All", toolbar)
+        self.bead_remove_all_button.setObjectName("LiveBeadRemoveAllButton")
+        self.bead_remove_all_button.clicked.connect(
+            lambda _checked=False: self.clear_beads()
+        )
+        toolbar_layout.addWidget(self.bead_remove_all_button)
+
+        self._update_live_bead_toolbar_labels()
+        return toolbar
+
+    def show_bead_selection_instructions(self) -> None:
+        parent = self.camera_dock or (self.windows[0] if self.windows else None)
+        msg = QMessageBox(parent)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Add/Remove Beads")
+        msg.setText("Use the live camera view to manage bead ROIs.")
+        msg.setInformativeText(
+            "Add a bead: left-click an empty location in the live image.\n"
+            "Activate/select a bead: left-click its ROI.\n"
+            "Move a bead: drag the active ROI.\n"
+            "Remove a bead: right-click its ROI.\n\n"
+            "For automatic bead detection, use Tools > Auto Bead Selection."
+        )
+        msg.exec()
 
     def _dock_viewer_pane(self, dock: QDockWidget) -> None:
         dock.setFloating(False)
@@ -1567,7 +1643,6 @@ class UIManager(ManagerProcessBase):
     def _generic_panel_search_targets(self) -> list[SearchTarget]:
         panel_definitions = [
             ("Status", "StatusPanel", ()),
-            ("Bead Selection", "BeadSelectionPanel", ("beads", "bead controls")),
             ("Camera Settings", "CameraPanel", ("camera",)),
             ("Acquisition", "AcquisitionPanel", ("recording", "saving")),
             ("Histogram", "HistogramPanel", ()),
@@ -1594,23 +1669,28 @@ class UIManager(ManagerProcessBase):
         ]
 
     def _core_control_search_targets(self) -> list[SearchTarget]:
-        panels = getattr(self.controls, "panels", {}) if self.controls is not None else {}
-        if panels and "BeadSelectionPanel" not in panels:
-            return []
         return [
+            PanelControlTarget(
+                label="Add/Remove Beads",
+                aliases=("bead instructions", "bead controls", "manage beads"),
+                context="Live Camera",
+                description="Shows live camera bead selection instructions.",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_instructions_button",),
+            ),
             PanelControlTarget(
                 label="Remove All Beads",
                 aliases=("clear beads", "delete beads"),
-                context="Bead Selection",
-                panel_id="BeadSelectionPanel",
-                widget_path=("clear_button",),
+                context="Live Camera",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_remove_all_button",),
             ),
             PanelControlTarget(
                 label="Reassign IDs",
                 aliases=("reset bead ids", "renumber beads"),
-                context="Bead Selection",
-                panel_id="BeadSelectionPanel",
-                widget_path=("reset_id_button",),
+                context="Live Camera",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_reassign_ids_button",),
             ),
         ]
 
@@ -1682,6 +1762,17 @@ class UIManager(ManagerProcessBase):
         if not isinstance(target, PanelControlTarget):
             return
 
+        if target.panel_id == "LiveBeadToolbar":
+            if self.camera_dock is not None:
+                self.camera_dock.show()
+                self.camera_dock.raise_()
+            widget = self._search_target_widget(target)
+            if widget is not None:
+                self._highlight_search_widget(widget)
+            else:
+                logger.warning("Search target widget could not be found: %s", target.display_label)
+            return
+
         if self.controls is None:
             return
 
@@ -1698,6 +1789,17 @@ class UIManager(ManagerProcessBase):
             logger.warning("Search target widget could not be found: %s", target.display_label)
 
     def _search_target_widget(self, target: PanelControlTarget) -> QWidget | None:
+        if target.panel_id == "LiveBeadToolbar":
+            if not target.widget_path:
+                return self.bead_toolbar
+
+            widget = self
+            for attr_name in target.widget_path:
+                widget = getattr(widget, attr_name, None)
+                if widget is None:
+                    return self.bead_toolbar
+            return widget if isinstance(widget, QWidget) else None
+
         if self.controls is None:
             return None
 
@@ -2202,6 +2304,7 @@ class UIManager(ManagerProcessBase):
         if not self._bead_rois:
             self._bead_next_id = 0
             self._update_next_bead_id_label()
+            self._update_bead_count_label()
             return
 
         old_active_bead = self._active_bead_id
@@ -2229,23 +2332,39 @@ class UIManager(ManagerProcessBase):
         self._refresh_bead_overlay()
 
     def _update_roi_labels(self, roi: int) -> None:
+        self._update_bead_roi_size_label(roi)
         if self.controls is None:
             return
 
-        self.controls.bead_selection_panel.roi_size_label.setText(
-            f"{roi} x {roi} pixels"
-        )
         zlut_generation_panel = getattr(self.controls, 'z_lut_generation_panel', None)
         if zlut_generation_panel is not None:
             zlut_generation_panel.roi_size_label.setText(f"{roi} x {roi} pixels")
 
     def _update_next_bead_id_label(self) -> None:
-        if self.controls is None:
+        if self.bead_next_id_label is not None:
+            self.bead_next_id_label.setText(f"Next Bead ID: {self._bead_next_id}")
+
+    def _update_bead_roi_size_label(self, roi: int | None = None) -> None:
+        if self.bead_roi_size_label is None:
             return
 
-        self.controls.bead_selection_panel.update_next_bead_id_label(
-            self._bead_next_id
-        )
+        if roi is None:
+            try:
+                roi = self.settings["ROI"]
+            except (KeyError, TypeError, AttributeError):
+                roi = None
+
+        roi_text = "--" if roi is None else str(roi)
+        self.bead_roi_size_label.setText(f"ROI: {roi_text} px")
+
+    def _update_bead_count_label(self) -> None:
+        if self.bead_total_count_label is not None:
+            self.bead_total_count_label.setText(f"Total Beads: {len(self._bead_rois)}")
+
+    def _update_live_bead_toolbar_labels(self) -> None:
+        self._update_bead_roi_size_label()
+        self._update_bead_count_label()
+        self._update_next_bead_id_label()
 
     def _clear_pending_bead_add(self) -> None:
         self._pending_bead_add_id = None
@@ -3059,7 +3178,6 @@ class LegacyDraggableControls(QWidget):
 
         # Instantiate standard panels
         self.acquisition_panel = AcquisitionPanel(self.manager)
-        self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
@@ -3074,7 +3192,6 @@ class LegacyDraggableControls(QWidget):
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
             ("StatusPanel", self.status_panel, "left", True),
-            ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
             ("HistogramPanel", self.histogram_panel, "left", True),
@@ -3505,7 +3622,6 @@ class Controls(QWidget):
 
     def _create_standard_panels(self) -> None:
         self.acquisition_panel = AcquisitionPanel(self.manager)
-        self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
@@ -3522,7 +3638,6 @@ class Controls(QWidget):
             ("StatusPanel", self.status_panel, "Run"),
             ("AcquisitionPanel", self.acquisition_panel, "Run"),
             ("CameraPanel", self.camera_panel, "Run"),
-            ("BeadSelectionPanel", self.bead_selection_panel, "Run"),
             ("ScriptPanel", self.script_panel, "Run"),
             ("PlotSettingsPanel", self.plot_settings_panel, "Analysis"),
             ("HistogramPanel", self.histogram_panel, "Analysis"),
@@ -3551,7 +3666,7 @@ class Controls(QWidget):
             content = QWidget(self)
             _set_widget_background(content, APP_BACKGROUND_COLOR)
             content_layout = QVBoxLayout(content)
-            content_layout.setContentsMargins(6, 6, 6, 6)
+            content_layout.setContentsMargins(0, 6, 0, 6)
             content_layout.setSpacing(6)
             content_layout.addStretch(1)
 

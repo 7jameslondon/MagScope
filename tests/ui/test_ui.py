@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QWidget,
@@ -233,15 +234,6 @@ class FakeButton:
         self.enabled = value
 
 
-class FakeBeadSelectionPanel:
-    def __init__(self):
-        self.roi_size_label = FakeLabel()
-        self.next_bead_id_label = None
-
-    def update_next_bead_id_label(self, next_bead_id: int) -> None:
-        self.next_bead_id_label = next_bead_id
-
-
 class FakeZLutGenerationPanel:
     def __init__(self):
         self.roi_size_label = FakeLabel()
@@ -402,7 +394,6 @@ class FakeControls:
     def __init__(self):
         self.status_panel = FakeStatusPanel()
         self.acquisition_panel = FakeAcquisitionPanel()
-        self.bead_selection_panel = FakeBeadSelectionPanel()
         self.plot_settings_panel = SimpleNamespace(
             selected_bead=SimpleNamespace(lineedit=FakeLineEdit('0')),
             reference_bead=SimpleNamespace(lineedit=FakeLineEdit('')),
@@ -517,6 +508,9 @@ def ui_manager():
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.controls = FakeControls()
+    manager.bead_roi_size_label = FakeLabel()
+    manager.bead_total_count_label = FakeLabel()
+    manager.bead_next_id_label = FakeLabel()
     manager.settings = {
         'video processors n': 4,
         'magnification': 2,
@@ -1760,12 +1754,12 @@ def test_controls_reveal_panel_expands_and_scrolls(qtbot):
             scrolled_widgets.append(widget)
 
     controls = SimpleNamespace(
-        panels={'BeadSelectionPanel': panel},
+        panels={'DemoPanel': panel},
         layout_manager=FakeLayoutManager(),
         _column_scrolls={'left': FakeScroll()},
     )
 
-    Controls.reveal_panel(controls, 'BeadSelectionPanel')
+    Controls.reveal_panel(controls, 'DemoPanel')
 
     assert panel.groupbox.collapsed is False
     assert scrolled_widgets == [wrapper]
@@ -1811,6 +1805,75 @@ def test_viewer_layout_save_restore_and_reset(qtbot):
     assert not manager.plots_dock.isFloating()
     assert not manager.camera_dock_header.isVisible()
     assert not manager.plots_dock_header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_live_camera_dock_includes_bead_toolbar(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings({'ROI': 32}, persistence_available=False)
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    reset_calls = []
+    clear_calls = []
+    instruction_calls = []
+    manager.reset_bead_ids = lambda: reset_calls.append(True)
+    manager.clear_beads = lambda: clear_calls.append(True)
+    manager.show_bead_selection_instructions = lambda: instruction_calls.append(True)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_viewer_docks(window)
+    manager._bead_rois = {2: (10, 42, 10, 42), 5: (50, 82, 50, 82)}
+    manager._bead_next_id = 6
+    manager._update_live_bead_toolbar_labels()
+
+    assert manager.bead_toolbar is not None
+    assert isinstance(manager.bead_instructions_button, QPushButton)
+    assert manager.bead_instructions_button.text() == 'Add/Remove Beads'
+    assert manager.bead_roi_size_label.text() == 'ROI (px): 32 px'
+    assert manager.bead_total_count_label.text() == 'Total # of Beads: 2'
+    assert manager.bead_next_id_label.text() == 'Next Bead ID: 6'
+    assert manager.bead_reassign_ids_button.text() == 'Reassign IDs'
+    assert manager.bead_remove_all_button.text() == 'Remove All'
+    assert manager.camera_dock.widget().layout().indexOf(manager.bead_toolbar) != -1
+
+    qtbot.mouseClick(manager.bead_instructions_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(manager.bead_reassign_ids_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(manager.bead_remove_all_button, Qt.MouseButton.LeftButton)
+
+    assert instruction_calls == [True]
+    assert reset_calls == [True]
+    assert clear_calls == [True]
+
+    clear_ui_manager_singleton()
+
+
+def test_search_guides_to_live_bead_toolbar(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings({'ROI': 32}, persistence_available=False)
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._create_viewer_docks(window)
+    manager._create_search_menu_widget(window)
+    highlighted_widgets = []
+    manager._highlight_search_widget = lambda widget: highlighted_widgets.append(widget)
+
+    manager._guide_to_search_result('renumber beads')
+
+    assert manager._search_box.text() == 'Reassign IDs'
+    assert highlighted_widgets == [manager.bead_reassign_ids_button]
 
     clear_ui_manager_singleton()
 
@@ -2419,7 +2482,6 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
 
     for name in [
         'AcquisitionPanel',
-        'BeadSelectionPanel',
         'CameraPanel',
         'HistogramPanel',
         'PlotSettingsPanel',
@@ -2442,11 +2504,13 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
     controls = Controls(manager)
     qtbot.addWidget(controls)
     assert 'AllanDeviationPanel' in controls.panels
+    assert 'BeadSelectionPanel' not in controls.panels
 
     monkeypatch.setattr(ui_module, 'has_tweezepy_support', lambda: False)
     controls_without_tweezepy = Controls(manager)
     qtbot.addWidget(controls_without_tweezepy)
     assert 'AllanDeviationPanel' not in controls_without_tweezepy.panels
+    assert 'BeadSelectionPanel' not in controls_without_tweezepy.panels
 
 
 def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):
@@ -2654,7 +2718,7 @@ def test_reset_bead_ids_updates_graphic_ids(qtbot, ui_manager):
 
     assert list(sorted(ui_manager._bead_rois)) == [0, 1]
     assert ui_manager._bead_next_id == 2
-    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 2
+    assert ui_manager.bead_next_id_label.text == 'Next Bead ID: 2'
     assert ui_manager.selected_bead == 1
     assert ui_manager._active_bead_id == 1
     assert ui_manager.video_viewer.viewport_updates >= 3
@@ -2925,7 +2989,7 @@ def test_add_random_beads_rolls_back_next_id_on_buffer_failure(ui_manager):
 
     assert ui_manager._bead_rois == {}
     assert ui_manager._bead_next_id == 0
-    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0
+    assert ui_manager.bead_next_id_label.text == 'Next Bead ID: 0'
 
 
 def test_add_random_beads_command_dataclass_defaults():
@@ -3162,7 +3226,6 @@ def test_refresh_bead_rois_keeps_pending_for_unrelated_update(ui_manager):
 def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeypatch):
     ui_manager.settings["ROI"] = 20
     ui_manager.video_viewer = FakeVideoViewer()
-    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
     ui_manager._update_next_bead_id_label = lambda: None
     monkeypatch.setattr(ui_manager, "_add_bead_roi", lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError("boom")))
 
@@ -3178,13 +3241,12 @@ def test_add_bead_clears_pending_state_on_roi_update_failure(ui_manager, monkeyp
 def test_add_bead_rolls_back_next_id_label_on_roi_update_failure(ui_manager, monkeypatch):
     ui_manager.settings['ROI'] = 20
     ui_manager.video_viewer = FakeVideoViewer()
-    ui_manager.video_viewer.scene = QGraphicsScene(0, 0, 512, 512)
     monkeypatch.setattr(ui_manager, '_add_bead_roi', lambda bead_id, roi: (_ for _ in ()).throw(RuntimeError('boom')))
 
     with pytest.raises(RuntimeError, match='boom'):
         ui_manager.add_bead(SimpleNamespace(x=lambda: 10, y=lambda: 20))
 
-    assert ui_manager.controls.bead_selection_panel.next_bead_id_label == 0
+    assert ui_manager.bead_next_id_label.text == 'Next Bead ID: 0'
 
 
 def test_start_zlut_generation_sends_command(ui_manager):
