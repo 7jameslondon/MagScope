@@ -83,6 +83,7 @@ from magscope.ui.search import (
     PreferencesWidgetTarget,
     SearchTarget,
 )
+from magscope.ui.theme import PANEL_BACKGROUND_COLOR
 from magscope.ui.widgets import (
     CollapsibleGroupBox,
     FlashLabel,
@@ -804,7 +805,7 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         # ===== Plot ===== #
         self.n_bins = 256
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setFixedHeight(100)
         self.axes = self.figure.subplots(nrows=1, ncols=1)
@@ -818,7 +819,7 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
             facecolor='white'
         )
 
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Intensity')
         self.axes.set_ylabel('Count')
         self.axes.set_yticks([])
@@ -1302,7 +1303,7 @@ class AllanDeviationPanel(MatplotlibCleanupMixin, ControlPanelBase):
         self.taus_mode.setCurrentText(self._load_setting('taus_mode', 'Octave'))
         taus_row.addWidget(self.taus_mode)
 
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e', constrained_layout=True)
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
         self.canvas = ResponsivePlotCanvas(
             self.figure,
             minimum_height=210,
@@ -1337,7 +1338,7 @@ class AllanDeviationPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
     def _configure_axes(self) -> None:
         self.axes.clear()
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Tau (s)')
         self.axes.set_ylabel('Allan deviation (nm)')
         self.axes.set_xscale('log')
@@ -1562,7 +1563,7 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
         profile_length_row.addWidget(self.profile_length_label)
 
         # Figure
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setFixedHeight(100)
         self.figure.tight_layout()
@@ -1570,7 +1571,7 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         # Plot
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Radius (pixels)')
         self.axes.set_ylabel('Intensity')
         self.axes.spines['top'].set_visible(False)
@@ -3007,13 +3008,13 @@ class ZLUTSweepPreviewWidget(MatplotlibCleanupMixin, QWidget):
 
         self._preview_cmap = matplotlib.colormaps['gray'].copy()
 
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(280)
         layout.addWidget(self.canvas, 1)
 
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Capture Index')
         self.axes.set_ylabel('Profile Radius (px)')
         self._image = self.axes.imshow(
@@ -3357,12 +3358,12 @@ class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
         self.preview_status_label.setWordWrap(True)
         layout.addWidget(self.preview_status_label)
 
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(280)
         layout.addWidget(self.canvas, 1)
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self._image = self.axes.imshow(
             np.zeros((1, 1), dtype=np.float64),
             cmap=matplotlib.colormaps['gray'].copy(),

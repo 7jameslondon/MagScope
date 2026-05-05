@@ -1,0 +1,5 @@
+"""Shared UI color constants."""
+
+APP_BACKGROUND_COLOR = '#121212'
+PANEL_BACKGROUND_COLOR = '#1d1d1d'
+PANEL_BACKGROUND_RGB = (29, 29, 29)

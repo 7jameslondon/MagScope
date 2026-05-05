@@ -17,6 +17,7 @@ from PyQt6.QtCore import QMutex, QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
 from magscope.datatypes import MatrixBuffer
+from magscope.ui.theme import PANEL_BACKGROUND_COLOR
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Lock as LockType
@@ -84,7 +85,11 @@ class PlotWorker(QObject):
         self.mutex = QMutex()
 
         # Create figure and axes
-        self.figure = Figure(figsize=(self.fig_width, self.fig_height), dpi=self.dpi, facecolor='#1e1e1e')
+        self.figure = Figure(
+            figsize=(self.fig_width, self.fig_height),
+            dpi=self.dpi,
+            facecolor=PANEL_BACKGROUND_COLOR,
+        )
         self.canvas = FigureCanvas(self.figure)
         self.axes = self.figure.subplots(nrows=self.n_plots, ncols=1, sharex=True, sharey=False)
 
@@ -92,7 +97,7 @@ class PlotWorker(QObject):
         self.figure.tight_layout()
         self.figure.subplots_adjust(hspace=0.08)
         for ax in self.axes:
-            ax.set_facecolor('#1e1e1e')  # Set background color
+            ax.set_facecolor(PANEL_BACKGROUND_COLOR)  # Set background color
             ax.margins(x=0)  # Set margins
         self.axes[-1].set_xlabel('Time (h:m:s)')
         self.axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))

@@ -6,6 +6,7 @@ from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter
 from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
 
+from magscope.ui.theme import PANEL_BACKGROUND_RGB
 from magscope.ui.widgets import BeadGraphic
 
 
@@ -39,7 +40,7 @@ class VideoViewer(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
+        self.setBackgroundBrush(QBrush(QColor(*PANEL_BACKGROUND_RGB)))
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 

@@ -25,13 +25,15 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QAction,
+    QColor,
     QDesktopServices,
+    QDrag,
     QFont,
     QFontDatabase,
-    QDrag,
     QGuiApplication,
     QImage,
     QKeySequence,
+    QPalette,
     QPixmap,
     QShortcut,
 )
@@ -102,6 +104,7 @@ from magscope.ui.search import (
     SearchTarget,
     normalize_search_text,
 )
+from magscope.ui.theme import APP_BACKGROUND_COLOR
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
@@ -114,6 +117,15 @@ logger = get_logger("ui.ui")
 
 VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS = 500
 VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY = "viewerDockSeparatorHoverReady"
+
+
+def _set_widget_background(widget: QWidget, color_name: str) -> None:
+    palette = widget.palette()
+    color = QColor(color_name)
+    palette.setColor(QPalette.ColorRole.Window, color)
+    palette.setColor(QPalette.ColorRole.Base, color)
+    widget.setPalette(palette)
+    widget.setAutoFillBackground(True)
 
 
 class _StartupReadyWindow(QMainWindow):
@@ -487,6 +499,9 @@ class UIManager(ManagerProcessBase):
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+        palette = self.qt_app.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(APP_BACKGROUND_COLOR))
+        self.qt_app.setPalette(palette)
 
         if self.settings is not None:
             self._last_applied_roi = self.settings["ROI"]
@@ -1185,6 +1200,7 @@ class UIManager(ManagerProcessBase):
 
     def create_central_widgets(self):
         central_widget = QWidget()
+        _set_widget_background(central_widget, APP_BACKGROUND_COLOR)
         central_layout = QVBoxLayout()
         central_widget.setLayout(central_layout)
         central_layout.addWidget(self.controls)
@@ -3003,6 +3019,7 @@ class LegacyDraggableControls(QWidget):
         super().__init__()
         self.manager = manager
         self.panels: dict[str, ControlPanelBase | QWidget] = {}
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
 
         self._settings = QSettings("MagScope", "MagScope")
 
@@ -3152,6 +3169,7 @@ class LegacyDraggableControls(QWidget):
 
         if name not in self._column_scrolls:
             scroll = QScrollArea(self)
+            _set_widget_background(scroll.viewport(), APP_BACKGROUND_COLOR)
             scroll.setWidgetResizable(True)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -3386,6 +3404,7 @@ class WorkflowTabWidget(QTabWidget):
         super().__init__(controls)
         self.controls = controls
         self.column_index = column_index
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
         self.setTabBar(WorkflowTabBar(self))
         self.setDocumentMode(True)
         self.setUsesScrollButtons(True)
@@ -3450,6 +3469,7 @@ class Controls(QWidget):
         super().__init__()
         self.manager = manager
         self.panels: dict[str, ControlPanelBase | QWidget] = {}
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
         self._settings = QSettings("MagScope", "MagScope")
         self._tab_widgets: list[WorkflowTabWidget] = []
         self._tab_pages: dict[str, QScrollArea] = {}
@@ -3529,12 +3549,14 @@ class Controls(QWidget):
     def _create_workflow_pages(self) -> None:
         for tab_id in self.WORKFLOW_ORDER:
             content = QWidget(self)
+            _set_widget_background(content, APP_BACKGROUND_COLOR)
             content_layout = QVBoxLayout(content)
             content_layout.setContentsMargins(6, 6, 6, 6)
             content_layout.setSpacing(6)
             content_layout.addStretch(1)
 
             scroll = QScrollArea(self)
+            _set_widget_background(scroll.viewport(), APP_BACKGROUND_COLOR)
             scroll.setWidgetResizable(True)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setFrameShape(QFrame.Shape.NoFrame)

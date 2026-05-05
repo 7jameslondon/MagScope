@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (QCheckBox, QFrame, QGraphicsItem, QGraphicsRectItem
                              QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSplitter,
                              QSplitterHandle, QVBoxLayout, QWidget)
 
+from magscope.ui.theme import PANEL_BACKGROUND_COLOR
+
 if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
 
@@ -275,6 +277,7 @@ class CollapsibleGroupBox(QGroupBox):
         self.setStyleSheet(
             f"""
             QGroupBox {{
+                background-color: {PANEL_BACKGROUND_COLOR};
                 border: {self._border_width}px solid {self._border_color};
                 border-radius: 0px;
             }}
@@ -391,7 +394,7 @@ class GripHandle(QSplitterHandle):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Background with simple states
-        base = QPalette().mid().color() # QColor("#1e1e1e")
+        base = QPalette().mid().color()
         pressed = QPalette().light().color()
         hover = QPalette().midlight().color()
         dot = QPalette().light().color()
