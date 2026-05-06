@@ -17,7 +17,6 @@ from PyQt6.QtCore import (
     QPoint,
     QRectF,
     QSettings,
-    QSize,
     QStringListModel,
     Qt,
     QThread,
@@ -35,7 +34,6 @@ from PyQt6.QtGui import (
     QIcon,
     QImage,
     QKeySequence,
-    QPainter,
     QPalette,
     QPixmap,
     QShortcut,
@@ -201,6 +199,7 @@ class _DockSeparatorHoverDelayFilter(QObject):
 
 class UIManager(ManagerProcessBase):
     _material_symbols_font_family: str | None = None
+    _viewer_dock_title_button_icons: dict[str, QIcon] = {}
     VIEWER_LAYOUT_STATE_VERSION = 1
     VIEWER_GEOMETRY_SETTINGS_KEY = "viewer/main_window_geometry"
     VIEWER_DOCK_STATE_SETTINGS_KEY = "viewer/dock_state"
@@ -326,50 +325,36 @@ class UIManager(ManagerProcessBase):
             }
         """
 
-    @staticmethod
-    def _brightened_viewer_dock_title_button_icon(icon: QIcon, size: QSize) -> QIcon:
-        brightened_icon = QIcon()
-        for mode in (
-            QIcon.Mode.Normal,
-            QIcon.Mode.Active,
-            QIcon.Mode.Disabled,
-            QIcon.Mode.Selected,
-        ):
-            for state in (QIcon.State.Off, QIcon.State.On):
-                pixmap = icon.pixmap(size, mode, state)
-                if pixmap.isNull():
-                    continue
+    @classmethod
+    def _viewer_dock_title_button_icon(cls, filename: str) -> QIcon:
+        icon = cls._viewer_dock_title_button_icons.get(filename)
+        if icon is None:
+            icon_path = resources.files("magscope").joinpath("assets", filename)
+            icon = QIcon(str(icon_path))
+            cls._viewer_dock_title_button_icons[filename] = icon
+        return icon
 
-                brightened_pixmap = QPixmap(pixmap)
-                painter = QPainter(brightened_pixmap)
-                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-                painter.fillRect(brightened_pixmap.rect(), QColor("#ffffff"))
-                painter.end()
-                brightened_icon.addPixmap(brightened_pixmap, mode, state)
-        return brightened_icon
-
-    def _apply_viewer_dock_title_button_brightness(self, dock: QDockWidget) -> None:
-        for object_name in ("qt_dockwidget_closebutton", "qt_dockwidget_floatbutton"):
+    def _apply_viewer_dock_title_button_icons(self, dock: QDockWidget) -> None:
+        button_icons = {
+            "qt_dockwidget_closebutton": self._viewer_dock_title_button_icon(
+                "viewer_dock_close_white.svg"
+            ),
+            "qt_dockwidget_floatbutton": self._viewer_dock_title_button_icon(
+                "viewer_dock_float_white.svg"
+            ),
+        }
+        for object_name, icon in button_icons.items():
             button = dock.findChild(QAbstractButton, object_name)
             if button is None:
                 continue
+            button.setIcon(icon)
 
-            icon = button.icon()
-            if icon.isNull():
-                continue
-
-            icon_size = button.iconSize()
-            if not icon_size.isValid() or icon_size.isEmpty():
-                icon_size = QSize(14, 14)
-            button.setIcon(self._brightened_viewer_dock_title_button_icon(icon, icon_size))
-
-    def _schedule_viewer_dock_title_button_brightness(self, dock: QDockWidget) -> None:
-        self._apply_viewer_dock_title_button_brightness(dock)
-        QTimer.singleShot(0, lambda target=dock: self._apply_viewer_dock_title_button_brightness(target))
+    def _schedule_viewer_dock_title_button_icons(self, dock: QDockWidget) -> None:
+        self._apply_viewer_dock_title_button_icons(dock)
+        QTimer.singleShot(0, lambda target=dock: self._apply_viewer_dock_title_button_icons(target))
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
-        accent_color = get_accent_color()
         return f"""
             QMainWindow::separator {{
                 background: transparent;
@@ -399,7 +384,7 @@ class UIManager(ManagerProcessBase):
                 );
             }}
             QMainWindow[viewerDockSeparatorHoverReady="true"]::separator:hover {{
-                background: {accent_color};
+                background: palette(highlight);
             }}
         """
 
@@ -417,8 +402,11 @@ class UIManager(ManagerProcessBase):
     def _apply_viewer_dock_separator_style(self, window: QMainWindow) -> None:
         self._install_viewer_dock_separator_hover_delay(window)
         separator_style = self._viewer_dock_separator_stylesheet().strip()
-        existing_style = window.styleSheet().strip()
         previous_style = getattr(window, "_viewer_dock_separator_stylesheet", "")
+        if separator_style == previous_style:
+            return
+
+        existing_style = window.styleSheet().strip()
         if previous_style and previous_style in existing_style:
             existing_style = existing_style.replace(previous_style, "").strip()
         if separator_style in existing_style:
@@ -1320,7 +1308,7 @@ class UIManager(ManagerProcessBase):
         self.camera_dock.topLevelChanged.connect(
             lambda floating, dock=self.camera_dock: self._schedule_floating_dock_window_configuration(dock, floating)
         )
-        self._schedule_viewer_dock_title_button_brightness(self.camera_dock)
+        self._schedule_viewer_dock_title_button_icons(self.camera_dock)
 
         self.plots_dock = QDockWidget("Live Plots", window)
         self.plots_dock.setObjectName("LivePlotsDock")
@@ -1338,7 +1326,7 @@ class UIManager(ManagerProcessBase):
         self.plots_dock.topLevelChanged.connect(
             lambda floating, dock=self.plots_dock: self._schedule_floating_dock_window_configuration(dock, floating)
         )
-        self._schedule_viewer_dock_title_button_brightness(self.plots_dock)
+        self._schedule_viewer_dock_title_button_icons(self.plots_dock)
 
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
         window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
@@ -1457,7 +1445,7 @@ class UIManager(ManagerProcessBase):
 
     def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
         self._set_viewer_dock_header_visible(dock, floating)
-        self._schedule_viewer_dock_title_button_brightness(dock)
+        self._schedule_viewer_dock_title_button_icons(dock)
         if not floating:
             return
 
@@ -1483,7 +1471,7 @@ class UIManager(ManagerProcessBase):
             | Qt.WindowType.WindowCloseButtonHint
         )
         dock.show()
-        self._schedule_viewer_dock_title_button_brightness(dock)
+        self._schedule_viewer_dock_title_button_icons(dock)
 
     def _create_view_menu(self, window: QMainWindow) -> None:
         view_menu = window.menuBar().addMenu("Layout")

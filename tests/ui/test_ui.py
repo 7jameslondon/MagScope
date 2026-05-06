@@ -15,8 +15,9 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, QRect, QRectF, QSettings, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QFrame,
     QLabel,
@@ -80,6 +81,29 @@ QT_GRAPHICS_WINDOWS_PY313_REASON = 'QGraphicsScene access violations on Windows 
 
 def clear_ui_manager_singleton() -> None:
     type(UIManager)._instances.pop(UIManager, None)
+
+
+def dock_button_icon_signature(button: QAbstractButton) -> tuple[int, ...]:
+    icon_size = button.iconSize()
+    pixmap = button.icon().pixmap(icon_size)
+    image = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+    return tuple(
+        image.pixelColor(x, y).rgba()
+        for y in range(image.height())
+        for x in range(image.width())
+    )
+
+
+def dock_button_icon_has_bright_pixels(button: QAbstractButton) -> bool:
+    icon_size = button.iconSize()
+    pixmap = button.icon().pixmap(icon_size)
+    image = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() > 0 and min(color.red(), color.green(), color.blue()) >= 220:
+                return True
+    return False
 
 
 class StubFocusMotor(FocusMotorBase):
@@ -1025,7 +1049,7 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
         f'QMainWindow[{VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY}="true"]::separator:hover'
         in window.styleSheet()
     )
-    assert f'background: {ACCENT_COLOR};' in window.styleSheet()
+    assert 'background: palette(highlight);' in window.styleSheet()
     assert 'width: 5px;' in window.styleSheet()
     assert 'height: 5px;' in window.styleSheet()
     assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is False
@@ -1114,6 +1138,50 @@ def test_floating_viewer_docks_show_dock_button(qtbot, dock_name):
 
     assert not dock.isFloating()
     assert not header.isVisible()
+
+    clear_ui_manager_singleton()
+
+
+def test_accent_color_change_preserves_viewer_dock_title_button_brightness(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+    window.show()
+    qtbot.wait(0)
+
+    assert manager.camera_dock is not None
+    close_button = manager.camera_dock.findChild(QAbstractButton, 'qt_dockwidget_closebutton')
+    float_button = manager.camera_dock.findChild(QAbstractButton, 'qt_dockwidget_floatbutton')
+    assert close_button is not None
+    assert float_button is not None
+
+    assert dock_button_icon_has_bright_pixels(close_button)
+    assert dock_button_icon_has_bright_pixels(float_button)
+
+    original_close_signature = dock_button_icon_signature(close_button)
+    original_float_signature = dock_button_icon_signature(float_button)
+
+    manager._apply_accent_color('#336699')
+    qtbot.wait(0)
+
+    updated_close_button = manager.camera_dock.findChild(QAbstractButton, 'qt_dockwidget_closebutton')
+    updated_float_button = manager.camera_dock.findChild(QAbstractButton, 'qt_dockwidget_floatbutton')
+    assert updated_close_button is not None
+    assert updated_float_button is not None
+
+    assert dock_button_icon_signature(updated_close_button) == original_close_signature
+    assert dock_button_icon_signature(updated_float_button) == original_float_signature
 
     clear_ui_manager_singleton()
 

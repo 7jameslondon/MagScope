@@ -64,5 +64,7 @@ exclude = ["tests*", "docs*", "examples*", "assets*"]
 "magscope" = [
     "assets/logo.png",
     "assets/MaterialSymbolsRounded.ttf",
+    "assets/viewer_dock_close_white.svg",
+    "assets/viewer_dock_float_white.svg",
     "simulation_zlut.txt"
 ]
