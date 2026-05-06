@@ -31,9 +31,11 @@ from PyQt6.QtGui import (
     QFont,
     QFontDatabase,
     QGuiApplication,
+    QIcon,
     QImage,
     QKeySequence,
     QPalette,
+    QPainter,
     QPixmap,
     QShortcut,
 )
@@ -321,6 +323,27 @@ class UIManager(ManagerProcessBase):
                 color: #606060;
             }
         """
+
+    def _material_symbol_icon(
+        self,
+        symbol_name: str,
+        size: int = 16,
+        *,
+        color: QColor | None = None,
+    ) -> QIcon:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        icon_color = color or QGuiApplication.palette().color(QPalette.ColorRole.ButtonText)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(icon_color)
+        painter.setFont(self._material_symbols_font(point_size=max(1, size - 2)))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, symbol_name)
+        painter.end()
+
+        return QIcon(pixmap)
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
@@ -1343,6 +1366,7 @@ class UIManager(ManagerProcessBase):
         self.bead_instructions_button = QPushButton("Add/Remove Beads", toolbar)
         self.bead_instructions_button.setObjectName("LiveBeadInstructionsButton")
         self.bead_instructions_button.setToolTip("Show bead selection instructions")
+        self.bead_instructions_button.setIcon(self._material_symbol_icon("info"))
         self.bead_instructions_button.clicked.connect(
             lambda _checked=False: self.show_bead_selection_instructions()
         )
