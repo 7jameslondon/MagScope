@@ -12,11 +12,12 @@ from warnings import warn
 import numpy as np
 from PyQt6.QtCore import (
     QEvent,
-    QObject,
     QMimeData,
+    QObject,
     QPoint,
     QRectF,
     QSettings,
+    QSize,
     QStringListModel,
     Qt,
     QThread,
@@ -31,13 +32,16 @@ from PyQt6.QtGui import (
     QFont,
     QFontDatabase,
     QGuiApplication,
+    QIcon,
     QImage,
     QKeySequence,
+    QPainter,
     QPalette,
     QPixmap,
     QShortcut,
 )
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QCompleter,
     QDockWidget,
@@ -321,6 +325,47 @@ class UIManager(ManagerProcessBase):
                 color: #606060;
             }
         """
+
+    @staticmethod
+    def _brightened_viewer_dock_title_button_icon(icon: QIcon, size: QSize) -> QIcon:
+        brightened_icon = QIcon()
+        for mode in (
+            QIcon.Mode.Normal,
+            QIcon.Mode.Active,
+            QIcon.Mode.Disabled,
+            QIcon.Mode.Selected,
+        ):
+            for state in (QIcon.State.Off, QIcon.State.On):
+                pixmap = icon.pixmap(size, mode, state)
+                if pixmap.isNull():
+                    continue
+
+                brightened_pixmap = QPixmap(pixmap)
+                painter = QPainter(brightened_pixmap)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+                painter.fillRect(brightened_pixmap.rect(), QColor("#ffffff"))
+                painter.end()
+                brightened_icon.addPixmap(brightened_pixmap, mode, state)
+        return brightened_icon
+
+    def _apply_viewer_dock_title_button_brightness(self, dock: QDockWidget) -> None:
+        for object_name in ("qt_dockwidget_closebutton", "qt_dockwidget_floatbutton"):
+            button = dock.findChild(QAbstractButton, object_name)
+            if button is None:
+                continue
+
+            icon = button.icon()
+            if icon.isNull():
+                continue
+
+            icon_size = button.iconSize()
+            if not icon_size.isValid() or icon_size.isEmpty():
+                icon_size = QSize(14, 14)
+            button.setIcon(self._brightened_viewer_dock_title_button_icon(icon, icon_size))
+
+    def _schedule_viewer_dock_title_button_brightness(self, dock: QDockWidget) -> None:
+        self._apply_viewer_dock_title_button_brightness(dock)
+        QTimer.singleShot(0, lambda target=dock: self._apply_viewer_dock_title_button_brightness(target))
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
@@ -1275,6 +1320,7 @@ class UIManager(ManagerProcessBase):
         self.camera_dock.topLevelChanged.connect(
             lambda floating, dock=self.camera_dock: self._schedule_floating_dock_window_configuration(dock, floating)
         )
+        self._schedule_viewer_dock_title_button_brightness(self.camera_dock)
 
         self.plots_dock = QDockWidget("Live Plots", window)
         self.plots_dock.setObjectName("LivePlotsDock")
@@ -1292,6 +1338,7 @@ class UIManager(ManagerProcessBase):
         self.plots_dock.topLevelChanged.connect(
             lambda floating, dock=self.plots_dock: self._schedule_floating_dock_window_configuration(dock, floating)
         )
+        self._schedule_viewer_dock_title_button_brightness(self.plots_dock)
 
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
         window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
@@ -1410,6 +1457,7 @@ class UIManager(ManagerProcessBase):
 
     def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
         self._set_viewer_dock_header_visible(dock, floating)
+        self._schedule_viewer_dock_title_button_brightness(dock)
         if not floating:
             return
 
@@ -1435,6 +1483,7 @@ class UIManager(ManagerProcessBase):
             | Qt.WindowType.WindowCloseButtonHint
         )
         dock.show()
+        self._schedule_viewer_dock_title_button_brightness(dock)
 
     def _create_view_menu(self, window: QMainWindow) -> None:
         view_menu = window.menuBar().addMenu("Layout")
