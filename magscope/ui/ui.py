@@ -31,9 +31,11 @@ from PyQt6.QtGui import (
     QFont,
     QFontDatabase,
     QGuiApplication,
+    QIcon,
     QImage,
     QKeySequence,
     QPalette,
+    QPainter,
     QPixmap,
     QShortcut,
 )
@@ -321,6 +323,38 @@ class UIManager(ManagerProcessBase):
                 color: #606060;
             }
         """
+
+    def _material_symbol_icon(
+        self,
+        symbol: str,
+        *,
+        point_size: int = 16,
+        icon_size: int = 18,
+        padding: float = 1.5,
+        color: QColor | None = None,
+    ) -> QIcon:
+        screen = QGuiApplication.primaryScreen()
+        device_pixel_ratio = screen.devicePixelRatio() if screen is not None else 1.0
+        pixmap = QPixmap(
+            max(1, int(round(icon_size * device_pixel_ratio))),
+            max(1, int(round(icon_size * device_pixel_ratio))),
+        )
+        pixmap.setDevicePixelRatio(device_pixel_ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(color or QGuiApplication.palette().color(QPalette.ColorRole.ButtonText))
+        painter.setFont(self._material_symbols_font(point_size=point_size))
+        painter.drawText(
+            QRectF(padding, padding, icon_size - (2 * padding), icon_size - (2 * padding)),
+            Qt.AlignmentFlag.AlignCenter,
+            symbol,
+        )
+        painter.end()
+
+        return QIcon(pixmap)
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
@@ -1342,6 +1376,9 @@ class UIManager(ManagerProcessBase):
 
         self.bead_instructions_button = QPushButton("Add/Remove Beads", toolbar)
         self.bead_instructions_button.setObjectName("LiveBeadInstructionsButton")
+        self.bead_instructions_button.setIcon(
+            self._material_symbol_icon("info", point_size=15, icon_size=18, padding=1.75)
+        )
         self.bead_instructions_button.setToolTip("Show bead selection instructions")
         self.bead_instructions_button.clicked.connect(
             lambda _checked=False: self.show_bead_selection_instructions()
