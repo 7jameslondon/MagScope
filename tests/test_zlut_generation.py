@@ -147,6 +147,7 @@ def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     assert isinstance(manager._sent_commands[0], LoadZLUTCommand)
     assert isinstance(manager._sent_commands[1], ShowMessageCommand)
     assert isinstance(manager._sent_commands[2], UpdateZLUTGenerationStateCommand)
+    assert manager._sent_commands[2].generated_zlut_saved is True
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
 
 
@@ -176,6 +177,7 @@ def test_save_generated_zlut_without_loading_keeps_evaluation_active(monkeypatch
     )
     assert state_command.status == 'Generated Z-LUT saved.'
     assert state_command.phase == 'evaluating'
+    assert state_command.generated_zlut_saved is True
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
 
 

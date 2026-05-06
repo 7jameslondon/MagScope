@@ -3297,6 +3297,7 @@ class ZLUTGenerationDialog(QDialog):
         self._startup_pending = False
         self._close_when_canceled = False
         self._selected_bead_id: int | None = None
+        self._generated_zlut_saved = False
 
         layout = QVBoxLayout(self)
 
@@ -3385,6 +3386,8 @@ class ZLUTGenerationDialog(QDialog):
     def _handle_close_clicked(self) -> None:
         if self._running or self._startup_pending:
             return
+        if not self._confirm_discard_unsaved_generated_zlut():
+            return
         if self._evaluation_active and self._close_callback is not None:
             self._close_callback()
             self._evaluation_active = False
@@ -3394,6 +3397,7 @@ class ZLUTGenerationDialog(QDialog):
         self._running = True
         self._startup_pending = True
         self._evaluation_active = False
+        self._generated_zlut_saved = False
         self.status_label.setText('Preparing Z-LUT generation...')
         self.detail_label.setText('Submitting the sweep request and waiting for the first status update.')
         self.cancel_button.setVisible(False)
@@ -3420,10 +3424,12 @@ class ZLUTGenerationDialog(QDialog):
         running: bool = False,
         can_cancel: bool = False,
         phase: str = 'idle',
+        generated_zlut_saved: bool = False,
     ) -> None:
         self._startup_pending = False
         self._running = running
         self._evaluation_active = phase == 'evaluating'
+        self._generated_zlut_saved = generated_zlut_saved
         self.status_label.setText(status)
         self.detail_label.setText(detail or '')
         self.cancel_button.setVisible(running or can_cancel)
@@ -3484,15 +3490,37 @@ class ZLUTGenerationDialog(QDialog):
         self.cancel_button.setText('Cancel')
         self.close_button.setText('Cancel' if active else 'Close')
 
+    def _confirm_discard_unsaved_generated_zlut(self) -> bool:
+        if not self._evaluation_active or self._generated_zlut_saved:
+            return True
+
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle('Unsaved Generated Z-LUT')
+        confirmation.setText(
+            'A Z-LUT must be saved and then loaded before it can be used. '
+            'Closing this window will discard the Z-LUT without saving.'
+        )
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        confirmation.setEscapeButton(QMessageBox.StandardButton.Close)
+        return confirmation.exec() == QMessageBox.StandardButton.Close
+
     def force_close(self) -> None:
         self._running = False
         self._startup_pending = False
         self._close_when_canceled = False
         self._evaluation_active = False
+        self._generated_zlut_saved = False
         self.close()
 
     def closeEvent(self, event) -> None:
         if self._running or self._startup_pending:
+            event.ignore()
+            return
+        if not self._confirm_discard_unsaved_generated_zlut():
             event.ignore()
             return
         if self._evaluation_active and self._close_callback is not None:

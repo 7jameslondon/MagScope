@@ -61,6 +61,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._focus_buffer: MatrixBuffer | None = None
         self._focus_motor_name: str | None = None
         self._generated_zluts: dict[int, GeneratedZLUTResult] = {}
+        self._generated_zlut_saved = False
         self._last_progress_emit = 0.0
         self._phase = 'idle'
         self._previous_acquisition_on = False
@@ -312,6 +313,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
             return
 
         if load_after_save:
+            self._generated_zlut_saved = True
             self.send_ipc(LoadZLUTCommand(filepath=str(path)))
             self.send_ipc(
                 ShowMessageCommand(
@@ -327,6 +329,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 phase='evaluating',
             )
         else:
+            self._generated_zlut_saved = True
             self._send_state(
                 'Generated Z-LUT saved.',
                 detail=f'Saved bead {bead_id} to {path}',
@@ -382,6 +385,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._current_step_index = 0
         self._dataset = None
         self._generated_zluts = {}
+        self._generated_zlut_saved = False
         self._last_progress_emit = 0.0
         self._phase = 'waiting_profile_length'
         self._previous_acquisition_on = bool(self._acquisition_on)
@@ -656,6 +660,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
                 running=running,
                 can_cancel=can_cancel,
                 phase=phase,
+                generated_zlut_saved=self._generated_zlut_saved,
                 z_axis_min_nm=z_axis_min_nm,
                 z_axis_max_nm=z_axis_max_nm,
                 z_axis_descending=z_axis_descending,
