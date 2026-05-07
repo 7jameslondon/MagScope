@@ -1042,6 +1042,72 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     clear_ui_manager_singleton()
 
 
+@pytest.mark.parametrize(
+    ('dock_name', 'title_bar_name', 'title'),
+    [
+        ('camera_dock', 'camera_dock_title_bar', 'Live Camera'),
+        ('plots_dock', 'plots_dock_title_bar', 'Live Plots'),
+    ],
+)
+def test_docked_viewer_docks_use_material_title_buttons(
+    qtbot,
+    dock_name,
+    title_bar_name,
+    title,
+):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.controls = QLabel('controls')
+    manager.plots_widget = QLabel('plots')
+    manager.video_viewer = QLabel('video')
+    for widget in (manager.controls, manager.plots_widget, manager.video_viewer):
+        qtbot.addWidget(widget)
+
+    manager.create_central_widgets()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setCentralWidget(manager.central_widgets[0])
+    manager.windows.append(window)
+    manager._create_viewer_docks(window)
+
+    dock = getattr(manager, dock_name)
+    title_bar = getattr(manager, title_bar_name)
+    assert dock.titleBarWidget() is title_bar
+
+    title_label = title_bar.findChild(QLabel, f'{dock.objectName()}TitleLabel')
+    assert title_label is not None
+    assert title_label.text() == title
+    assert '#d0d0d0' in title_label.styleSheet()
+
+    undock_button = title_bar.findChild(QToolButton, f'{dock.objectName()}UndockButton')
+    assert undock_button is not None
+    assert undock_button.text() == 'open_in_new'
+    assert undock_button.toolTip() == 'Undock this viewer'
+    assert '#d0d0d0' in undock_button.styleSheet()
+
+    close_button = title_bar.findChild(QToolButton, f'{dock.objectName()}CloseButton')
+    assert close_button is not None
+    assert close_button.text() == 'close'
+    assert close_button.toolTip() == 'Close this viewer'
+    assert '#d0d0d0' in close_button.styleSheet()
+
+    undock_button.click()
+    qtbot.wait(0)
+    assert dock.isFloating()
+    assert dock.titleBarWidget() is None
+
+    dock.setFloating(False)
+    qtbot.wait(0)
+    assert not dock.isFloating()
+    assert dock.titleBarWidget() is title_bar
+
+    dock.show()
+    close_button.click()
+    assert dock.isHidden()
+
+    clear_ui_manager_singleton()
+
+
 @pytest.mark.parametrize('dock_name', ['camera_dock', 'plots_dock'])
 def test_floating_viewer_docks_can_be_maximized(qtbot, dock_name):
     clear_ui_manager_singleton()

@@ -227,6 +227,7 @@ class UIManager(ManagerProcessBase):
         self.controls: Controls | None = None
         self.controls_to_add = []
         self.camera_dock: QDockWidget | None = None
+        self.camera_dock_title_bar: QWidget | None = None
         self.camera_dock_header: QWidget | None = None
         self.bead_toolbar: QWidget | None = None
         self.bead_instructions_button: QPushButton | None = None
@@ -242,6 +243,7 @@ class UIManager(ManagerProcessBase):
         self.plot_thread: QThread
         self.plots_widget: QLabel
         self.plots_dock: QDockWidget | None = None
+        self.plots_dock_title_bar: QWidget | None = None
         self.plots_dock_header: QWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
         self._preferences_dialog: PreferencesDialog | None = None
@@ -1266,6 +1268,11 @@ class UIManager(ManagerProcessBase):
 
         self.camera_dock = QDockWidget("Live Camera", window)
         self.camera_dock.setObjectName("LiveCameraDock")
+        self.camera_dock_title_bar = self._create_viewer_dock_title_bar(
+            self.camera_dock,
+            "Live Camera",
+        )
+        self.camera_dock.setTitleBarWidget(self.camera_dock_title_bar)
         self.bead_toolbar = self._create_live_bead_toolbar()
         camera_container, self.camera_dock_header = self._create_viewer_dock_content(
             self.camera_dock,
@@ -1280,11 +1287,19 @@ class UIManager(ManagerProcessBase):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
         self.camera_dock.topLevelChanged.connect(
-            lambda floating, dock=self.camera_dock: self._schedule_floating_dock_window_configuration(dock, floating)
+            lambda floating, dock=self.camera_dock: self._handle_viewer_dock_top_level_changed(
+                dock,
+                floating,
+            )
         )
 
         self.plots_dock = QDockWidget("Live Plots", window)
         self.plots_dock.setObjectName("LivePlotsDock")
+        self.plots_dock_title_bar = self._create_viewer_dock_title_bar(
+            self.plots_dock,
+            "Live Plots",
+        )
+        self.plots_dock.setTitleBarWidget(self.plots_dock_title_bar)
         plots_container, self.plots_dock_header = self._create_viewer_dock_content(
             self.plots_dock,
             self.plots_widget,
@@ -1297,11 +1312,54 @@ class UIManager(ManagerProcessBase):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
         )
         self.plots_dock.topLevelChanged.connect(
-            lambda floating, dock=self.plots_dock: self._schedule_floating_dock_window_configuration(dock, floating)
+            lambda floating, dock=self.plots_dock: self._handle_viewer_dock_top_level_changed(
+                dock,
+                floating,
+            )
         )
 
         window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
         window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
+
+    def _create_viewer_dock_title_bar(self, dock: QDockWidget, title: str) -> QWidget:
+        title_bar = QWidget(dock)
+        title_bar.setObjectName(f"{dock.objectName()}TitleBar")
+        title_bar.setFixedHeight(24)
+        title_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(title_bar)
+        layout.setContentsMargins(6, 1, 6, 1)
+        layout.setSpacing(4)
+
+        title_label = QLabel(title, title_bar)
+        title_label.setObjectName(f"{dock.objectName()}TitleLabel")
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        title_label.setStyleSheet("color: #d0d0d0;")
+        layout.addWidget(title_label, 1)
+
+        undock_button = QToolButton(title_bar)
+        undock_button.setObjectName(f"{dock.objectName()}UndockButton")
+        undock_button.setText("open_in_new")
+        undock_button.setToolTip("Undock this viewer")
+        undock_button.setFont(self._material_symbols_font(point_size=11))
+        undock_button.setFixedSize(20, 20)
+        undock_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        undock_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        undock_button.clicked.connect(lambda _checked=False, target=dock: target.setFloating(True))
+        layout.addWidget(undock_button, 0)
+
+        close_button = QToolButton(title_bar)
+        close_button.setObjectName(f"{dock.objectName()}CloseButton")
+        close_button.setText("close")
+        close_button.setToolTip("Close this viewer")
+        close_button.setFont(self._material_symbols_font(point_size=11))
+        close_button.setFixedSize(20, 20)
+        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        close_button.clicked.connect(lambda _checked=False, target=dock: target.close())
+        layout.addWidget(close_button, 0)
+
+        return title_bar
 
     def _create_viewer_dock_content(
         self,
@@ -1414,6 +1472,27 @@ class UIManager(ManagerProcessBase):
             header = None
         if header is not None:
             header.setVisible(visible)
+
+    def _set_viewer_dock_title_bar_visible(self, dock: QDockWidget, visible: bool) -> None:
+        if dock is self.camera_dock:
+            title_bar = self.camera_dock_title_bar
+        elif dock is self.plots_dock:
+            title_bar = self.plots_dock_title_bar
+        else:
+            title_bar = None
+        if title_bar is None:
+            return
+
+        if visible:
+            dock.setTitleBarWidget(title_bar)
+            title_bar.show()
+        else:
+            dock.setTitleBarWidget(None)
+            title_bar.hide()
+
+    def _handle_viewer_dock_top_level_changed(self, dock: QDockWidget, floating: bool) -> None:
+        self._set_viewer_dock_title_bar_visible(dock, not floating)
+        self._schedule_floating_dock_window_configuration(dock, floating)
 
     def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
         self._set_viewer_dock_header_visible(dock, floating)
