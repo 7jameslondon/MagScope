@@ -2070,21 +2070,30 @@ class UIManager(ManagerProcessBase):
         viewer_dock_state = preferences.get('viewer_dock_state')
         if viewer_geometry is not None:
             geometry = self._decode_qbytearray(viewer_geometry)
-            settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
         else:
             geometry = None
 
         if viewer_dock_state is not None:
             dock_state = self._decode_qbytearray(viewer_dock_state)
-            settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
         else:
             dock_state = None
 
         if self.windows and geometry is not None:
-            self.windows[0].restoreGeometry(geometry)
+            if not self.windows[0].restoreGeometry(geometry):
+                self._clear_viewer_layout()
+                self._apply_default_viewer_layout()
+                raise ValueError('appearance_layout.viewer_geometry is invalid')
         if self.windows and dock_state is not None:
-            self.windows[0].restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+            if not self.windows[0].restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION):
+                self._clear_viewer_layout()
+                self._apply_default_viewer_layout()
+                raise ValueError('appearance_layout.viewer_dock_state is invalid')
             self._sync_viewer_dock_headers()
+
+        if geometry is not None:
+            settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
+        if dock_state is not None:
+            settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
 
         splitter_sizes = preferences.get('splitter_sizes', {})
         if splitter_sizes is not None:

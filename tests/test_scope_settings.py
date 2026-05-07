@@ -328,6 +328,17 @@ def test_preferences_bundle_validation_rejects_missing_sections():
         )
 
 
+def test_preferences_bundle_validation_rejects_unknown_magscope_settings():
+    with pytest.raises(ValueError, match='Unknown setting'):
+        load_preferences_bundle_mapping(
+            {
+                'version': PREFERENCES_BUNDLE_VERSION,
+                'magscope': {'unknown setting': 1},
+                'tracking': {},
+            }
+        )
+
+
 def test_preferences_bundle_import_reports_malformed_yaml(tmp_path):
     path = tmp_path / 'magscope-preferences.yaml'
     path.write_text('preferences: [', encoding='utf-8')

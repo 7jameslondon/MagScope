@@ -255,9 +255,14 @@ def load_preferences_bundle_mapping(data: Any) -> dict[str, Any]:
     if not isinstance(appearance_layout, Mapping):
         raise ValueError('appearance_layout must be a mapping')
 
+    try:
+        magscope_settings = MagScopeSettings(magscope)
+    except KeyError as exc:
+        raise ValueError(exc.args[0]) from exc
+
     return {
         'version': PREFERENCES_BUNDLE_VERSION,
-        'magscope': MagScopeSettings(magscope),
+        'magscope': magscope_settings,
         'tracking': tracking_options_from_mapping(tracking),
         'appearance_layout': copy.deepcopy(dict(appearance_layout)),
     }
