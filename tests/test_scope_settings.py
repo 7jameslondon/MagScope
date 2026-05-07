@@ -4,6 +4,7 @@ from typing import Any
 
 from PyQt6.QtCore import QSettings
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,7 +12,13 @@ from magscope.settings import (
     DEFAULT_GUI_ACCENT_COLOR,
     GUI_ACCENT_COLOR_SETTING,
     MagScopeSettings,
+    PREFERENCES_BUNDLE_VERSION,
     SettingSpec,
+    build_preferences_bundle,
+    default_tracking_options,
+    import_preferences_bundle,
+    load_preferences_bundle_mapping,
+    tracking_options_from_mapping,
 )
 
 
@@ -224,3 +231,82 @@ def test_settingspec_display_label_defaults_to_key():
 
     spec_without_display = SettingSpec("fallback", int)
     assert spec_without_display.label == "fallback"
+
+
+def test_tracking_options_validation_coerces_values():
+    options = tracking_options_from_mapping(
+        {
+            'center_of_mass': {'background': 'mean'},
+            'n auto_conv_multiline_sub_pixel': '6',
+            'auto_conv_multiline_sub_pixel': {'line_ratio': '0.25', 'n_local': '4'},
+            'use fft_profile': 'yes',
+            'fft_profile': {'oversample': '8', 'rmin': '0.1', 'rmax': '0.9'},
+            'lookup_z': {'n_local': 6},
+        }
+    )
+
+    assert options['center_of_mass']['background'] == 'mean'
+    assert options['n auto_conv_multiline_sub_pixel'] == 6
+    assert options['auto_conv_multiline_sub_pixel']['line_ratio'] == 0.25
+    assert options['auto_conv_multiline_sub_pixel']['n_local'] == 5
+    assert options['use fft_profile'] is True
+    assert options['fft_profile']['oversample'] == 8
+    assert options['fft_profile']['rmin'] == 0.1
+    assert options['fft_profile']['rmax'] == 0.9
+    assert options['fft_profile']['gaus_factor'] == default_tracking_options()['fft_profile']['gaus_factor']
+    assert options['lookup_z']['n_local'] == 7
+
+
+def test_tracking_options_validation_rejects_invalid_values():
+    with pytest.raises(ValueError):
+        tracking_options_from_mapping({'center_of_mass': {'background': 'mode'}})
+
+    with pytest.raises(ValueError):
+        tracking_options_from_mapping({'fft_profile': {'oversample': 0}})
+
+
+def test_preferences_bundle_import_export_round_trip(tmp_path):
+    settings = MagScopeSettings()
+    settings['magnification'] = 3.5
+    tracking = default_tracking_options()
+    tracking['use fft_profile'] = True
+    tracking['fft_profile']['oversample'] = 9
+    appearance_layout = {
+        'controls': {
+            'workflow_columns': [['Run', 'Custom'], ['Analysis', 'Locking']],
+            'panel_collapsed': {'CameraPanel': True},
+        },
+        'splitter_sizes': {'Main Grip Splitter Sizes': [100, 200]},
+    }
+
+    bundle = build_preferences_bundle(
+        magscope_settings=settings,
+        tracking_options=tracking,
+        appearance_layout=appearance_layout,
+    )
+    path = tmp_path / 'magscope-preferences.yaml'
+    with open(path, 'w', encoding='utf-8') as file:
+        yaml.safe_dump(bundle, file)
+
+    loaded = import_preferences_bundle(path)
+
+    assert loaded['version'] == PREFERENCES_BUNDLE_VERSION
+    assert loaded['magscope']['magnification'] == 3.5
+    assert loaded['tracking']['use fft_profile'] is True
+    assert loaded['tracking']['fft_profile']['oversample'] == 9
+    assert loaded['appearance_layout'] == appearance_layout
+
+
+def test_preferences_bundle_validation_rejects_missing_sections():
+    with pytest.raises(ValueError):
+        load_preferences_bundle_mapping({'version': PREFERENCES_BUNDLE_VERSION})
+
+    with pytest.raises(ValueError):
+        load_preferences_bundle_mapping(
+            {
+                'version': PREFERENCES_BUNDLE_VERSION,
+                'magscope': {},
+                'tracking': {},
+                'appearance_layout': [],
+            }
+        )

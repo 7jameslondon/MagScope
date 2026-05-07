@@ -12,7 +12,21 @@ import yaml
 
 DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
 GUI_ACCENT_COLOR_SETTING = 'gui accent color'
+PREFERENCES_BUNDLE_VERSION = 1
+TRACKING_OPTIONS_QSETTINGS_GROUP = 'TrackingOptions'
+TRACKING_OPTIONS_QSETTINGS_KEY = 'options_yaml'
 _HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+DEFAULT_TRACKING_OPTIONS: dict[str, Any] = {
+    'center_of_mass': {'background': 'median'},
+    'n auto_conv_multiline_sub_pixel': 5,
+    'auto_conv_multiline_sub_pixel': {'line_ratio': 0.1, 'n_local': 5},
+    'use fft_profile': False,
+    'fft_profile': {'oversample': 4, 'rmin': 0.0, 'rmax': 0.5, 'gaus_factor': 6.0},
+    'radial_profile': {'oversample': 1},
+    'lookup_z': {'n_local': 7},
+}
 
 
 def normalize_hex_color(value: str) -> str:
@@ -20,6 +34,255 @@ def normalize_hex_color(value: str) -> str:
     if not _HEX_COLOR_RE.fullmatch(value):
         raise ValueError("Accent color must use #RRGGBB hex format.")
     return value.lower()
+
+
+def default_tracking_options() -> dict[str, Any]:
+    return copy.deepcopy(DEFAULT_TRACKING_OPTIONS)
+
+
+def _coerce_tracking_int_value(
+    raw: Any,
+    *,
+    name: str,
+    fallback: int,
+    minimum: int | None = None,
+    enforce_odd: bool = False,
+) -> int:
+    if raw is None:
+        return fallback
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f'{name} must be an integer')
+    if minimum is not None and value < minimum:
+        raise ValueError(f'{name} must be at least {minimum}')
+    if enforce_odd and value % 2 == 0:
+        value += 1
+    return value
+
+
+def _coerce_tracking_float_value(
+    raw: Any,
+    *,
+    name: str,
+    fallback: float,
+    minimum: float | None = None,
+) -> float:
+    if raw is None:
+        return fallback
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f'{name} must be a number')
+    if minimum is not None and value < minimum:
+        raise ValueError(f'{name} must be at least {minimum}')
+    return value
+
+
+def _coerce_tracking_bool_value(raw: Any, *, fallback: bool) -> bool:
+    if raw is None:
+        return fallback
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {'true', '1', 'yes'}:
+            return True
+        if normalized in {'false', '0', 'no'}:
+            return False
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    raise ValueError('use fft_profile must be a boolean')
+
+
+def tracking_options_from_mapping(loaded: Any) -> dict[str, Any]:
+    if loaded is None:
+        raise ValueError('Tracking options file is empty')
+    if not isinstance(loaded, Mapping):
+        raise ValueError('Tracking options file must be a YAML mapping')
+
+    options = default_tracking_options()
+
+    center_of_mass = loaded.get('center_of_mass')
+    if center_of_mass is not None:
+        if not isinstance(center_of_mass, Mapping):
+            raise ValueError('center_of_mass must be a mapping')
+        background = center_of_mass.get('background', options['center_of_mass']['background'])
+        if background not in {'none', 'mean', 'median'}:
+            raise ValueError('center_of_mass.background must be one of none, mean, median')
+        options['center_of_mass']['background'] = background
+
+    options['n auto_conv_multiline_sub_pixel'] = _coerce_tracking_int_value(
+        loaded.get('n auto_conv_multiline_sub_pixel'),
+        name='n auto_conv_multiline_sub_pixel',
+        fallback=options['n auto_conv_multiline_sub_pixel'],
+        minimum=1,
+    )
+
+    auto_conv_multiline = loaded.get('auto_conv_multiline_sub_pixel')
+    if auto_conv_multiline is not None:
+        if not isinstance(auto_conv_multiline, Mapping):
+            raise ValueError('auto_conv_multiline_sub_pixel must be a mapping')
+        options['auto_conv_multiline_sub_pixel']['line_ratio'] = _coerce_tracking_float_value(
+            auto_conv_multiline.get('line_ratio'),
+            name='auto_conv_multiline_sub_pixel.line_ratio',
+            fallback=options['auto_conv_multiline_sub_pixel']['line_ratio'],
+            minimum=0.0,
+        )
+        options['auto_conv_multiline_sub_pixel']['n_local'] = _coerce_tracking_int_value(
+            auto_conv_multiline.get('n_local'),
+            name='auto_conv_multiline_sub_pixel.n_local',
+            fallback=options['auto_conv_multiline_sub_pixel']['n_local'],
+            minimum=3,
+            enforce_odd=True,
+        )
+
+    options['use fft_profile'] = _coerce_tracking_bool_value(
+        loaded.get('use fft_profile'),
+        fallback=options['use fft_profile'],
+    )
+
+    fft_profile = loaded.get('fft_profile')
+    if fft_profile is not None:
+        if not isinstance(fft_profile, Mapping):
+            raise ValueError('fft_profile must be a mapping')
+        options['fft_profile']['oversample'] = _coerce_tracking_int_value(
+            fft_profile.get('oversample'),
+            name='fft_profile.oversample',
+            fallback=options['fft_profile']['oversample'],
+            minimum=1,
+        )
+        options['fft_profile']['rmin'] = _coerce_tracking_float_value(
+            fft_profile.get('rmin'),
+            name='fft_profile.rmin',
+            fallback=options['fft_profile']['rmin'],
+            minimum=0.0,
+        )
+        options['fft_profile']['rmax'] = _coerce_tracking_float_value(
+            fft_profile.get('rmax'),
+            name='fft_profile.rmax',
+            fallback=options['fft_profile']['rmax'],
+            minimum=0.0,
+        )
+        options['fft_profile']['gaus_factor'] = _coerce_tracking_float_value(
+            fft_profile.get('gaus_factor'),
+            name='fft_profile.gaus_factor',
+            fallback=options['fft_profile']['gaus_factor'],
+            minimum=0.0,
+        )
+
+    radial_profile = loaded.get('radial_profile')
+    if radial_profile is not None:
+        if not isinstance(radial_profile, Mapping):
+            raise ValueError('radial_profile must be a mapping')
+        options['radial_profile']['oversample'] = _coerce_tracking_int_value(
+            radial_profile.get('oversample'),
+            name='radial_profile.oversample',
+            fallback=options['radial_profile']['oversample'],
+            minimum=1,
+        )
+
+    lookup_z = loaded.get('lookup_z')
+    if lookup_z is not None:
+        if not isinstance(lookup_z, Mapping):
+            raise ValueError('lookup_z must be a mapping')
+        options['lookup_z']['n_local'] = _coerce_tracking_int_value(
+            lookup_z.get('n_local'),
+            name='lookup_z.n_local',
+            fallback=options['lookup_z']['n_local'],
+            minimum=3,
+            enforce_odd=True,
+        )
+
+    return options
+
+
+def tracking_options_from_qsettings() -> dict[str, Any]:
+    settings = QSettings('MagScope', 'MagScope')
+    settings.beginGroup(TRACKING_OPTIONS_QSETTINGS_GROUP)
+    raw_value = settings.value(TRACKING_OPTIONS_QSETTINGS_KEY, '', type=str)
+    settings.endGroup()
+    if not raw_value:
+        return default_tracking_options()
+    try:
+        loaded = yaml.safe_load(raw_value)
+        return tracking_options_from_mapping(loaded)
+    except ValueError:
+        return default_tracking_options()
+
+
+def save_tracking_options_to_qsettings(options: Mapping[str, Any]) -> None:
+    validated = tracking_options_from_mapping(options)
+    settings = QSettings('MagScope', 'MagScope')
+    settings.beginGroup(TRACKING_OPTIONS_QSETTINGS_GROUP)
+    settings.setValue(TRACKING_OPTIONS_QSETTINGS_KEY, yaml.safe_dump(validated))
+    settings.endGroup()
+    settings.sync()
+
+
+def build_preferences_bundle(
+    *,
+    magscope_settings: MagScopeSettings,
+    tracking_options: Mapping[str, Any],
+    appearance_layout: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        'version': PREFERENCES_BUNDLE_VERSION,
+        'magscope': magscope_settings.to_dict(),
+        'tracking': tracking_options_from_mapping(tracking_options),
+        'appearance_layout': copy.deepcopy(dict(appearance_layout or {})),
+    }
+
+
+def load_preferences_bundle_mapping(data: Any) -> dict[str, Any]:
+    if data is None:
+        raise ValueError('Preferences file is empty')
+    if not isinstance(data, Mapping):
+        raise ValueError('Preferences file must be a YAML mapping')
+    version = data.get('version')
+    if version != PREFERENCES_BUNDLE_VERSION:
+        raise ValueError(f'Unsupported preferences file version: {version!r}')
+
+    magscope = data.get('magscope')
+    if not isinstance(magscope, Mapping):
+        raise ValueError('Preferences file must include a magscope mapping')
+
+    tracking = data.get('tracking')
+    if not isinstance(tracking, Mapping):
+        raise ValueError('Preferences file must include a tracking mapping')
+
+    appearance_layout = data.get('appearance_layout', {})
+    if not isinstance(appearance_layout, Mapping):
+        raise ValueError('appearance_layout must be a mapping')
+
+    return {
+        'version': PREFERENCES_BUNDLE_VERSION,
+        'magscope': MagScopeSettings(magscope),
+        'tracking': tracking_options_from_mapping(tracking),
+        'appearance_layout': copy.deepcopy(dict(appearance_layout)),
+    }
+
+
+def export_preferences_bundle(
+    path: str | os.PathLike[str],
+    *,
+    magscope_settings: MagScopeSettings,
+    tracking_options: Mapping[str, Any],
+    appearance_layout: Mapping[str, Any] | None = None,
+) -> None:
+    bundle = build_preferences_bundle(
+        magscope_settings=magscope_settings,
+        tracking_options=tracking_options,
+        appearance_layout=appearance_layout,
+    )
+    with open(path, 'w', encoding='utf-8') as file:
+        yaml.safe_dump(bundle, file)
+
+
+def import_preferences_bundle(path: str | os.PathLike[str]) -> dict[str, Any]:
+    with open(path, 'r', encoding='utf-8') as file:
+        data = yaml.safe_load(file)
+    return load_preferences_bundle_mapping(data)
 
 
 @dataclass(frozen=True)

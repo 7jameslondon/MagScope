@@ -43,9 +43,10 @@ from magscope.ipc_commands import (
     UnloadZLUTCommand,
     UpdateBeadRoisCommand,
     UpdateSettingsCommand,
+    UpdateTrackingOptionsCommand,
 )
 from magscope.hardware import FocusMotorBase
-from magscope.settings import GUI_ACCENT_COLOR_SETTING, MagScopeSettings
+from magscope.settings import GUI_ACCENT_COLOR_SETTING, MagScopeSettings, default_tracking_options
 from magscope.ui.controls import (
     AcquisitionPanel,
     AllanDeviationPanel,
@@ -1684,6 +1685,8 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     manager = UIManager()
     manager.settings = MagScopeSettings()
     manager.windows = []
+    commands = []
+    manager.send_ipc = lambda command: commands.append(command)
     reset_calls = []
     manager.controls = SimpleNamespace(reset_to_defaults=lambda: reset_calls.append(True))
     monkeypatch.setattr(
@@ -1703,12 +1706,16 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
     assert not hasattr(dialog, 'apply_accent_color_button')
     assert not hasattr(dialog, 'accent_color_status_label')
-    assert dialog.appearance_layout_tab.layout().indexOf(dialog.reset_gui_layout_button) != -1
+    assert hasattr(dialog, 'reset_all_preferences_button')
+    assert hasattr(dialog.settings_panel, 'reset_tab_button')
+    assert hasattr(dialog.tracking_options_panel, 'reset_tab_button')
+    assert dialog.appearance_layout_tab.layout().indexOf(dialog.appearance_status_label) != -1
 
     dialog.tabs.setCurrentWidget(dialog.appearance_layout_tab)
-    qtbot.mouseClick(dialog.reset_gui_layout_button, Qt.MouseButton.LeftButton)
+    dialog._on_reset_appearance_tab_clicked()
 
     assert reset_calls == [True]
+    assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
 
     clear_ui_manager_singleton()
 
@@ -1733,6 +1740,85 @@ def test_preferences_applies_accent_color_setting(qtbot):
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
     assert commands[0].settings[GUI_ACCENT_COLOR_SETTING] == '#336699'
+
+    clear_ui_manager_singleton()
+
+
+def test_magscope_preferences_apply_field_edits_immediately(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    commands = []
+    manager.send_ipc = lambda command: commands.append(command)
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+
+    magnification = dialog.settings_panel._setting_inputs['magnification']
+    magnification.lineedit.setText('2.5')
+    magnification.lineedit.editingFinished.emit()
+
+    assert manager.settings['magnification'] == 2.5
+    assert magnification.value_label.text() == '2.5'
+    assert len(commands) == 1
+    assert isinstance(commands[0], UpdateSettingsCommand)
+    assert commands[0].settings['magnification'] == 2.5
+
+    clear_ui_manager_singleton()
+
+
+def test_tracking_preferences_apply_field_edits_immediately(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    commands = []
+    manager.send_ipc = lambda command: commands.append(command)
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+
+    dialog.tracking_options_panel.line_ratio.lineedit.setText('0.25')
+    dialog.tracking_options_panel.line_ratio.lineedit.editingFinished.emit()
+
+    assert dialog.tracking_options_panel._current_options['auto_conv_multiline_sub_pixel']['line_ratio'] == 0.25
+    assert len(commands) == 1
+    assert isinstance(commands[0], UpdateTrackingOptionsCommand)
+    assert commands[0].value['auto_conv_multiline_sub_pixel']['line_ratio'] == 0.25
+
+    clear_ui_manager_singleton()
+
+
+def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    settings = MagScopeSettings()
+    settings['magnification'] = 4.0
+    settings[GUI_ACCENT_COLOR_SETTING] = '#336699'
+    manager = UIManager()
+    manager.settings = settings
+    manager.windows = []
+    commands = []
+    manager.send_ipc = lambda command: commands.append(command)
+    reset_calls = []
+    manager.controls = SimpleNamespace(reset_to_defaults=lambda: reset_calls.append(True))
+    monkeypatch.setattr(
+        'magscope.ui.controls.QMessageBox.question',
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.tracking_options_panel._current_options['auto_conv_multiline_sub_pixel']['line_ratio'] = 0.5
+
+    qtbot.mouseClick(dialog.reset_all_preferences_button, Qt.MouseButton.LeftButton)
+
+    assert manager.settings['magnification'] == MagScopeSettings()['magnification']
+    assert manager.settings[GUI_ACCENT_COLOR_SETTING] == ACCENT_COLOR
+    assert dialog.tracking_options_panel._current_options == default_tracking_options()
+    assert reset_calls == [True]
+    assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
+    assert any(isinstance(command, UpdateTrackingOptionsCommand) for command in commands)
 
     clear_ui_manager_singleton()
 

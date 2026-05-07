@@ -49,7 +49,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import yaml
 
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
@@ -82,6 +81,12 @@ from magscope.settings import (
     DEFAULT_GUI_ACCENT_COLOR,
     GUI_ACCENT_COLOR_SETTING,
     MagScopeSettings,
+    default_tracking_options,
+    export_preferences_bundle,
+    import_preferences_bundle,
+    save_tracking_options_to_qsettings,
+    tracking_options_from_mapping,
+    tracking_options_from_qsettings,
 )
 from magscope.ui.search import (
     PanelControlTarget,
@@ -377,31 +382,11 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
         self._last_settings_update: datetime.datetime | None = None
 
-        button_layout = QVBoxLayout()
-        self.layout().addLayout(button_layout)
-
-        top_row = QHBoxLayout()
-        button_layout.addLayout(top_row)
-
-        self.load_button = QPushButton("Import")
-        self.load_button.clicked.connect(self._on_load_clicked)  # type: ignore
-        top_row.addWidget(self.load_button)
-
-        self.save_button = QPushButton("Export")
-        self.save_button.clicked.connect(self._on_save_clicked)  # type: ignore
-        top_row.addWidget(self.save_button)
-
-        self.defaults_button = QPushButton("Set to Defaults")
-        self.defaults_button.clicked.connect(self._on_defaults_clicked)  # type: ignore
-        top_row.addWidget(self.defaults_button)
-
-        bottom_row = QHBoxLayout()
-        button_layout.addLayout(bottom_row)
-
-        self.apply_button = QPushButton("Apply Changes")
-        self.apply_button.clicked.connect(self._on_apply_clicked)  # type: ignore
-        self.apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bottom_row.addWidget(self.apply_button)
+        description = QLabel(
+            'Adjust core MagScope settings. Changes are applied when a field loses focus or Enter is pressed.'
+        )
+        description.setWordWrap(True)
+        self.layout().addWidget(description)
 
         for key in MagScopeSettings.magscope_panel_keys():
             spec = MagScopeSettings.spec_for(key)
@@ -411,8 +396,18 @@ class MagScopeSettingsPanel(ControlPanelBase):
             )
             widget.lineedit.setText(str(self._current_settings[key]))
             widget.value_label.setText(str(self._current_settings[key]))
+            widget.lineedit.editingFinished.connect(  # type: ignore[arg-type]
+                lambda key=key: self._apply_setting_from_input(key)
+            )
             self._setting_inputs[key] = widget
             self.layout().addWidget(widget)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.reset_tab_button = QPushButton('Reset This Tab')
+        self.reset_tab_button.clicked.connect(self.reset_defaults)  # type: ignore[arg-type]
+        actions.addWidget(self.reset_tab_button)
+        self.layout().addLayout(actions)
 
         self.status_label = FlashLabel()
         self.status_label.setText(self._format_last_updated_text())
@@ -454,19 +449,6 @@ class MagScopeSettingsPanel(ControlPanelBase):
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Settings", message)
 
-    def _collect_settings_from_inputs(self) -> MagScopeSettings | None:
-        updated = MagScopeSettings(self._current_settings.to_dict())
-        for key, widget in self._setting_inputs.items():
-            text = widget.lineedit.text().strip()
-            if not text:
-                continue
-            try:
-                updated[key] = text
-            except (KeyError, ValueError) as exc:
-                self._show_error(str(exc))
-                return None
-        return updated
-
     def _push_settings(self, settings: MagScopeSettings) -> None:
         self._current_settings = settings.clone()
         self.manager.settings = settings.clone()
@@ -485,51 +467,25 @@ class MagScopeSettingsPanel(ControlPanelBase):
             widget.value_label.setText(str(value))
             widget.lineedit.setText(str(value))
 
-    def _on_apply_clicked(self) -> None:
-        pending = self._collect_settings_from_inputs()
-        if pending is None:
+    def _apply_setting_from_input(self, key: str) -> None:
+        widget = self._setting_inputs[key]
+        text = widget.lineedit.text().strip()
+        updated = self._current_settings.clone()
+        try:
+            updated[key] = text
+        except (KeyError, ValueError) as exc:
+            self._show_error(str(exc))
+            widget.lineedit.setText(str(self._current_settings[key]))
             return
-        self._push_settings(pending)
+        if updated[key] == self._current_settings[key]:
+            widget.lineedit.setText(str(updated[key]))
+            return
+        self._push_settings(updated)
 
-    def _on_defaults_clicked(self) -> None:
+    def reset_defaults(self) -> None:
         defaults = MagScopeSettings()
         defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
         self._push_settings(defaults)
-
-    def _on_load_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import settings",
-            "",
-            "YAML Files (*.yaml);;All Files (*)",
-        )
-        if not path:
-            return
-        try:
-            settings = MagScopeSettings.import_yaml(path)
-        except (OSError, ValueError) as exc:
-            self._show_error(str(exc))
-            return
-        self._push_settings(settings)
-        self._notify(
-            f"Imported settings from {os.path.basename(path)}; {self._format_last_updated_text()}"
-        )
-
-    def _on_save_clicked(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export settings",
-            "magscope-settings.yaml",
-            "YAML Files (*.yaml);;All Files (*)",
-        )
-        if not path:
-            return
-        try:
-            self._current_settings.export_yaml(path)
-        except OSError as exc:
-            self._show_error(str(exc))
-            return
-        self._notify(f"Exported settings to {os.path.basename(path)}")
 
 
 class AcquisitionPanel(ControlPanelBase):
@@ -1705,16 +1661,6 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
 
 
 class TrackingOptionsPanel(ControlPanelBase):
-    _DEFAULTS: dict[str, Any] = {
-        'center_of_mass': {'background': 'median'},
-        'n auto_conv_multiline_sub_pixel': 5,
-        'auto_conv_multiline_sub_pixel': {'line_ratio': 0.1, 'n_local': 5},
-        'use fft_profile': False,
-        'fft_profile': {'oversample': 4, 'rmin': 0.0, 'rmax': 0.5, 'gaus_factor': 6.0},
-        'radial_profile': {'oversample': 1},
-        'lookup_z': {'n_local': 7},
-    }
-
     def __init__(self, manager: 'UIManager', *, collapsible: bool = True):
         super().__init__(
             manager=manager,
@@ -1722,16 +1668,17 @@ class TrackingOptionsPanel(ControlPanelBase):
             collapsed_by_default=True,
             collapsible=collapsible,
         )
-        self._current_options: dict[str, Any] = copy.deepcopy(self._DEFAULTS)
+        self._current_options: dict[str, Any] = tracking_options_from_qsettings()
         self._last_options_update: datetime.datetime | None = None
+        self._updating_fields = False
 
         note = QLabel(
             textwrap.dedent(
                 """
                 <a href="https://magtrack.readthedocs.io/en/stable/api/magtrack/core/index.html#magtrack.core.stack_to_xyzp_advanced">Advanced Tracking Options Guide</a>
                 <br>Configure the arguments forwarded to MagTrack's
-                stack_to_xyzp_advanced pipeline. Leave fields blank to
-                keep existing values. Defaults reflect MagTrack's standard parameters.
+                stack_to_xyzp_advanced pipeline. Changes are applied when a field loses focus
+                or Enter is pressed. Defaults reflect MagTrack's standard parameters.
                 """
             ).strip()
         )
@@ -1745,6 +1692,7 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.background_combo = QComboBox()
         self.background_combo.addItems(['none', 'mean', 'median'])
         self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+        self.background_combo.currentTextChanged.connect(lambda _value: self._apply_options_from_inputs())
         background_row.addWidget(self.background_combo)
         background_row.addStretch(1)
         self.layout().addLayout(background_row)
@@ -1818,31 +1766,15 @@ class TrackingOptionsPanel(ControlPanelBase):
         )
         self.layout().addWidget(self.lookup_n_local)
 
-        button_layout = QVBoxLayout()
-        self.layout().addLayout(button_layout)
+        for widget in self._option_line_edits():
+            widget.lineedit.editingFinished.connect(self._apply_options_from_inputs)  # type: ignore[arg-type]
 
-        top_row = QHBoxLayout()
-        button_layout.addLayout(top_row)
-
-        load_button = QPushButton('Load')
-        load_button.clicked.connect(self._on_load_clicked)  # type: ignore
-        top_row.addWidget(load_button)
-
-        save_button = QPushButton('Save')
-        save_button.clicked.connect(self._on_save_clicked)  # type: ignore
-        top_row.addWidget(save_button)
-
-        reset_button = QPushButton('Set to Defaults')
-        reset_button.clicked.connect(self.reset_defaults)  # type: ignore
-        top_row.addWidget(reset_button)
-
-        bottom_row = QHBoxLayout()
-        button_layout.addLayout(bottom_row)
-
-        apply_button = QPushButton('Apply Changes')
-        apply_button.clicked.connect(self.apply_options)  # type: ignore
-        apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bottom_row.addWidget(apply_button)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.reset_tab_button = QPushButton('Reset This Tab')
+        self.reset_tab_button.clicked.connect(self.reset_defaults)  # type: ignore[arg-type]
+        actions.addWidget(self.reset_tab_button)
+        self.layout().addLayout(actions)
 
         self.status_label = FlashLabel()
         self.layout().addWidget(self.status_label)
@@ -1850,6 +1782,7 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.status_label.setText(self._format_last_updated_text())
 
         self._update_value_labels()
+        self._populate_inputs_from_options()
         self._sync_fft_enabled_state()
 
     @staticmethod
@@ -1871,37 +1804,18 @@ class TrackingOptionsPanel(ControlPanelBase):
             context='Preferences > Tracking',
         )
 
-    def _parse_int(self, widget: LabeledLineEditWithValue, fallback: int, *, minimum: int | None = None) -> int:
-        text = widget.lineedit.text().strip()
-        widget.lineedit.setText('')
-        if text:
-            try:
-                value = int(text)
-                if minimum is not None and value < minimum:
-                    return fallback
-                return value
-            except ValueError:
-                return fallback
-        return fallback
-
-    def _parse_float(
-        self,
-        widget: LabeledLineEditWithValue,
-        fallback: float,
-        *,
-        minimum: float | None = None,
-    ) -> float:
-        text = widget.lineedit.text().strip()
-        widget.lineedit.setText('')
-        if text:
-            try:
-                value = float(text)
-                if minimum is not None and value < minimum:
-                    return fallback
-                return value
-            except ValueError:
-                return fallback
-        return fallback
+    def _option_line_edits(self) -> tuple[LabeledLineEditWithValue, ...]:
+        return (
+            self.iterations,
+            self.line_ratio,
+            self.n_local,
+            self.fft_oversample,
+            self.fft_rmin,
+            self.fft_rmax,
+            self.fft_gaus_factor,
+            self.radial_oversample,
+            self.lookup_n_local,
+        )
 
     def _update_value_labels(self) -> None:
         self.iterations.value_label.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
@@ -1927,8 +1841,9 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.radial_oversample.setEnabled(not use_fft)
 
     def _use_fft_changed(self, value: bool) -> None:
-        self._current_options['use fft_profile'] = value
-        self._sync_fft_enabled_state()
+        if self._updating_fields:
+            return
+        self._apply_options_from_inputs()
 
     def _set_options(
         self,
@@ -1937,12 +1852,19 @@ class TrackingOptionsPanel(ControlPanelBase):
         *,
         populate_inputs: bool = False,
     ) -> None:
-        self._current_options = copy.deepcopy(options)
-        self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
-        self._update_value_labels()
-        self._sync_fft_enabled_state()
-        if populate_inputs:
+        self._current_options = tracking_options_from_mapping(options)
+        self._updating_fields = True
+        try:
+            self.background_combo.blockSignals(True)
+            self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+            self.background_combo.blockSignals(False)
+            self._update_value_labels()
             self._populate_inputs_from_options()
+            self._sync_fft_enabled_state()
+        finally:
+            self.background_combo.blockSignals(False)
+            self._updating_fields = False
+        save_tracking_options_to_qsettings(self._current_options)
         self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
         self._last_options_update = datetime.datetime.now()
         if message:
@@ -1966,245 +1888,52 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.radial_oversample.lineedit.setText(str(self._current_options['radial_profile']['oversample']))
         self.lookup_n_local.lineedit.setText(str(self._current_options['lookup_z']['n_local']))
 
-    def _coerce_int_value(
-        self,
-        raw: Any,
-        *,
-        name: str,
-        fallback: int,
-        minimum: int | None = None,
-        enforce_odd: bool = False,
-    ) -> int:
-        if raw is None:
-            return fallback
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            raise ValueError(f'{name} must be an integer')
-        if minimum is not None and value < minimum:
-            raise ValueError(f'{name} must be at least {minimum}')
-        if enforce_odd and value % 2 == 0:
-            value += 1
-        return value
-
-    def _coerce_float_value(
-        self,
-        raw: Any,
-        *,
-        name: str,
-        fallback: float,
-        minimum: float | None = None,
-    ) -> float:
-        if raw is None:
-            return fallback
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            raise ValueError(f'{name} must be a number')
-        if minimum is not None and value < minimum:
-            raise ValueError(f'{name} must be at least {minimum}')
-        return value
-
-    def _coerce_bool_value(self, raw: Any, *, fallback: bool) -> bool:
-        if raw is None:
-            return fallback
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, str):
-            normalized = raw.strip().lower()
-            if normalized in {'true', '1', 'yes'}:
-                return True
-            if normalized in {'false', '0', 'no'}:
-                return False
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        raise ValueError('use fft_profile must be a boolean')
-
     def _load_options_from_mapping(self, loaded: Any) -> dict[str, Any]:
-        if loaded is None:
-            raise ValueError('Tracking options file is empty')
-        if not isinstance(loaded, dict):
-            raise ValueError('Tracking options file must be a YAML mapping')
+        return tracking_options_from_mapping(loaded)
 
-        options = copy.deepcopy(self._DEFAULTS)
-
-        center_of_mass = loaded.get('center_of_mass')
-        if center_of_mass is not None:
-            if not isinstance(center_of_mass, dict):
-                raise ValueError('center_of_mass must be a mapping')
-            background = center_of_mass.get('background', options['center_of_mass']['background'])
-            if background not in {'none', 'mean', 'median'}:
-                raise ValueError('center_of_mass.background must be one of none, mean, median')
-            options['center_of_mass']['background'] = background
-
-        options['n auto_conv_multiline_sub_pixel'] = self._coerce_int_value(
-            loaded.get('n auto_conv_multiline_sub_pixel'),
-            name='n auto_conv_multiline_sub_pixel',
-            fallback=options['n auto_conv_multiline_sub_pixel'],
-            minimum=1,
-        )
-
-        auto_conv_multiline = loaded.get('auto_conv_multiline_sub_pixel')
-        if auto_conv_multiline is not None:
-            if not isinstance(auto_conv_multiline, dict):
-                raise ValueError('auto_conv_multiline_sub_pixel must be a mapping')
-            options['auto_conv_multiline_sub_pixel']['line_ratio'] = self._coerce_float_value(
-                auto_conv_multiline.get('line_ratio'),
-                name='auto_conv_multiline_sub_pixel.line_ratio',
-                fallback=options['auto_conv_multiline_sub_pixel']['line_ratio'],
-                minimum=0.0,
-            )
-            options['auto_conv_multiline_sub_pixel']['n_local'] = self._coerce_int_value(
-                auto_conv_multiline.get('n_local'),
-                name='auto_conv_multiline_sub_pixel.n_local',
-                fallback=options['auto_conv_multiline_sub_pixel']['n_local'],
-                minimum=3,
-                enforce_odd=True,
-            )
-
-        options['use fft_profile'] = self._coerce_bool_value(
-            loaded.get('use fft_profile'),
-            fallback=options['use fft_profile'],
-        )
-
-        fft_profile = loaded.get('fft_profile')
-        if fft_profile is not None:
-            if not isinstance(fft_profile, dict):
-                raise ValueError('fft_profile must be a mapping')
-            options['fft_profile']['oversample'] = self._coerce_int_value(
-                fft_profile.get('oversample'),
-                name='fft_profile.oversample',
-                fallback=options['fft_profile']['oversample'],
-                minimum=1,
-            )
-            options['fft_profile']['rmin'] = self._coerce_float_value(
-                fft_profile.get('rmin'),
-                name='fft_profile.rmin',
-                fallback=options['fft_profile']['rmin'],
-                minimum=0.0,
-            )
-            options['fft_profile']['rmax'] = self._coerce_float_value(
-                fft_profile.get('rmax'),
-                name='fft_profile.rmax',
-                fallback=options['fft_profile']['rmax'],
-                minimum=0.0,
-            )
-            options['fft_profile']['gaus_factor'] = self._coerce_float_value(
-                fft_profile.get('gaus_factor'),
-                name='fft_profile.gaus_factor',
-                fallback=options['fft_profile']['gaus_factor'],
-                minimum=0.0,
-            )
-
-        radial_profile = loaded.get('radial_profile')
-        if radial_profile is not None:
-            if not isinstance(radial_profile, dict):
-                raise ValueError('radial_profile must be a mapping')
-            options['radial_profile']['oversample'] = self._coerce_int_value(
-                radial_profile.get('oversample'),
-                name='radial_profile.oversample',
-                fallback=options['radial_profile']['oversample'],
-                minimum=1,
-            )
-
-        lookup_z = loaded.get('lookup_z')
-        if lookup_z is not None:
-            if not isinstance(lookup_z, dict):
-                raise ValueError('lookup_z must be a mapping')
-            options['lookup_z']['n_local'] = self._coerce_int_value(
-                lookup_z.get('n_local'),
-                name='lookup_z.n_local',
-                fallback=options['lookup_z']['n_local'],
-                minimum=3,
-                enforce_odd=True,
-            )
-
-        return options
-
-    def _on_load_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            'Load tracking options',
-            '',
-            'YAML Files (*.yaml);;All Files (*)',
-        )
-        if not path:
-            return
-        try:
-            with open(path, 'r', encoding='utf-8') as file:
-                loaded = yaml.safe_load(file)
-            options = self._load_options_from_mapping(loaded)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, 'Tracking options', str(exc))
-            return
-        self._set_options(options, f'Loaded {os.path.basename(path)}', populate_inputs=True)
-
-    def _on_save_clicked(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            'Save tracking options',
-            'tracking_options.yaml',
-            'YAML Files (*.yaml);;All Files (*)',
-        )
-        if not path:
-            return
-        try:
-            with open(path, 'w', encoding='utf-8') as file:
-                yaml.safe_dump(self._current_options, file)
-        except OSError as exc:
-            QMessageBox.critical(self, 'Tracking options', str(exc))
-            return
-        self.status_label.setText(f'Saved to {os.path.basename(path)}')
-
-    def apply_options(self) -> None:
-        options = copy.deepcopy(self._current_options)
-        options['center_of_mass']['background'] = self.background_combo.currentText()
-
-        iterations = self._parse_int(self.iterations, options['n auto_conv_multiline_sub_pixel'], minimum=1)
-        options['n auto_conv_multiline_sub_pixel'] = iterations
-
-        line_ratio = self._parse_float(
-            self.line_ratio,
-            options['auto_conv_multiline_sub_pixel']['line_ratio'],
-            minimum=0.0,
-        )
-        options['auto_conv_multiline_sub_pixel']['line_ratio'] = line_ratio
-
-        n_local = self._parse_int(self.n_local, options['auto_conv_multiline_sub_pixel']['n_local'], minimum=3)
-        if n_local % 2 == 0:
-            n_local += 1
-        options['auto_conv_multiline_sub_pixel']['n_local'] = n_local
-
-        options['use fft_profile'] = self.use_fft.checkbox.isChecked()
-
-        fft_oversample = self._parse_int(self.fft_oversample, options['fft_profile']['oversample'], minimum=1)
-        fft_rmin = self._parse_float(self.fft_rmin, options['fft_profile']['rmin'], minimum=0.0)
-        fft_rmax = self._parse_float(self.fft_rmax, options['fft_profile']['rmax'], minimum=0.0)
-        fft_gaus_factor = self._parse_float(
-            self.fft_gaus_factor,
-            options['fft_profile']['gaus_factor'],
-            minimum=0.0,
-        )
-
-        options['fft_profile'] = {
-            'oversample': fft_oversample,
-            'rmin': fft_rmin,
-            'rmax': fft_rmax,
-            'gaus_factor': fft_gaus_factor,
+    def _options_from_inputs(self) -> dict[str, Any]:
+        return {
+            'center_of_mass': {'background': self.background_combo.currentText()},
+            'n auto_conv_multiline_sub_pixel': self.iterations.lineedit.text().strip(),
+            'auto_conv_multiline_sub_pixel': {
+                'line_ratio': self.line_ratio.lineedit.text().strip(),
+                'n_local': self.n_local.lineedit.text().strip(),
+            },
+            'use fft_profile': self.use_fft.checkbox.isChecked(),
+            'fft_profile': {
+                'oversample': self.fft_oversample.lineedit.text().strip(),
+                'rmin': self.fft_rmin.lineedit.text().strip(),
+                'rmax': self.fft_rmax.lineedit.text().strip(),
+                'gaus_factor': self.fft_gaus_factor.lineedit.text().strip(),
+            },
+            'radial_profile': {'oversample': self.radial_oversample.lineedit.text().strip()},
+            'lookup_z': {'n_local': self.lookup_n_local.lineedit.text().strip()},
         }
 
-        radial_oversample = self._parse_int(self.radial_oversample, options['radial_profile']['oversample'], minimum=1)
-        options['radial_profile']['oversample'] = radial_oversample
-
-        lookup_n_local = self._parse_int(self.lookup_n_local, options['lookup_z']['n_local'], minimum=3)
-        if lookup_n_local % 2 == 0:
-            lookup_n_local += 1
-        options['lookup_z']['n_local'] = lookup_n_local
-
+    def _apply_options_from_inputs(self) -> None:
+        if self._updating_fields:
+            return
+        try:
+            options = tracking_options_from_mapping(self._options_from_inputs())
+        except ValueError as exc:
+            QMessageBox.critical(self, 'Tracking options', str(exc))
+            self._updating_fields = True
+            try:
+                self._populate_inputs_from_options()
+                self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+                self._update_value_labels()
+                self._sync_fft_enabled_state()
+            finally:
+                self._updating_fields = False
+            return
+        if options == self._current_options:
+            self._populate_inputs_from_options()
+            self._sync_fft_enabled_state()
+            return
         self._set_options(options)
 
     def reset_defaults(self) -> None:
-        self._set_options(copy.deepcopy(self._DEFAULTS), 'Defaults restored', populate_inputs=True)
+        self._set_options(default_tracking_options(), 'Defaults restored', populate_inputs=True)
 
 
 class PreferencesDialog(QDialog):
@@ -2220,6 +1949,29 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
+
+        preferences_file_row = QHBoxLayout()
+        preferences_file_row.addWidget(QLabel('Preferences file'))
+
+        self.load_preferences_button = QPushButton('Load Preferences...')
+        self.load_preferences_button.clicked.connect(self._on_load_preferences_clicked)  # type: ignore[arg-type]
+        preferences_file_row.addWidget(self.load_preferences_button)
+
+        self.save_preferences_button = QPushButton('Save Preferences...')
+        self.save_preferences_button.clicked.connect(self._on_save_preferences_clicked)  # type: ignore[arg-type]
+        preferences_file_row.addWidget(self.save_preferences_button)
+
+        self.reset_all_preferences_button = QPushButton('Reset All Preferences')
+        self.reset_all_preferences_button.clicked.connect(self._on_reset_all_preferences_clicked)  # type: ignore[arg-type]
+        preferences_file_row.addWidget(self.reset_all_preferences_button)
+        preferences_file_row.addStretch(1)
+        layout.addLayout(preferences_file_row)
+
+        self.preferences_file_status = FlashLabel()
+        self.preferences_file_status.setText(
+            'Save or load MagScope, tracking, appearance, and layout preferences together.'
+        )
+        layout.addWidget(self.preferences_file_status)
 
         self.tabs = QTabWidget(self)
         layout.addWidget(self.tabs, 1)
@@ -2242,16 +1994,90 @@ class PreferencesDialog(QDialog):
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
 
+    def _on_load_preferences_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            'Load preferences',
+            '',
+            'YAML Files (*.yaml);;All Files (*)',
+        )
+        if not path:
+            return
+
+        try:
+            bundle = import_preferences_bundle(path)
+            validate_layout = getattr(self.manager, 'validate_appearance_layout_preferences', None)
+            if callable(validate_layout):
+                validate_layout(bundle['appearance_layout'])
+            self.settings_panel._push_settings(bundle['magscope'])
+            accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+            self.accent_color_input.setText(accent_color)
+            self._update_accent_color_swatch(accent_color)
+            self.tracking_options_panel._set_options(
+                bundle['tracking'],
+                f'Loaded preferences from {os.path.basename(path)}',
+                populate_inputs=True,
+            )
+            import_layout = getattr(self.manager, 'import_appearance_layout_preferences', None)
+            if callable(import_layout):
+                import_layout(bundle['appearance_layout'])
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Preferences', str(exc))
+            return
+
+        self.preferences_file_status.setText(f'Loaded preferences from {os.path.basename(path)}')
+
+    def _on_save_preferences_clicked(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            'Save preferences',
+            'magscope-preferences.yaml',
+            'YAML Files (*.yaml);;All Files (*)',
+        )
+        if not path:
+            return
+
+        export_layout = getattr(self.manager, 'export_appearance_layout_preferences', None)
+        appearance_layout = export_layout() if callable(export_layout) else {}
+        try:
+            export_preferences_bundle(
+                path,
+                magscope_settings=self.manager.settings.clone(),
+                tracking_options=self.tracking_options_panel._current_options,
+                appearance_layout=appearance_layout,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Preferences', str(exc))
+            return
+
+        self.preferences_file_status.setText(f'Saved preferences to {os.path.basename(path)}')
+
+    def _on_reset_all_preferences_clicked(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            'Reset Preferences',
+            'Reset all MagScope, tracking, appearance, and layout preferences to defaults?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        self.settings_panel._push_settings(MagScopeSettings())
+        self.tracking_options_panel.reset_defaults()
+        self._reset_appearance_layout(reset_accent=False)
+        accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        self.accent_color_input.setText(accent_color)
+        self._update_accent_color_swatch(accent_color)
+        self.preferences_file_status.setText('All preferences reset to defaults')
+
     def _create_appearance_layout_tab(self) -> QWidget:
         tab = QWidget(self)
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        description = QLabel(
-            'Customize GUI appearance and reset panels to their default layout and collapsed states.',
-            tab,
-        )
+        description = QLabel('Customize GUI appearance, layout, and collapsed panel states.', tab)
         description.setWordWrap(True)
         layout.addWidget(description)
 
@@ -2292,9 +2118,16 @@ class PreferencesDialog(QDialog):
         layout.addLayout(accent_row)
         self._update_accent_color_swatch(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
 
-        self.reset_gui_layout_button = QPushButton('Reset GUI Layout', tab)
-        self.reset_gui_layout_button.clicked.connect(self._reset_gui_layout)  # type: ignore[arg-type]
-        layout.addWidget(self.reset_gui_layout_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.reset_appearance_tab_button = QPushButton('Reset This Tab', tab)
+        self.reset_appearance_tab_button.clicked.connect(self._on_reset_appearance_tab_clicked)  # type: ignore[arg-type]
+        actions.addWidget(self.reset_appearance_tab_button)
+        layout.addLayout(actions)
+
+        self.appearance_status_label = FlashLabel()
+        self.appearance_status_label.setText('Last Updated: ')
+        layout.addWidget(self.appearance_status_label)
         layout.addStretch(1)
         return tab
 
@@ -2348,6 +2181,8 @@ class PreferencesDialog(QDialog):
         self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
+        self.settings_panel._refresh_fields()
+        self.appearance_status_label.setText('Accent color updated')
 
     def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
         scroll = QScrollArea(self)
@@ -2402,18 +2237,34 @@ class PreferencesDialog(QDialog):
             lineedit.setFocus()
             lineedit.selectAll()
 
-    def _reset_gui_layout(self) -> None:
-        if self.manager.controls is None:
-            return
+    def _on_reset_appearance_tab_clicked(self) -> None:
         confirmation = QMessageBox.question(
             self,
-            'Reset GUI',
-            'Reset panels to their default layout and states?',
+            'Reset Appearance/Layout',
+            'Reset appearance and layout preferences to defaults?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirmation == QMessageBox.StandardButton.Yes:
-            self.manager.controls.reset_to_defaults()
+            self._reset_appearance_layout(reset_accent=True)
+
+    def _reset_appearance_layout(self, *, reset_accent: bool) -> None:
+        if reset_accent:
+            settings = self.manager.settings.clone()
+            settings[GUI_ACCENT_COLOR_SETTING] = DEFAULT_GUI_ACCENT_COLOR
+            self.manager.settings = settings.clone()
+            self.settings_panel._current_settings = settings.clone()
+            apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+            if callable(apply_accent_color):
+                apply_accent_color(DEFAULT_GUI_ACCENT_COLOR)
+            self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+            self.accent_color_input.setText(DEFAULT_GUI_ACCENT_COLOR)
+            self._update_accent_color_swatch(DEFAULT_GUI_ACCENT_COLOR)
+
+        reset_layout = getattr(self.manager, 'reset_appearance_layout_preferences', None)
+        if callable(reset_layout):
+            reset_layout()
+        self.appearance_status_label.setText('Appearance/Layout reset to defaults')
 
 
 class ScriptPanel(ControlPanelBase):

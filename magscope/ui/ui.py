@@ -6,11 +6,12 @@ import os
 import sys
 from time import time
 import traceback
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 from warnings import warn
 
 import numpy as np
 from PyQt6.QtCore import (
+    QByteArray,
     QEvent,
     QObject,
     QMimeData,
@@ -110,7 +111,11 @@ from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
-from magscope.settings import GUI_ACCENT_COLOR_SETTING, MagScopeSettings
+from magscope.settings import (
+    GUI_ACCENT_COLOR_SETTING,
+    MagScopeSettings,
+    tracking_options_from_qsettings,
+)
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("ui.ui")
@@ -534,6 +539,8 @@ class UIManager(ManagerProcessBase):
 
         # Create controls panel
         self.controls = Controls(self)
+        if self._command_registry is not None and self._pipe is not None:
+            self.send_ipc(UpdateTrackingOptionsCommand(value=tracking_options_from_qsettings()))
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
@@ -2016,6 +2023,121 @@ class UIManager(ManagerProcessBase):
         settings = self._viewer_layout_settings()
         settings.remove(self.VIEWER_GEOMETRY_SETTINGS_KEY)
         settings.remove(self.VIEWER_DOCK_STATE_SETTINGS_KEY)
+
+    @staticmethod
+    def _encode_qbytearray(value: QByteArray) -> str:
+        return bytes(value.toBase64()).decode('ascii')
+
+    @staticmethod
+    def _decode_qbytearray(value: str) -> QByteArray:
+        return QByteArray.fromBase64(value.encode('ascii'))
+
+    def export_appearance_layout_preferences(self) -> dict[str, Any]:
+        settings = self._viewer_layout_settings()
+        preferences: dict[str, Any] = {}
+
+        if self.windows:
+            window = self.windows[0]
+            preferences['viewer_geometry'] = self._encode_qbytearray(window.saveGeometry())
+            preferences['viewer_dock_state'] = self._encode_qbytearray(
+                window.saveState(self.VIEWER_LAYOUT_STATE_VERSION)
+            )
+
+        controls = self.controls
+        if controls is not None and hasattr(controls, 'export_preferences'):
+            preferences['controls'] = controls.export_preferences()
+
+        splitter_sizes: dict[str, list[int]] = {}
+        for key in settings.allKeys():
+            key = str(key)
+            if not key.endswith(' Grip Splitter Sizes'):
+                continue
+            raw_sizes = settings.value(key, [], list)
+            try:
+                splitter_sizes[key] = [int(size) for size in raw_sizes]
+            except (TypeError, ValueError):
+                continue
+        if splitter_sizes:
+            preferences['splitter_sizes'] = splitter_sizes
+
+        return preferences
+
+    def import_appearance_layout_preferences(self, preferences: Mapping[str, Any]) -> None:
+        self.validate_appearance_layout_preferences(preferences)
+
+        settings = self._viewer_layout_settings()
+        viewer_geometry = preferences.get('viewer_geometry')
+        viewer_dock_state = preferences.get('viewer_dock_state')
+        if viewer_geometry is not None:
+            geometry = self._decode_qbytearray(viewer_geometry)
+            settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
+        else:
+            geometry = None
+
+        if viewer_dock_state is not None:
+            dock_state = self._decode_qbytearray(viewer_dock_state)
+            settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
+        else:
+            dock_state = None
+
+        if self.windows and geometry is not None:
+            self.windows[0].restoreGeometry(geometry)
+        if self.windows and dock_state is not None:
+            self.windows[0].restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+            self._sync_viewer_dock_headers()
+
+        splitter_sizes = preferences.get('splitter_sizes', {})
+        if splitter_sizes is not None:
+            for key, raw_sizes in splitter_sizes.items():
+                settings.setValue(str(key), [int(size) for size in raw_sizes])
+
+        controls_preferences = preferences.get('controls', {})
+        controls = self.controls
+        if controls_preferences and controls is not None and hasattr(controls, 'import_preferences'):
+            controls.import_preferences(controls_preferences)
+
+        settings.sync()
+
+    def validate_appearance_layout_preferences(self, preferences: Mapping[str, Any]) -> None:
+        if not isinstance(preferences, Mapping):
+            raise ValueError('appearance_layout must be a mapping')
+
+        viewer_geometry = preferences.get('viewer_geometry')
+        viewer_dock_state = preferences.get('viewer_dock_state')
+        if viewer_geometry is not None:
+            if not isinstance(viewer_geometry, str):
+                raise ValueError('appearance_layout.viewer_geometry must be a string')
+
+        if viewer_dock_state is not None:
+            if not isinstance(viewer_dock_state, str):
+                raise ValueError('appearance_layout.viewer_dock_state must be a string')
+
+        splitter_sizes = preferences.get('splitter_sizes', {})
+        if splitter_sizes is not None:
+            if not isinstance(splitter_sizes, Mapping):
+                raise ValueError('appearance_layout.splitter_sizes must be a mapping')
+            for key, raw_sizes in splitter_sizes.items():
+                if not isinstance(raw_sizes, list):
+                    raise ValueError(f'appearance_layout.splitter_sizes.{key} must be a list')
+                [int(size) for size in raw_sizes]
+
+        controls_preferences = preferences.get('controls', {})
+        controls = self.controls
+        if controls_preferences and controls is not None and hasattr(controls, 'validate_preferences'):
+            controls.validate_preferences(controls_preferences)
+
+    def reset_appearance_layout_preferences(self) -> None:
+        settings = self._viewer_layout_settings()
+        self._clear_viewer_layout()
+        for key in settings.allKeys():
+            key = str(key)
+            if key.endswith(' Grip Splitter Sizes'):
+                settings.remove(key)
+        controls = self.controls
+        if controls is not None and hasattr(controls, 'reset_to_defaults'):
+            controls.reset_to_defaults()
+        self._apply_default_viewer_layout()
+        settings.sync()
 
     def _sync_viewer_dock_headers(self) -> None:
         for dock in (self.camera_dock, self.plots_dock):
@@ -3896,6 +4018,73 @@ class Controls(QWidget):
         target_widget.tabBar().setTabData(new_index, tab_id)
         target_widget.setCurrentIndex(new_index)
         self._save_workflow_layout()
+
+    def export_preferences(self) -> dict[str, Any]:
+        panel_collapsed: dict[str, bool] = {}
+        for panel_id, panel in self.panels.items():
+            groupbox = getattr(panel, 'groupbox', None)
+            if isinstance(groupbox, CollapsibleGroupBox):
+                panel_collapsed[panel_id] = bool(groupbox.collapsed)
+
+        return {
+            'workflow_columns': self._current_workflow_layout(),
+            'panel_collapsed': panel_collapsed,
+        }
+
+    def import_preferences(self, preferences: Mapping[str, Any]) -> None:
+        self.validate_preferences(preferences)
+
+        workflow_columns = preferences.get('workflow_columns')
+        if workflow_columns is not None:
+            layout = self._normalise_workflow_layout(workflow_columns)
+            self._apply_workflow_layout(layout, save=True)
+
+        panel_collapsed = preferences.get('panel_collapsed', {})
+        if panel_collapsed is not None:
+            for panel_id, collapsed in panel_collapsed.items():
+                panel = self.panels.get(str(panel_id))
+                if panel is None:
+                    continue
+                groupbox = getattr(panel, 'groupbox', None)
+                if isinstance(groupbox, CollapsibleGroupBox):
+                    groupbox._apply_collapsed_state(bool(collapsed), animate=False, persist=True)
+
+    def validate_preferences(self, preferences: Mapping[str, Any]) -> None:
+        if not isinstance(preferences, Mapping):
+            raise ValueError('appearance_layout.controls must be a mapping')
+
+        workflow_columns = preferences.get('workflow_columns')
+        if workflow_columns is not None:
+            self._normalise_workflow_layout(workflow_columns)
+
+        panel_collapsed = preferences.get('panel_collapsed', {})
+        if panel_collapsed is not None:
+            if not isinstance(panel_collapsed, Mapping):
+                raise ValueError('appearance_layout.controls.panel_collapsed must be a mapping')
+
+    def _normalise_workflow_layout(self, raw_layout: Any) -> list[list[str]]:
+        if not isinstance(raw_layout, list):
+            raise ValueError('appearance_layout.controls.workflow_columns must be a list')
+
+        normalized: list[list[str]] = []
+        used: set[str] = set()
+        for raw_column in raw_layout:
+            if not isinstance(raw_column, list):
+                raise ValueError('appearance_layout.controls.workflow_columns columns must be lists')
+            column: list[str] = []
+            for raw_tab_id in raw_column:
+                tab_id = str(raw_tab_id)
+                if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
+                    column.append(tab_id)
+                    used.add(tab_id)
+            normalized.append(column)
+
+        if not normalized:
+            normalized.append([])
+        for tab_id in self.WORKFLOW_ORDER:
+            if tab_id not in used:
+                normalized[-1].append(tab_id)
+        return normalized[: self.MAX_COLUMNS]
 
     def reveal_panel(self, panel_id: str) -> None:
         if not hasattr(self, "_panel_to_tab"):
