@@ -490,15 +490,15 @@ class DummyCameraBeads(CameraBase):
 
     # Exposed settings
     settings = [
-        'framerate',
-        'fixed_n',
-        'fixed_z',
-        'tethered_n',
-        'tethered_z',
-        'tethered_z_sigma',
-        'tethered_xy_sigma',
-        'gain',
-        'seed'
+        'Frame Rate',
+        '# of Fixed Beads',
+        'Z value of Fixed Beads',
+        '# of Tethered Beads',
+        'Z value of Tethered Beads',
+        'Tethered Bead Fluctuation in Z',
+        'Tethered Bead Fluctuation in XY',
+        'Gain',
+        'Seed'
     ]
 
     def __init__(self):
