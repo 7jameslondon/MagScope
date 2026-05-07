@@ -34,15 +34,19 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedLayout,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QToolButton,
@@ -367,59 +371,74 @@ class HelpPanel(QFrame):
         )
 
 
-class MagScopeSettingsPanel(ControlPanelBase):
+class MagScopeSettingsPanel(QWidget):
     """Allow importing, exporting, and editing MagScope configuration values."""
 
-    def __init__(self, manager: "UIManager", *, collapsible: bool = True):
-        super().__init__(
-            manager=manager,
-            title="MagScope Settings" if collapsible else "",
-            collapsed_by_default=True,
-            collapsible=collapsible,
-        )
+    _SETTING_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("Imaging", ("ROI", "magnification")),
+        (
+            "Data Buffers",
+            (
+                "tracks max datapoints",
+                "video buffer n images",
+                "video buffer n stacks",
+                "video processors n",
+            ),
+        ),
+        (
+            "XY Lock Defaults",
+            ("xy-lock default interval", "xy-lock default max", "xy-lock default window"),
+        ),
+        (
+            "Z Lock Defaults",
+            ("z-lock default interval", "z-lock default max", "z-lock default window"),
+        ),
+    )
 
+    def __init__(self, manager: "UIManager", *, collapsible: bool = True):
+        super().__init__()
+        self.manager = manager
         self._current_settings = manager.settings.clone()
-        self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
+        self._setting_inputs: dict[str, QLineEdit] = {}
+        self._setting_value_labels: dict[str, QLabel] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
+
+        title = QLabel("Core Settings")
+        font = title.font()
+        font.setPointSize(font.pointSize() + 4)
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
 
         description = QLabel(
-            'Adjust core MagScope settings. Changes are applied when a field loses focus or Enter is pressed.'
+            "Adjust core MagScope settings. Changes are applied when a field "
+            "loses focus or Enter is pressed."
         )
         description.setWordWrap(True)
-        self.layout().addWidget(description)
+        description.setObjectName("preferencesDescription")
+        layout.addWidget(description)
 
-        for key in MagScopeSettings.magscope_panel_keys():
-            spec = MagScopeSettings.spec_for(key)
-            widget = LabeledLineEditWithValue(
-                label_text=spec.label,
-                widths=(180, 100, 80),
-            )
-            widget.lineedit.setText(str(self._current_settings[key]))
-            widget.value_label.setText(str(self._current_settings[key]))
-            widget.lineedit.editingFinished.connect(  # type: ignore[arg-type]
-                lambda key=key: self._apply_setting_from_input(key)
-            )
-            self._setting_inputs[key] = widget
-            self.layout().addWidget(widget)
+        for group_title, keys in self._SETTING_GROUPS:
+            group = self._build_setting_group(group_title, keys)
+            layout.addWidget(group)
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        self.reset_tab_button = QPushButton('Reset This Tab')
-        self.reset_tab_button.clicked.connect(self.reset_defaults)  # type: ignore[arg-type]
-        actions.addWidget(self.reset_tab_button)
-        self.layout().addLayout(actions)
+        layout.addStretch(1)
 
     @staticmethod
     def search_targets() -> list[SearchTarget]:
         targets: list[SearchTarget] = []
         for key in MagScopeSettings.magscope_panel_keys():
             spec = MagScopeSettings.spec_for(key)
-            if key == 'ROI':
+            if key == "ROI":
                 targets.append(
                     PreferencesSettingTarget(
-                        label='ROI Size',
-                        aliases=('ROI', 'ROI size', 'ROI (pixels)', 'bead ROI', 'region of interest'),
-                        context='Preferences > MagScope',
-                        setting_key='ROI',
+                        label="ROI Size",
+                        aliases=("ROI", "ROI size", "ROI (pixels)", "bead ROI", "region of interest"),
+                        context="Preferences > MagScope",
+                        setting_key="ROI",
                     )
                 )
             else:
@@ -427,7 +446,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
                     PreferencesSettingTarget(
                         label=spec.label,
                         aliases=(key,),
-                        context='Preferences > MagScope',
+                        context="Preferences > MagScope",
                         setting_key=key,
                     )
                 )
@@ -439,7 +458,7 @@ class MagScopeSettingsPanel(ControlPanelBase):
     def _push_settings(self, settings: MagScopeSettings) -> None:
         self._current_settings = settings.clone()
         self.manager.settings = settings.clone()
-        apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+        apply_accent_color = getattr(self.manager, "_apply_accent_color", None)
         if callable(apply_accent_color):
             apply_accent_color(settings[GUI_ACCENT_COLOR_SETTING])
         command = UpdateSettingsCommand(settings=settings.clone())
@@ -447,23 +466,26 @@ class MagScopeSettingsPanel(ControlPanelBase):
         self._refresh_fields()
 
     def _refresh_fields(self) -> None:
-        for key, widget in self._setting_inputs.items():
+        for key, lineedit in self._setting_inputs.items():
             value = self._current_settings[key]
-            widget.value_label.setText(str(value))
-            widget.lineedit.setText(str(value))
+            lineedit.setText(str(value))
+            if key in self._setting_value_labels:
+                self._setting_value_labels[key].setText(f"Saved: {value}")
 
     def _apply_setting_from_input(self, key: str) -> None:
-        widget = self._setting_inputs[key]
-        text = widget.lineedit.text().strip()
+        lineedit = self._setting_inputs.get(key)
+        if lineedit is None:
+            return
+        text = lineedit.text().strip()
         updated = self._current_settings.clone()
         try:
             updated[key] = text
         except (KeyError, ValueError) as exc:
             self._show_error(str(exc))
-            widget.lineedit.setText(str(self._current_settings[key]))
+            lineedit.setText(str(self._current_settings[key]))
             return
         if updated[key] == self._current_settings[key]:
-            widget.lineedit.setText(str(updated[key]))
+            lineedit.setText(str(updated[key]))
             return
         self._push_settings(updated)
 
@@ -471,6 +493,55 @@ class MagScopeSettingsPanel(ControlPanelBase):
         defaults = MagScopeSettings()
         defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
         self._push_settings(defaults)
+
+    def _build_setting_group(self, title: str, keys: tuple[str, ...]) -> QGroupBox:
+        group = QGroupBox(title, self)
+        group.setFlat(True)
+
+        grid = QGridLayout(group)
+        grid.setContentsMargins(16, 20, 16, 12)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(5)
+
+        grid.addWidget(self._column_header("Setting"), 0, 0)
+        grid.addWidget(self._column_header("Value"), 0, 1)
+        saved_header = self._column_header("Saved")
+        saved_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(saved_header, 0, 2)
+
+        for row, key in enumerate(keys, start=1):
+            spec = MagScopeSettings.spec_for(key)
+
+            label = QLabel(spec.label)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setFixedWidth(155)
+            grid.addWidget(label, row, 0)
+
+            lineedit = QLineEdit(str(self._current_settings[key]))
+            lineedit.setFixedWidth(120)
+            lineedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lineedit.editingFinished.connect(  # type: ignore[arg-type]
+                lambda k=key: self._apply_setting_from_input(k)
+            )
+            grid.addWidget(lineedit, row, 1)
+            self._setting_inputs[key] = lineedit
+
+            saved_label = QLabel(f"Saved: {self._current_settings[key]}")
+            saved_label.setObjectName("preferencesSavedLabel")
+            grid.addWidget(saved_label, row, 2)
+            self._setting_value_labels[key] = saved_label
+
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(2, 1)
+
+        return group
+
+    @staticmethod
+    def _column_header(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("preferencesColumnHeader")
+        return label
 
 
 class AcquisitionPanel(ControlPanelBase):
@@ -1753,13 +1824,6 @@ class TrackingOptionsPanel(ControlPanelBase):
         for widget in self._option_line_edits():
             widget.lineedit.editingFinished.connect(self._apply_options_from_inputs)  # type: ignore[arg-type]
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        self.reset_tab_button = QPushButton('Reset This Tab')
-        self.reset_tab_button.clicked.connect(self.reset_defaults)  # type: ignore[arg-type]
-        actions.addWidget(self.reset_tab_button)
-        self.layout().addLayout(actions)
-
         self._update_value_labels()
         self._populate_inputs_from_options()
         self._sync_fft_enabled_state()
@@ -1908,53 +1972,234 @@ class TrackingOptionsPanel(ControlPanelBase):
 class PreferencesDialog(QDialog):
     """Modal dialog for global MagScope preferences."""
 
+    _SIDEBAR_SECTIONS: tuple[tuple[str, str], ...] = (
+        ('tune', 'MagScope'),
+        ('ads_click', 'Tracking'),
+        ('palette', 'Appearance/Layout'),
+    )
+
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager.windows[0] if getattr(manager, 'windows', None) else None)
         self.manager = manager
         self.setWindowTitle('Preferences')
         self.setModal(True)
-        self.resize(760, 700)
+        self.resize(880, 700)
+
+        # --- dark theme ---
+        accent = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: #111111;
+            }}
+            #preferencesHeader {{
+                background-color: #161616;
+            }}
+            #preferencesHeader QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesHeader QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 4px 12px;
+                color: #cccccc;
+            }}
+            #preferencesHeader QPushButton:hover {{
+                background-color: #333333;
+            }}
+            #preferencesSeparator {{
+                background-color: #2a2a2a;
+                max-height: 1px;
+            }}
+            QListWidget {{
+                background-color: #1b1b1b;
+                border: none;
+                border-right: 1px solid #2a2a2a;
+                padding: 8px 0px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 7px 16px;
+                margin: 0px;
+                border-radius: 0px;
+                border-left: 3px solid transparent;
+                color: #cccccc;
+            }}
+            QListWidget::item:selected {{
+                background-color: #1e2a3a;
+                border-left: 3px solid {accent};
+                color: #e0e0e0;
+            }}
+            QListWidget::item:hover:!selected {{
+                background-color: #222222;
+                border-left: 3px solid #333333;
+            }}
+            QStackedWidget {{
+                background-color: #111111;
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            QGroupBox {{
+                background-color: #181818;
+                border: 1px solid #2a2a2a;
+                border-radius: 4px;
+                margin-top: 14px;
+                padding-top: 16px;
+                font-weight: bold;
+                color: #aaaaaa;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+            }}
+            QLineEdit {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 3px 6px;
+                color: #e0e0e0;
+                selection-background-color: {accent};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {accent};
+            }}
+            QComboBox {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 3px 6px;
+                color: #e0e0e0;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                color: #e0e0e0;
+                selection-background-color: #1e2a3a;
+            }}
+            QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesColumnHeader {{
+                color: #777777;
+                font-size: 11px;
+            }}
+            #preferencesSavedLabel {{
+                color: #777777;
+                font-size: 11px;
+                padding-left: 4px;
+            }}
+            #preferencesDescription {{
+                color: #888888;
+            }}
+            #preferencesFooter {{
+                background-color: #161616;
+            }}
+            #preferencesFooter QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 5px 16px;
+                color: #cccccc;
+            }}
+            #preferencesFooter QPushButton:hover {{
+                background-color: #333333;
+            }}
+            """
+        )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        preferences_file_row = QHBoxLayout()
-        preferences_file_row.addWidget(QLabel('Preferences file'))
+        # --- header bar ---
+        header = QWidget(self)
+        header.setObjectName("preferencesHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 8, 20, 8)
+        header_layout.setSpacing(8)
+        header_layout.addWidget(QLabel("Preferences file:"))
 
-        self.load_preferences_button = QPushButton('Load Preferences...')
+        self.load_preferences_button = QPushButton("Load Preferences...")
         self.load_preferences_button.clicked.connect(self._on_load_preferences_clicked)  # type: ignore[arg-type]
-        preferences_file_row.addWidget(self.load_preferences_button)
+        header_layout.addWidget(self.load_preferences_button)
 
-        self.save_preferences_button = QPushButton('Save Preferences...')
+        self.save_preferences_button = QPushButton("Save Preferences...")
         self.save_preferences_button.clicked.connect(self._on_save_preferences_clicked)  # type: ignore[arg-type]
-        preferences_file_row.addWidget(self.save_preferences_button)
+        header_layout.addWidget(self.save_preferences_button)
 
-        self.reset_all_preferences_button = QPushButton('Reset All Preferences')
+        self.reset_all_preferences_button = QPushButton("Reset All Preferences")
         self.reset_all_preferences_button.clicked.connect(self._on_reset_all_preferences_clicked)  # type: ignore[arg-type]
-        preferences_file_row.addWidget(self.reset_all_preferences_button)
-        preferences_file_row.addStretch(1)
-        layout.addLayout(preferences_file_row)
+        header_layout.addWidget(self.reset_all_preferences_button)
 
         self.preferences_file_status = FlashLabel()
         self.preferences_file_status.setText(
-            'Save or load MagScope, tracking, appearance, and layout preferences together.'
+            "Save or load MagScope, tracking, appearance, and layout preferences together."
         )
-        layout.addWidget(self.preferences_file_status)
+        header_layout.addWidget(self.preferences_file_status)
 
-        self.tabs = QTabWidget(self)
-        layout.addWidget(self.tabs, 1)
+        header_layout.addStretch(1)
+        layout.addWidget(header)
+
+        # --- separator ---
+        separator = QFrame(self)
+        separator.setObjectName("preferencesSeparator")
+        separator.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(separator)
+
+        # --- content: sidebar + stacked pages ---
+        content_row = QHBoxLayout()
+        content_row.setSpacing(0)
 
         self.settings_panel = MagScopeSettingsPanel(manager, collapsible=False)
         self.settings_scroll = self._scrollable_tab(self.settings_panel)
-        self.tabs.addTab(self.settings_scroll, 'MagScope')
 
         self.tracking_options_panel = TrackingOptionsPanel(manager, collapsible=False)
         self.tracking_scroll = self._scrollable_tab(self.tracking_options_panel)
-        self.tabs.addTab(self.tracking_scroll, 'Tracking')
 
         self.appearance_layout_tab = self._create_appearance_layout_tab()
-        self.tabs.addTab(self.appearance_layout_tab, 'Appearance/Layout')
+
+        self.stack = QStackedWidget(self)
+        self.stack.addWidget(self.settings_scroll)
+        self.stack.addWidget(self.tracking_scroll)
+        self.stack.addWidget(self.appearance_layout_tab)
+
+        self.sidebar = QListWidget(self)
+        self.sidebar.setFixedWidth(210)
+        self.sidebar.setSpacing(0)
+        self.sidebar.currentRowChanged.connect(self._on_sidebar_selection)  # type: ignore[arg-type]
+
+        icon_font = type(self.manager)._material_symbols_font(point_size=14)
+        for icon_name, label in self._SIDEBAR_SECTIONS:
+            icon = self._make_material_symbol_icon(icon_font, icon_name, "#888888", 16)
+            item = QListWidgetItem(icon, label)
+            self.sidebar.addItem(item)
+
+        content_row.addWidget(self.sidebar)
+        content_row.addWidget(self.stack, 1)
+
+        layout.addLayout(content_row, 1)
+
+        # --- footer ---
+        footer = QWidget(self)
+        footer.setObjectName("preferencesFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 6, 20, 6)
+        footer_layout.addStretch(1)
+        self.reset_section_button = QPushButton("Reset Current Section")
+        self.reset_section_button.clicked.connect(self._on_reset_current_section)  # type: ignore[arg-type]
+        footer_layout.addWidget(self.reset_section_button)
+        layout.addWidget(footer)
+
+        self.sidebar.setCurrentRow(0)
 
     def _on_load_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -2036,60 +2281,74 @@ class PreferencesDialog(QDialog):
     def _create_appearance_layout_tab(self) -> QWidget:
         tab = QWidget(self)
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(14)
 
-        description = QLabel('Customize GUI appearance, layout, and collapsed panel states.', tab)
+        title = QLabel("Appearance & Layout")
+        font = title.font()
+        font.setPointSize(font.pointSize() + 4)
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
+
+        description = QLabel(
+            "Customize GUI accent color, viewer layout, and collapsed panel states. "
+            "Layout preferences are saved per-session."
+        )
         description.setWordWrap(True)
+        description.setObjectName("preferencesDescription")
         layout.addWidget(description)
 
-        accent_row = QHBoxLayout()
-        accent_label = QLabel('Accent color', tab)
-        accent_label.setFixedWidth(100)
-        accent_row.addWidget(accent_label)
+        accent_group = QGroupBox("Accent", tab)
+        accent_group.setFlat(True)
+        accent_inner = QHBoxLayout(accent_group)
+        accent_inner.setContentsMargins(16, 20, 16, 16)
+        accent_inner.setSpacing(10)
+
+        accent_label = QLabel("Accent color", accent_group)
+        accent_label.setFixedWidth(140)
+        accent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        accent_inner.addWidget(accent_label)
 
         self.accent_color_input = QLineEdit(
             self.manager.settings[GUI_ACCENT_COLOR_SETTING],
-            tab,
+            accent_group,
         )
-        self.accent_color_input.setObjectName('AccentColorInput')
+        self.accent_color_input.setObjectName("AccentColorInput")
+        self.accent_color_input.setFixedWidth(120)
+        self.accent_color_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.accent_color_input.setToolTip(
-            f'Use #RRGGBB hex format, for example {DEFAULT_GUI_ACCENT_COLOR}.'
+            f"Use #RRGGBB hex format, for example {DEFAULT_GUI_ACCENT_COLOR}."
         )
         self.accent_color_input.editingFinished.connect(  # type: ignore[arg-type]
             self._apply_accent_color_setting
         )
-        accent_row.addWidget(self.accent_color_input)
+        accent_inner.addWidget(self.accent_color_input)
 
-        self.accent_color_swatch = QPushButton('', tab)
-        self.accent_color_swatch.setObjectName('AccentColorSwatch')
-        self.accent_color_swatch.setFixedSize(42, 22)
+        self.accent_color_swatch = QPushButton("", accent_group)
+        self.accent_color_swatch.setObjectName("AccentColorSwatch")
+        self.accent_color_swatch.setFixedSize(28, 28)
         self.accent_color_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.accent_color_swatch.setToolTip('Choose accent color')
+        self.accent_color_swatch.setToolTip("Choose accent color")
         self.accent_color_swatch.clicked.connect(  # type: ignore[arg-type]
             self._choose_accent_color
         )
-        accent_row.addWidget(self.accent_color_swatch)
+        accent_inner.addWidget(self.accent_color_swatch)
 
-        self.choose_accent_color_button = QPushButton('Choose...', tab)
+        self.choose_accent_color_button = QPushButton("Choose\xa0...", accent_group)
         self.choose_accent_color_button.clicked.connect(  # type: ignore[arg-type]
             self._choose_accent_color
         )
-        accent_row.addWidget(self.choose_accent_color_button)
+        accent_inner.addWidget(self.choose_accent_color_button)
+        accent_inner.addStretch(1)
 
-        layout.addLayout(accent_row)
+        layout.addWidget(accent_group)
         self._update_accent_color_swatch(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
 
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        self.reset_appearance_tab_button = QPushButton('Reset This Tab', tab)
-        self.reset_appearance_tab_button.clicked.connect(self._on_reset_appearance_tab_clicked)  # type: ignore[arg-type]
-        actions.addWidget(self.reset_appearance_tab_button)
-        layout.addLayout(actions)
-
         self.appearance_status_label = FlashLabel()
-        self.appearance_status_label.setText('Last Updated: ')
+        self.appearance_status_label.setText("")
         layout.addWidget(self.appearance_status_label)
+
         layout.addStretch(1)
         return tab
 
@@ -2154,6 +2413,57 @@ class PreferencesDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
+    @staticmethod
+    def _make_material_symbol_icon(
+        font: QFont,
+        text: str,
+        color: str = "#888888",
+        size: int = 16,
+    ) -> QIcon:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setFont(font)
+        painter.setPen(QColor(color))
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _on_sidebar_selection(self, index: int) -> None:
+        if 0 <= index < self.stack.count():
+            self.stack.setCurrentIndex(index)
+
+    def _on_reset_current_section(self) -> None:
+        index = self.stack.currentIndex()
+        section_labels = [label for _, label in self._SIDEBAR_SECTIONS]
+        section_name = section_labels[index] if 0 <= index < len(section_labels) else "this section"
+
+        confirmation = QMessageBox.question(
+            self,
+            f"Reset {section_name}",
+            f"Reset {section_name} preferences to defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        if index == 0:
+            self.settings_panel.reset_defaults()
+        elif index == 1:
+            self.tracking_options_panel.reset_defaults()
+        elif index == 2:
+            self._reset_appearance_layout(reset_accent=True)
+
+    def _stack_index_for_scroll(self, scroll: QScrollArea) -> int:
+        if scroll is self.settings_scroll:
+            return 0
+        if scroll is self.tracking_scroll:
+            return 1
+        if scroll is self.appearance_layout_tab:
+            return 2
+        return -1
+
     def reveal_setting(self, setting_key: str) -> None:
         self.reveal_magscope_setting(setting_key)
 
@@ -2184,7 +2494,9 @@ class PreferencesDialog(QDialog):
         self._reveal_widget(scroll, widget)
 
     def _reveal_widget(self, scroll: QScrollArea, widget: QWidget) -> None:
-        self.tabs.setCurrentWidget(scroll)
+        stack_idx = self._stack_index_for_scroll(scroll)
+        if stack_idx >= 0:
+            self.sidebar.setCurrentRow(stack_idx)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -2194,10 +2506,14 @@ class PreferencesDialog(QDialog):
         highlight = getattr(self.manager, '_highlight_search_widget', None)
         if callable(highlight):
             highlight(widget)
-        lineedit = getattr(widget, 'lineedit', None)
-        if isinstance(lineedit, QLineEdit):
-            lineedit.setFocus()
-            lineedit.selectAll()
+        if isinstance(widget, QLineEdit):
+            widget.setFocus()
+            widget.selectAll()
+        else:
+            lineedit = getattr(widget, 'lineedit', None)
+            if isinstance(lineedit, QLineEdit):
+                lineedit.setFocus()
+                lineedit.selectAll()
 
     def _on_reset_appearance_tab_clicked(self) -> None:
         confirmation = QMessageBox.question(
@@ -2222,6 +2538,7 @@ class PreferencesDialog(QDialog):
             self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
             self.accent_color_input.setText(DEFAULT_GUI_ACCENT_COLOR)
             self._update_accent_color_swatch(DEFAULT_GUI_ACCENT_COLOR)
+            self.settings_panel._refresh_fields()
 
         reset_layout = getattr(self.manager, 'reset_appearance_layout_preferences', None)
         if callable(reset_layout):

@@ -1673,9 +1673,9 @@ def test_search_guides_to_roi_setting_in_preferences(qtbot):
     assert isinstance(dialog, PreferencesDialog)
     qtbot.addWidget(dialog)
     roi_widget = dialog.settings_panel._setting_inputs['ROI']
-    assert dialog.tabs.currentWidget() is dialog.settings_scroll
+    assert dialog.stack.currentIndex() == 0
     assert highlighted_widgets == [roi_widget]
-    assert roi_widget.lineedit.selectedText() == roi_widget.lineedit.text()
+    assert roi_widget.selectedText() == roi_widget.text()
 
     clear_ui_manager_singleton()
 
@@ -1697,22 +1697,17 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     dialog = PreferencesDialog(manager)
     qtbot.addWidget(dialog)
 
-    assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [
-        'MagScope',
-        'Tracking',
-        'Appearance/Layout',
-    ]
+    assert dialog.sidebar.count() == 3
     assert dialog.accent_color_input.text() == ACCENT_COLOR
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
     assert not hasattr(dialog, 'apply_accent_color_button')
     assert not hasattr(dialog, 'accent_color_status_label')
     assert hasattr(dialog, 'reset_all_preferences_button')
-    assert hasattr(dialog.settings_panel, 'reset_tab_button')
-    assert hasattr(dialog.tracking_options_panel, 'reset_tab_button')
+    assert hasattr(dialog, 'reset_section_button')
     assert dialog.appearance_layout_tab.layout().indexOf(dialog.appearance_status_label) != -1
 
-    dialog.tabs.setCurrentWidget(dialog.appearance_layout_tab)
-    dialog._on_reset_appearance_tab_clicked()
+    dialog.sidebar.setCurrentRow(2)
+    dialog._on_reset_current_section()
 
     assert reset_calls == [True]
     assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
@@ -1756,11 +1751,11 @@ def test_magscope_preferences_apply_field_edits_immediately(qtbot):
     qtbot.addWidget(dialog)
 
     magnification = dialog.settings_panel._setting_inputs['magnification']
-    magnification.lineedit.setText('2.5')
-    magnification.lineedit.editingFinished.emit()
+    magnification.setText('2.5')
+    magnification.editingFinished.emit()
 
     assert manager.settings['magnification'] == 2.5
-    assert magnification.value_label.text() == '2.5'
+    assert dialog.settings_panel._setting_value_labels['magnification'].text() == 'Saved: 2.5'
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
     assert commands[0].settings['magnification'] == 2.5
@@ -1971,7 +1966,7 @@ def test_search_guides_to_fft_rmin_in_tracking_preferences(qtbot):
     dialog = manager._preferences_dialog
     assert isinstance(dialog, PreferencesDialog)
     qtbot.addWidget(dialog)
-    assert dialog.tabs.currentWidget() is dialog.tracking_scroll
+    assert dialog.stack.currentIndex() == 1
     assert highlighted_widgets == [dialog.tracking_options_panel.fft_rmin]
     assert dialog.tracking_options_panel.fft_rmin.lineedit.selectedText() == (
         dialog.tracking_options_panel.fft_rmin.lineedit.text()
