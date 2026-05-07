@@ -2066,6 +2066,21 @@ class UIManager(ManagerProcessBase):
         self.validate_appearance_layout_preferences(preferences)
 
         settings = self._viewer_layout_settings()
+        window = self.windows[0] if self.windows else None
+        previous_geometry = window.saveGeometry() if window is not None else None
+        previous_dock_state = (
+            window.saveState(self.VIEWER_LAYOUT_STATE_VERSION) if window is not None else None
+        )
+
+        def restore_previous_layout() -> None:
+            if window is None:
+                return
+            if previous_geometry is not None:
+                window.restoreGeometry(previous_geometry)
+            if previous_dock_state is not None:
+                window.restoreState(previous_dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+            self._sync_viewer_dock_headers()
+
         viewer_geometry = preferences.get('viewer_geometry')
         viewer_dock_state = preferences.get('viewer_dock_state')
         if viewer_geometry is not None:
@@ -2078,15 +2093,13 @@ class UIManager(ManagerProcessBase):
         else:
             dock_state = None
 
-        if self.windows and geometry is not None:
-            if not self.windows[0].restoreGeometry(geometry):
-                self._clear_viewer_layout()
-                self._apply_default_viewer_layout()
+        if window is not None and geometry is not None:
+            if not window.restoreGeometry(geometry):
+                restore_previous_layout()
                 raise ValueError('appearance_layout.viewer_geometry is invalid')
-        if self.windows and dock_state is not None:
-            if not self.windows[0].restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION):
-                self._clear_viewer_layout()
-                self._apply_default_viewer_layout()
+        if window is not None and dock_state is not None:
+            if not window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION):
+                restore_previous_layout()
                 raise ValueError('appearance_layout.viewer_dock_state is invalid')
             self._sync_viewer_dock_headers()
 
@@ -4061,7 +4074,7 @@ class Controls(QWidget):
                     continue
                 groupbox = getattr(panel, 'groupbox', None)
                 if isinstance(groupbox, CollapsibleGroupBox):
-                    groupbox._apply_collapsed_state(bool(collapsed), animate=False, persist=True)
+                    groupbox._apply_collapsed_state(collapsed, animate=False, persist=True)
 
     def validate_preferences(self, preferences: Mapping[str, Any]) -> None:
         if not isinstance(preferences, Mapping):
@@ -4075,6 +4088,11 @@ class Controls(QWidget):
         if panel_collapsed is not None:
             if not isinstance(panel_collapsed, Mapping):
                 raise ValueError('appearance_layout.controls.panel_collapsed must be a mapping')
+            for panel_id, collapsed in panel_collapsed.items():
+                if not isinstance(collapsed, bool):
+                    raise ValueError(
+                        f'appearance_layout.controls.panel_collapsed.{panel_id} must be a boolean'
+                    )
 
     def _normalise_workflow_layout(self, raw_layout: Any) -> list[list[str]]:
         if not isinstance(raw_layout, list):

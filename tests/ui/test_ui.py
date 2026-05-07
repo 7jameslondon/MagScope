@@ -4,7 +4,7 @@ import sys
 import logging
 from datetime import datetime
 from importlib import resources
-from types import ModuleType, SimpleNamespace
+from types import MethodType, ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -2270,13 +2270,25 @@ def test_import_appearance_layout_rejects_invalid_viewer_dock_state(qtbot):
     manager._create_viewer_docks(window)
     manager._apply_default_viewer_layout()
 
+    original_geometry = window.saveGeometry()
+    original_dock_state = window.saveState(UIManager.VIEWER_LAYOUT_STATE_VERSION)
+    window.setGeometry(100, 120, 720, 520)
+    imported_geometry = window.saveGeometry()
+    window.restoreGeometry(original_geometry)
+    window.restoreState(original_dock_state, UIManager.VIEWER_LAYOUT_STATE_VERSION)
+    previous_rect = window.geometry()
+    previous_dock_state = window.saveState(UIManager.VIEWER_LAYOUT_STATE_VERSION)
+
     preferences = {
-        'viewer_geometry': UIManager._encode_qbytearray(window.saveGeometry()),
+        'viewer_geometry': UIManager._encode_qbytearray(imported_geometry),
         'viewer_dock_state': UIManager._encode_qbytearray(QByteArray(b'invalid dock state')),
     }
 
     with pytest.raises(ValueError, match='viewer_dock_state'):
         manager.import_appearance_layout_preferences(preferences)
+
+    assert window.geometry() == previous_rect
+    assert window.saveState(UIManager.VIEWER_LAYOUT_STATE_VERSION) == previous_dock_state
 
     settings = QSettings('MagScope', 'MagScope')
     assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
@@ -2295,6 +2307,30 @@ def test_validate_appearance_layout_rejects_non_integer_splitter_size():
         )
 
     clear_ui_manager_singleton()
+
+
+def test_controls_preferences_reject_string_panel_collapsed():
+    controls = SimpleNamespace()
+
+    with pytest.raises(ValueError, match='panel_collapsed.CameraPanel'):
+        Controls.validate_preferences(
+            controls,
+            {'panel_collapsed': {'CameraPanel': 'false'}},
+        )
+
+
+def test_controls_preferences_apply_false_panel_collapsed(qtbot):
+    groupbox = CollapsibleGroupBox('Camera Settings', collapsed=True)
+    qtbot.addWidget(groupbox)
+    controls = SimpleNamespace(panels={'CameraPanel': SimpleNamespace(groupbox=groupbox)})
+    controls.validate_preferences = MethodType(Controls.validate_preferences, controls)
+
+    Controls.import_preferences(
+        controls,
+        {'panel_collapsed': {'CameraPanel': False}},
+    )
+
+    assert groupbox.collapsed is False
 
 
 def test_quit_saves_viewer_layout(qtbot):
