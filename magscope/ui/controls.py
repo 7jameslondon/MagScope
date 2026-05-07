@@ -380,7 +380,6 @@ class MagScopeSettingsPanel(ControlPanelBase):
 
         self._current_settings = manager.settings.clone()
         self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
-        self._last_settings_update: datetime.datetime | None = None
 
         description = QLabel(
             'Adjust core MagScope settings. Changes are applied when a field loses focus or Enter is pressed.'
@@ -409,10 +408,6 @@ class MagScopeSettingsPanel(ControlPanelBase):
         actions.addWidget(self.reset_tab_button)
         self.layout().addLayout(actions)
 
-        self.status_label = FlashLabel()
-        self.status_label.setText(self._format_last_updated_text())
-        self.layout().addWidget(self.status_label)
-
     @staticmethod
     def search_targets() -> list[SearchTarget]:
         targets: list[SearchTarget] = []
@@ -438,14 +433,6 @@ class MagScopeSettingsPanel(ControlPanelBase):
                 )
         return targets
 
-    def _notify(self, text: str) -> None:
-        self.status_label.setText(text)
-
-    def _format_last_updated_text(self) -> str:
-        if self._last_settings_update is None:
-            return "Last Updated: "
-        return f"Last Updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
-
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Settings", message)
 
@@ -458,8 +445,6 @@ class MagScopeSettingsPanel(ControlPanelBase):
         command = UpdateSettingsCommand(settings=settings.clone())
         self.manager.send_ipc(command)
         self._refresh_fields()
-        self._last_settings_update = datetime.datetime.now()
-        self._notify(self._format_last_updated_text())
 
     def _refresh_fields(self) -> None:
         for key, widget in self._setting_inputs.items():
@@ -1669,7 +1654,6 @@ class TrackingOptionsPanel(ControlPanelBase):
             collapsible=collapsible,
         )
         self._current_options: dict[str, Any] = tracking_options_from_qsettings()
-        self._last_options_update: datetime.datetime | None = None
         self._updating_fields = False
 
         note = QLabel(
@@ -1776,11 +1760,6 @@ class TrackingOptionsPanel(ControlPanelBase):
         actions.addWidget(self.reset_tab_button)
         self.layout().addLayout(actions)
 
-        self.status_label = FlashLabel()
-        self.layout().addWidget(self.status_label)
-
-        self.status_label.setText(self._format_last_updated_text())
-
         self._update_value_labels()
         self._populate_inputs_from_options()
         self._sync_fft_enabled_state()
@@ -1866,16 +1845,6 @@ class TrackingOptionsPanel(ControlPanelBase):
             self._updating_fields = False
         save_tracking_options_to_qsettings(self._current_options)
         self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
-        self._last_options_update = datetime.datetime.now()
-        if message:
-            self.status_label.setText(f"{message}; {self._format_last_updated_text()}")
-        else:
-            self.status_label.setText(self._format_last_updated_text())
-
-    def _format_last_updated_text(self) -> str:
-        if self._last_options_update is None:
-            return 'Last Updated: '
-        return f"Last Updated: {self._last_options_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
     def _populate_inputs_from_options(self) -> None:
         self.iterations.lineedit.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
@@ -1986,13 +1955,6 @@ class PreferencesDialog(QDialog):
 
         self.appearance_layout_tab = self._create_appearance_layout_tab()
         self.tabs.addTab(self.appearance_layout_tab, 'Appearance/Layout')
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        close_button = QPushButton('Close')
-        close_button.clicked.connect(self.accept)  # type: ignore[arg-type]
-        buttons.addWidget(close_button)
-        layout.addLayout(buttons)
 
     def _on_load_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
