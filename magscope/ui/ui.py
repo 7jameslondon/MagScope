@@ -2128,7 +2128,12 @@ class UIManager(ManagerProcessBase):
             for key, raw_sizes in splitter_sizes.items():
                 if not isinstance(raw_sizes, list):
                     raise ValueError(f'appearance_layout.splitter_sizes.{key} must be a list')
-                [int(size) for size in raw_sizes]
+                try:
+                    [int(size) for size in raw_sizes]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f'appearance_layout.splitter_sizes.{key} must contain integers'
+                    ) from exc
 
         controls_preferences = preferences.get('controls', {})
         controls = self.controls

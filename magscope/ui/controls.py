@@ -1971,6 +1971,9 @@ class PreferencesDialog(QDialog):
             validate_layout = getattr(self.manager, 'validate_appearance_layout_preferences', None)
             if callable(validate_layout):
                 validate_layout(bundle['appearance_layout'])
+            import_layout = getattr(self.manager, 'import_appearance_layout_preferences', None)
+            if callable(import_layout):
+                import_layout(bundle['appearance_layout'])
             self.settings_panel._push_settings(bundle['magscope'])
             accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
             self.accent_color_input.setText(accent_color)
@@ -1980,9 +1983,6 @@ class PreferencesDialog(QDialog):
                 f'Loaded preferences from {os.path.basename(path)}',
                 populate_inputs=True,
             )
-            import_layout = getattr(self.manager, 'import_appearance_layout_preferences', None)
-            if callable(import_layout):
-                import_layout(bundle['appearance_layout'])
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, 'Preferences', str(exc))
             return

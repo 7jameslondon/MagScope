@@ -1823,6 +1823,60 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
+def test_preferences_import_layout_failure_does_not_apply_other_preferences(
+    qtbot,
+    monkeypatch,
+    tmp_path,
+):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    commands = []
+    manager.send_ipc = lambda command: commands.append(command)
+
+    loaded_settings = manager.settings.clone()
+    loaded_settings['magnification'] = 2.5
+    loaded_tracking = default_tracking_options()
+    loaded_tracking['auto_conv_multiline_sub_pixel']['line_ratio'] = 0.25
+    bundle = {
+        'magscope': loaded_settings,
+        'tracking': loaded_tracking,
+        'appearance_layout': {},
+    }
+    path = tmp_path / 'preferences.yaml'
+    critical_messages = []
+
+    def fail_layout_import(_preferences):
+        raise ValueError('layout failed')
+
+    manager.import_appearance_layout_preferences = fail_layout_import
+    monkeypatch.setattr(
+        'magscope.ui.controls.QFileDialog.getOpenFileName',
+        lambda *args, **kwargs: (str(path), ''),
+    )
+    monkeypatch.setattr(
+        'magscope.ui.controls.import_preferences_bundle',
+        lambda _path: bundle,
+    )
+    monkeypatch.setattr(
+        'magscope.ui.controls.QMessageBox.critical',
+        lambda _parent, _title, message: critical_messages.append(message),
+    )
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+
+    dialog._on_load_preferences_clicked()
+
+    assert critical_messages == ['layout failed']
+    assert commands == []
+    assert manager.settings['magnification'] == MagScopeSettings()['magnification']
+    assert dialog.tracking_options_panel._current_options == default_tracking_options()
+
+    clear_ui_manager_singleton()
+
+
 def test_workflow_layout_import_merges_overflow_columns():
     layout = Controls._normalise_workflow_layout(
         Controls,
@@ -2227,6 +2281,18 @@ def test_import_appearance_layout_rejects_invalid_viewer_dock_state(qtbot):
     settings = QSettings('MagScope', 'MagScope')
     assert settings.value(UIManager.VIEWER_GEOMETRY_SETTINGS_KEY) is None
     assert settings.value(UIManager.VIEWER_DOCK_STATE_SETTINGS_KEY) is None
+
+    clear_ui_manager_singleton()
+
+
+def test_validate_appearance_layout_rejects_non_integer_splitter_size():
+    clear_ui_manager_singleton()
+    manager = UIManager()
+
+    with pytest.raises(ValueError, match='splitter_sizes.Main Grip Splitter Sizes'):
+        manager.validate_appearance_layout_preferences(
+            {'splitter_sizes': {'Main Grip Splitter Sizes': [None]}},
+        )
 
     clear_ui_manager_singleton()
 
