@@ -6,8 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Dockable Live Camera and Live Plots panes with a Layout menu for showing, redocking, and resetting viewer panes.
+- Persistent single-window viewer layouts, including floating and maximized dock states.
+- Guide-only UI control search with fuzzy suggestions, keyboard shortcuts, and navigation to panels, preferences, and menu items.
+- Preferences tabs for MagScope, Tracking, Appearance, and layout reset options, including a configurable UI accent color.
+- Top-level Z-LUT menu actions for creating, loading, unloading, and previewing the current Z-LUT.
+- Live camera bead toolbar controls for bead editing, ROI settings, ID reassignment, and bead counts.
+- Adaptive workflow tabs for Run, Analysis, Locking, and Custom controls.
+- Packaged Material Symbols icons and refreshed SVG/logo assets for the UI and startup splash.
+
 ### Changed
+- MagScope now uses one main window with dockable viewer panes instead of the previous multi-window viewer layout.
+- Bead selection, Z-LUT, layout reset, and settings controls were moved from the main control rail into toolbar, menu, and Preferences workflows.
+- Acquisition labels, acquisition mode display names, histogram/profile panels, dock styling, and live zoom display were refined for clarity and consistency.
 - PyPI and TestPyPI publish workflows now use newer artifact actions to avoid GitHub Actions Node 20 deprecation warnings.
+
+### Fixed
+- Invalid saved viewer dock geometry is cleared and replaced with the default layout instead of restoring a broken layout.
+- UI control search now handles empty and missing queries without stale status feedback or unintended menu action execution.
+- Minimap zoom labels now round consistently as one-decimal multipliers.
 
 ## [0.3.0] - 2026-04-14
 
