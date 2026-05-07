@@ -1823,6 +1823,15 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
+def test_workflow_layout_import_merges_overflow_columns():
+    layout = Controls._normalise_workflow_layout(
+        Controls,
+        [['Run'], ['Analysis'], ['Locking'], [], ['Custom']],
+    )
+
+    assert layout == [['Run'], ['Analysis'], ['Locking'], ['Custom']]
+
+
 def test_search_suggests_dock_all_windows_without_executing(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()

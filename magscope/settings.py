@@ -207,7 +207,7 @@ def tracking_options_from_qsettings() -> dict[str, Any]:
     try:
         loaded = yaml.safe_load(raw_value)
         return tracking_options_from_mapping(loaded)
-    except ValueError:
+    except (ValueError, yaml.YAMLError):
         return default_tracking_options()
 
 
@@ -281,7 +281,10 @@ def export_preferences_bundle(
 
 def import_preferences_bundle(path: str | os.PathLike[str]) -> dict[str, Any]:
     with open(path, 'r', encoding='utf-8') as file:
-        data = yaml.safe_load(file)
+        try:
+            data = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            raise ValueError(f'Invalid preferences YAML: {exc}') from exc
     return load_preferences_bundle_mapping(data)
 
 

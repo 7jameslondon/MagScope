@@ -8,16 +8,20 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from magscope import settings as settings_module
 from magscope.settings import (
     DEFAULT_GUI_ACCENT_COLOR,
     GUI_ACCENT_COLOR_SETTING,
     MagScopeSettings,
     PREFERENCES_BUNDLE_VERSION,
+    TRACKING_OPTIONS_QSETTINGS_GROUP,
+    TRACKING_OPTIONS_QSETTINGS_KEY,
     SettingSpec,
     build_preferences_bundle,
     default_tracking_options,
     import_preferences_bundle,
     load_preferences_bundle_mapping,
+    tracking_options_from_qsettings,
     tracking_options_from_mapping,
 )
 
@@ -42,8 +46,11 @@ class FakeQSettings:
     def contains(self, key: str) -> bool:
         return key in self._group_store()
 
-    def value(self, key: str) -> Any:
-        return self._group_store()[key]
+    def value(self, key: str, default: Any = None, type: type | None = None) -> Any:
+        value = self._group_store().get(key, default)
+        if type is not None and value is not None:
+            return type(value)
+        return value
 
     def setValue(self, key: str, value: Any) -> None:
         if not type(self).writable:
@@ -265,6 +272,15 @@ def test_tracking_options_validation_rejects_invalid_values():
         tracking_options_from_mapping({'fft_profile': {'oversample': 0}})
 
 
+def test_tracking_options_from_qsettings_falls_back_on_malformed_yaml(fake_qsettings, monkeypatch):
+    fake_qsettings.store[TRACKING_OPTIONS_QSETTINGS_GROUP] = {
+        TRACKING_OPTIONS_QSETTINGS_KEY: 'tracking: [',
+    }
+    monkeypatch.setattr(settings_module, 'QSettings', FakeQSettings)
+
+    assert tracking_options_from_qsettings() == default_tracking_options()
+
+
 def test_preferences_bundle_import_export_round_trip(tmp_path):
     settings = MagScopeSettings()
     settings['magnification'] = 3.5
@@ -310,3 +326,11 @@ def test_preferences_bundle_validation_rejects_missing_sections():
                 'appearance_layout': [],
             }
         )
+
+
+def test_preferences_bundle_import_reports_malformed_yaml(tmp_path):
+    path = tmp_path / 'magscope-preferences.yaml'
+    path.write_text('preferences: [', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Invalid preferences YAML'):
+        import_preferences_bundle(path)

@@ -4071,20 +4071,23 @@ class Controls(QWidget):
         for raw_column in raw_layout:
             if not isinstance(raw_column, list):
                 raise ValueError('appearance_layout.controls.workflow_columns columns must be lists')
-            column: list[str] = []
+            if len(normalized) < self.MAX_COLUMNS:
+                column: list[str] = []
+                normalized.append(column)
+            else:
+                column = normalized[-1]
             for raw_tab_id in raw_column:
                 tab_id = str(raw_tab_id)
                 if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
                     column.append(tab_id)
                     used.add(tab_id)
-            normalized.append(column)
 
         if not normalized:
             normalized.append([])
         for tab_id in self.WORKFLOW_ORDER:
             if tab_id not in used:
                 normalized[-1].append(tab_id)
-        return normalized[: self.MAX_COLUMNS]
+        return normalized
 
     def reveal_panel(self, panel_id: str) -> None:
         if not hasattr(self, "_panel_to_tab"):
