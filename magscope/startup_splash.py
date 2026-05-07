@@ -1,7 +1,11 @@
 from importlib import resources
 
 
+_STARTUP_SPLASH_LOGO_SIZE = (568, 288)
+
+
 def _load_logo_pixmap():
+    from PyQt6.QtCore import QSize, Qt
     from PyQt6.QtGui import QPixmap
     from PyQt6.QtWidgets import QApplication
 
@@ -15,9 +19,21 @@ def _load_logo_pixmap():
     if pixmap.isNull():
         return None
 
+    device_pixel_ratio = 1.0
     app = QApplication.instance()
     if app is not None and (screen := app.primaryScreen()):
-        pixmap.setDevicePixelRatio(screen.devicePixelRatio())
+        device_pixel_ratio = screen.devicePixelRatio()
+
+    target_size = QSize(
+        round(_STARTUP_SPLASH_LOGO_SIZE[0] * device_pixel_ratio),
+        round(_STARTUP_SPLASH_LOGO_SIZE[1] * device_pixel_ratio),
+    )
+    pixmap = pixmap.scaled(
+        target_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    pixmap.setDevicePixelRatio(device_pixel_ratio)
 
     return pixmap
 
@@ -66,6 +82,7 @@ def _build_startup_splash_window():
     logo.setObjectName("startupSplashLogo")
     logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
     if pixmap := _load_logo_pixmap():
+        logo.setFixedSize(*_STARTUP_SPLASH_LOGO_SIZE)
         logo.setPixmap(pixmap)
     content_layout.addWidget(logo)
     layout.addWidget(content, 1)
