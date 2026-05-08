@@ -1737,6 +1737,10 @@ class TrackingOptionsPanel(ControlPanelBase):
         self._current_options: dict[str, Any] = tracking_options_from_qsettings()
         self._updating_fields = False
 
+        self.setMaximumWidth(760)
+        self.layout().setContentsMargins(20, 6, 20, 12)
+        self.layout().setSpacing(6)
+
         note = QLabel(
             textwrap.dedent(
                 """
@@ -1750,86 +1754,120 @@ class TrackingOptionsPanel(ControlPanelBase):
         note.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         note.setOpenExternalLinks(True)
         note.setWordWrap(True)
-        self.layout().addWidget(note)
+
+        guide_group, guide_layout = self._build_preferences_group('Guide', self)
+        note.setObjectName("preferencesDescription")
+        guide_layout.addWidget(note)
+        self.layout().addWidget(guide_group)
+
+        general_group, general_layout = self._build_preferences_group('General', self)
 
         background_row = QHBoxLayout()
-        background_row.addWidget(QLabel('Center-of-mass background:'))
+        background_row.setContentsMargins(0, 0, 0, 0)
+        background_row.setSpacing(10)
+
+        background_label = QLabel('Center-of-mass background')
+        background_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        background_label.setFixedWidth(155)
+        background_row.addWidget(background_label)
+
         self.background_combo = QComboBox()
         self.background_combo.addItems(['none', 'mean', 'median'])
         self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
         self.background_combo.currentTextChanged.connect(lambda _value: self._apply_options_from_inputs())
+        self.background_combo.setFixedWidth(120)
         background_row.addWidget(self.background_combo)
         background_row.addStretch(1)
-        self.layout().addLayout(background_row)
+        general_layout.addLayout(background_row)
+        self.layout().addWidget(general_group)
+
+        auto_group, auto_layout = self._build_preferences_group('Auto Convolution', self)
 
         self.iterations = LabeledLineEditWithValue(
             label_text='Auto-conv iterations',
             default=str(self._current_options['n auto_conv_multiline_sub_pixel']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.iterations)
+        self._configure_lineedit_row(self.iterations)
+        auto_layout.addWidget(self.iterations)
 
         self.line_ratio = LabeledLineEditWithValue(
             label_text='Line ratio',
             default=str(self._current_options['auto_conv_multiline_sub_pixel']['line_ratio']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.line_ratio)
+        self._configure_lineedit_row(self.line_ratio)
+        auto_layout.addWidget(self.line_ratio)
 
         self.n_local = LabeledLineEditWithValue(
             label_text='n_local (auto-conv)',
             default=str(self._current_options['auto_conv_multiline_sub_pixel']['n_local']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.n_local)
+        self._configure_lineedit_row(self.n_local)
+        auto_layout.addWidget(self.n_local)
+
+        self.layout().addWidget(auto_group)
+
+        profile_group, profile_layout = self._build_preferences_group('Profiles', self)
 
         self.use_fft = LabeledCheckbox(
             label_text='Use FFT profile',
+            widths=(155, 0),
             callback=self._use_fft_changed,
         )
-        self.layout().addWidget(self.use_fft)
+        self._configure_checkbox_row(self.use_fft)
+        profile_layout.addWidget(self.use_fft)
 
         self.fft_oversample = LabeledLineEditWithValue(
             label_text='FFT oversample',
             default=str(self._current_options['fft_profile']['oversample']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_oversample)
+        self._configure_lineedit_row(self.fft_oversample)
+        profile_layout.addWidget(self.fft_oversample)
 
         self.fft_rmin = LabeledLineEditWithValue(
             label_text='FFT rmin',
             default=str(self._current_options['fft_profile']['rmin']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_rmin)
+        self._configure_lineedit_row(self.fft_rmin)
+        profile_layout.addWidget(self.fft_rmin)
 
         self.fft_rmax = LabeledLineEditWithValue(
             label_text='FFT rmax',
             default=str(self._current_options['fft_profile']['rmax']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_rmax)
+        self._configure_lineedit_row(self.fft_rmax)
+        profile_layout.addWidget(self.fft_rmax)
 
         self.fft_gaus_factor = LabeledLineEditWithValue(
             label_text='FFT gaus_factor',
             default=str(self._current_options['fft_profile']['gaus_factor']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_gaus_factor)
+        self._configure_lineedit_row(self.fft_gaus_factor)
+        profile_layout.addWidget(self.fft_gaus_factor)
 
         self.radial_oversample = LabeledLineEditWithValue(
             label_text='Radial oversample',
             default=str(self._current_options['radial_profile']['oversample']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.radial_oversample)
+        self._configure_lineedit_row(self.radial_oversample)
+        profile_layout.addWidget(self.radial_oversample)
 
         self.lookup_n_local = LabeledLineEditWithValue(
             label_text='lookup_z n_local',
             default=str(self._current_options['lookup_z']['n_local']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.lookup_n_local)
+        self._configure_lineedit_row(self.lookup_n_local)
+        profile_layout.addWidget(self.lookup_n_local)
+
+        self.layout().addWidget(profile_group)
 
         for widget in self._option_line_edits():
             widget.lineedit.editingFinished.connect(self._apply_options_from_inputs)  # type: ignore[arg-type]
@@ -1837,6 +1875,41 @@ class TrackingOptionsPanel(ControlPanelBase):
         self._update_value_labels()
         self._populate_inputs_from_options()
         self._sync_fft_enabled_state()
+        self.layout().addStretch(1)
+
+    @staticmethod
+    def _build_preferences_group(title: str, parent: QWidget) -> tuple[QWidget, QVBoxLayout]:
+        group = QWidget(parent)
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(5)
+
+        title_label = QLabel(title, group)
+        title_label.setObjectName("preferencesGroupTitle")
+        group_layout.addWidget(title_label)
+
+        panel = QFrame(group)
+        panel.setObjectName("preferencesGroupPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(14, 10, 14, 10)
+        panel_layout.setSpacing(3)
+        group_layout.addWidget(panel)
+        return group, panel_layout
+
+    @staticmethod
+    def _configure_lineedit_row(widget: LabeledLineEditWithValue) -> None:
+        widget.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        widget.label.setFixedWidth(155)
+        widget.lineedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        widget.lineedit.setFixedWidth(120)
+        widget.value_label.setObjectName("preferencesSavedLabel")
+        widget.layout.setSpacing(10)
+
+    @staticmethod
+    def _configure_checkbox_row(widget: LabeledCheckbox) -> None:
+        widget.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        widget.label.setFixedWidth(155)
+        widget.layout.setSpacing(10)
 
     @staticmethod
     def search_targets() -> list[SearchTarget]:
@@ -1995,131 +2068,7 @@ class PreferencesDialog(QDialog):
         self.setModal(True)
         self.resize(880, 700)
 
-        # --- dark theme ---
-        accent = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
-        self.setStyleSheet(
-            f"""
-            QDialog {{
-                background-color: #111111;
-            }}
-            #preferencesHeader {{
-                background-color: #161616;
-            }}
-            #preferencesHeader QLabel {{
-                color: #bbbbbb;
-                background: transparent;
-            }}
-            #preferencesHeader QPushButton {{
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 4px 12px;
-                color: #cccccc;
-            }}
-            #preferencesHeader QPushButton:hover {{
-                background-color: #333333;
-            }}
-            #preferencesSeparator {{
-                background-color: #2a2a2a;
-                max-height: 1px;
-            }}
-            QListWidget {{
-                background-color: #1b1b1b;
-                border: none;
-                border-right: 1px solid #2a2a2a;
-                padding: 6px 0px;
-                outline: none;
-            }}
-            QListWidget::item {{
-                padding: 0px 14px;
-                margin: 0px;
-                border-radius: 0px;
-                border-left: 2px solid transparent;
-                color: #cccccc;
-            }}
-            QListWidget::item:selected {{
-                background-color: #142033;
-                border-left: 2px solid #2f80ed;
-                color: #e0e0e0;
-            }}
-            QListWidget::item:hover:!selected {{
-                background-color: #222222;
-                border-left: 2px solid #333333;
-            }}
-            #preferencesRightPanel {{
-                background-color: #111111;
-            }}
-            QStackedWidget {{
-                background-color: #111111;
-            }}
-            QScrollArea {{
-                background-color: transparent;
-                border: none;
-            }}
-            #preferencesGroupPanel {{
-                background-color: #181818;
-                border: 1px solid #2a2a2a;
-                border-radius: 4px;
-            }}
-            #preferencesGroupTitle {{
-                color: #c6c6c6;
-                font-weight: bold;
-            }}
-            QLineEdit {{
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 2px 6px;
-                color: #e0e0e0;
-                selection-background-color: {accent};
-            }}
-            QLineEdit:focus {{
-                border: 1px solid {accent};
-            }}
-            QComboBox {{
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 3px 6px;
-                color: #e0e0e0;
-            }}
-            QComboBox::drop-down {{
-                border: none;
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
-                color: #e0e0e0;
-                selection-background-color: #1e2a3a;
-            }}
-            QLabel {{
-                color: #bbbbbb;
-                background: transparent;
-            }}
-            #preferencesSavedLabel {{
-                color: #777777;
-                font-size: 11px;
-                padding-left: 4px;
-            }}
-            #preferencesDescription {{
-                color: #888888;
-            }}
-            #preferencesFooter {{
-                background-color: #141414;
-                border-top: 1px solid #242424;
-            }}
-            #preferencesFooter QPushButton {{
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
-                border-radius: 3px;
-                padding: 5px 16px;
-                color: #cccccc;
-            }}
-            #preferencesFooter QPushButton:hover {{
-                background-color: #333333;
-            }}
-            """
-        )
+        self._apply_preferences_style(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2226,6 +2175,163 @@ class PreferencesDialog(QDialog):
         layout.addLayout(content_row, 1)
 
         self.sidebar.setCurrentRow(0)
+        self._refresh_sidebar_icons()
+
+    @staticmethod
+    def _sidebar_selection_background(accent: str) -> str:
+        color = QColor(accent)
+        if not color.isValid():
+            color = QColor(DEFAULT_GUI_ACCENT_COLOR)
+        base = QColor("#111111")
+        accent_weight = 0.18
+        background = QColor(
+            round(base.red() * (1 - accent_weight) + color.red() * accent_weight),
+            round(base.green() * (1 - accent_weight) + color.green() * accent_weight),
+            round(base.blue() * (1 - accent_weight) + color.blue() * accent_weight),
+        )
+        return background.name()
+
+    def _apply_preferences_style(self, accent: str) -> None:
+        selected_background = self._sidebar_selection_background(accent)
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: #111111;
+            }}
+            #preferencesHeader {{
+                background-color: #161616;
+            }}
+            #preferencesHeader QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesHeader QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 4px 12px;
+                color: #cccccc;
+            }}
+            #preferencesHeader QPushButton:hover {{
+                background-color: #333333;
+            }}
+            #preferencesSeparator {{
+                background-color: #2a2a2a;
+                max-height: 1px;
+            }}
+            QListWidget {{
+                background-color: #1b1b1b;
+                border: none;
+                border-right: 1px solid #2a2a2a;
+                padding: 6px 0px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 0px 14px;
+                margin: 0px;
+                border-radius: 0px;
+                border-left: 2px solid transparent;
+                color: #cccccc;
+            }}
+            QListWidget::item:selected {{
+                background-color: {selected_background};
+                border-left: 2px solid {accent};
+                color: #f0f0f0;
+            }}
+            QListWidget::item:hover:!selected {{
+                background-color: #222222;
+                border-left: 2px solid #333333;
+            }}
+            #preferencesRightPanel {{
+                background-color: #111111;
+            }}
+            QStackedWidget {{
+                background-color: #111111;
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            #preferencesGroupPanel {{
+                background-color: #181818;
+                border: 1px solid #2a2a2a;
+                border-radius: 4px;
+            }}
+            #preferencesGroupTitle {{
+                color: #c6c6c6;
+                font-weight: bold;
+            }}
+            QLineEdit {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 2px 6px;
+                color: #e0e0e0;
+                selection-background-color: {accent};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {accent};
+            }}
+            QComboBox {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 3px 6px;
+                color: #e0e0e0;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                color: #e0e0e0;
+                selection-background-color: {selected_background};
+                selection-color: #f0f0f0;
+            }}
+            QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesSavedLabel {{
+                color: #777777;
+                font-size: 11px;
+                padding-left: 4px;
+            }}
+            #preferencesDescription {{
+                color: #888888;
+            }}
+            #preferencesFooter {{
+                background-color: #141414;
+                border-top: 1px solid #242424;
+            }}
+            #preferencesFooter QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 5px 16px;
+                color: #cccccc;
+            }}
+            #preferencesFooter QPushButton:hover {{
+                background-color: #333333;
+            }}
+            """
+        )
+
+    def _refresh_sidebar_icons(self, accent: str | None = None) -> None:
+        if not hasattr(self, 'sidebar'):
+            return
+
+        accent = accent or self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        icon_font = type(self.manager)._material_symbols_font(point_size=16)
+        icon_size = self.sidebar.iconSize().width()
+        selected_row = self.sidebar.currentRow()
+        for row, (icon_name, _label) in enumerate(self._SIDEBAR_SECTIONS):
+            item = self.sidebar.item(row)
+            if item is None:
+                continue
+            color = accent if row == selected_row else "#888888"
+            item.setIcon(self._make_material_symbol_icon(icon_font, icon_name, color, icon_size))
 
     def _on_load_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -2247,6 +2353,8 @@ class PreferencesDialog(QDialog):
                 import_layout(bundle['appearance_layout'])
             self.settings_panel._push_settings(bundle['magscope'])
             accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+            self._apply_preferences_style(accent_color)
+            self._refresh_sidebar_icons(accent_color)
             self.accent_color_input.setText(accent_color)
             self._update_accent_color_swatch(accent_color)
             self.tracking_options_panel._set_options(
@@ -2300,6 +2408,8 @@ class PreferencesDialog(QDialog):
         self.tracking_options_panel.reset_defaults()
         self._reset_appearance_layout(reset_accent=False)
         accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        self._apply_preferences_style(accent_color)
+        self._refresh_sidebar_icons(accent_color)
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
         self._set_preferences_file_status('All preferences reset to defaults')
@@ -2312,36 +2422,26 @@ class PreferencesDialog(QDialog):
         tab = QWidget(self)
         tab.setMaximumWidth(760)
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(9)
+        layout.setContentsMargins(20, 6, 20, 12)
+        layout.setSpacing(6)
 
-        title = QLabel("Appearance & Layout")
-        font = title.font()
-        font.setPointSize(font.pointSize() + 4)
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
+        accent_group = QWidget(tab)
+        accent_group_layout = QVBoxLayout(accent_group)
+        accent_group_layout.setContentsMargins(0, 0, 0, 0)
+        accent_group_layout.setSpacing(5)
 
-        description = QLabel(
-            "Customize GUI accent color, viewer layout, and collapsed panel states. "
-            "Layout preferences are saved per-session."
-        )
-        description.setWordWrap(True)
-        description.setObjectName("preferencesDescription")
-        layout.addWidget(description)
-
-        accent_title = QLabel("Accent", tab)
+        accent_title = QLabel("Accent", accent_group)
         accent_title.setObjectName("preferencesGroupTitle")
-        layout.addWidget(accent_title)
+        accent_group_layout.addWidget(accent_title)
 
-        accent_panel = QFrame(tab)
+        accent_panel = QFrame(accent_group)
         accent_panel.setObjectName("preferencesGroupPanel")
         accent_inner = QHBoxLayout(accent_panel)
         accent_inner.setContentsMargins(14, 10, 14, 10)
         accent_inner.setSpacing(10)
 
         accent_label = QLabel("Accent color", accent_panel)
-        accent_label.setFixedWidth(140)
+        accent_label.setFixedWidth(155)
         accent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         accent_inner.addWidget(accent_label)
 
@@ -2370,14 +2470,10 @@ class PreferencesDialog(QDialog):
         )
         accent_inner.addWidget(self.accent_color_swatch)
 
-        self.choose_accent_color_button = QPushButton("Choose\xa0...", accent_panel)
-        self.choose_accent_color_button.clicked.connect(  # type: ignore[arg-type]
-            self._choose_accent_color
-        )
-        accent_inner.addWidget(self.choose_accent_color_button)
         accent_inner.addStretch(1)
 
-        layout.addWidget(accent_panel)
+        accent_group_layout.addWidget(accent_panel)
+        layout.addWidget(accent_group)
         self._update_accent_color_swatch(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
 
         self.appearance_status_label = FlashLabel()
@@ -2425,6 +2521,8 @@ class PreferencesDialog(QDialog):
 
         accent_color = settings[GUI_ACCENT_COLOR_SETTING]
         if accent_color == self.manager.settings[GUI_ACCENT_COLOR_SETTING]:
+            self._apply_preferences_style(accent_color)
+            self._refresh_sidebar_icons(accent_color)
             self.accent_color_input.setText(accent_color)
             self._update_accent_color_swatch(accent_color)
             return
@@ -2435,6 +2533,8 @@ class PreferencesDialog(QDialog):
         if callable(apply_accent_color):
             apply_accent_color(accent_color)
         self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+        self._apply_preferences_style(accent_color)
+        self._refresh_sidebar_icons(accent_color)
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
         self.settings_panel._refresh_fields()
@@ -2473,6 +2573,7 @@ class PreferencesDialog(QDialog):
     def _on_sidebar_selection(self, index: int) -> None:
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
+            self._refresh_sidebar_icons()
 
     def _on_reset_current_section(self) -> None:
         index = self.stack.currentIndex()
@@ -2577,6 +2678,8 @@ class PreferencesDialog(QDialog):
             if callable(apply_accent_color):
                 apply_accent_color(DEFAULT_GUI_ACCENT_COLOR)
             self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+            self._apply_preferences_style(DEFAULT_GUI_ACCENT_COLOR)
+            self._refresh_sidebar_icons(DEFAULT_GUI_ACCENT_COLOR)
             self.accent_color_input.setText(DEFAULT_GUI_ACCENT_COLOR)
             self._update_accent_color_swatch(DEFAULT_GUI_ACCENT_COLOR)
             self.settings_panel._refresh_fields()

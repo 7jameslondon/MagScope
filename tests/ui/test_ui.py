@@ -1768,9 +1768,21 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
     assert not hasattr(dialog, 'apply_accent_color_button')
     assert not hasattr(dialog, 'accent_color_status_label')
+    assert not hasattr(dialog, 'choose_accent_color_button')
     assert hasattr(dialog, 'reset_all_preferences_button')
     assert hasattr(dialog, 'reset_section_button')
     assert dialog.appearance_layout_tab.layout().indexOf(dialog.appearance_status_label) != -1
+    assert len(dialog.settings_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
+    assert len(dialog.tracking_options_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
+    assert len(dialog.appearance_layout_tab.findChildren(QFrame, 'preferencesGroupPanel')) == 1
+    assert any(
+        'Advanced Tracking Options Guide' in label.text()
+        for label in dialog.tracking_options_panel.findChildren(QLabel)
+    )
+    assert not any(
+        'Customize GUI accent color' in label.text()
+        for label in dialog.appearance_layout_tab.findChildren(QLabel)
+    )
 
     dialog.sidebar.setCurrentRow(2)
     dialog._on_reset_current_section()
@@ -1781,8 +1793,21 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     clear_ui_manager_singleton()
 
 
-def test_preferences_applies_accent_color_setting(qtbot):
+def test_preferences_applies_accent_color_setting(qtbot, monkeypatch):
     clear_ui_manager_singleton()
+    icon_calls = []
+    original_icon_factory = PreferencesDialog._make_material_symbol_icon
+
+    def record_icon(font, text, color="#888888", size=16):
+        icon_calls.append((text, color))
+        return original_icon_factory(font, text, color, size)
+
+    monkeypatch.setattr(
+        PreferencesDialog,
+        '_make_material_symbol_icon',
+        staticmethod(record_icon),
+    )
+
     manager = UIManager()
     manager.settings = MagScopeSettings()
     manager.windows = []
@@ -1792,15 +1817,23 @@ def test_preferences_applies_accent_color_setting(qtbot):
     dialog = PreferencesDialog(manager)
     qtbot.addWidget(dialog)
 
-    dialog.accent_color_input.setText('#336699')
+    dialog.accent_color_input.setText('#ffce5a')
     dialog.accent_color_input.editingFinished.emit()
 
-    assert manager.settings[GUI_ACCENT_COLOR_SETTING] == '#336699'
-    assert dialog.accent_color_input.text() == '#336699'
-    assert 'background-color: #336699;' in dialog.accent_color_swatch.styleSheet()
+    selection_background = PreferencesDialog._sidebar_selection_background('#ffce5a')
+    stylesheet = dialog.styleSheet()
+    assert manager.settings[GUI_ACCENT_COLOR_SETTING] == '#ffce5a'
+    assert dialog.accent_color_input.text() == '#ffce5a'
+    assert 'background-color: #ffce5a;' in dialog.accent_color_swatch.styleSheet()
+    assert f'background-color: {selection_background};' in stylesheet
+    assert 'border-left: 2px solid #ffce5a;' in stylesheet
+    assert '#142033' not in stylesheet
+    assert '#2f80ed' not in stylesheet
+    assert '#1e2a3a' not in stylesheet
+    assert ('tune', '#ffce5a') in icon_calls
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
-    assert commands[0].settings[GUI_ACCENT_COLOR_SETTING] == '#336699'
+    assert commands[0].settings[GUI_ACCENT_COLOR_SETTING] == '#ffce5a'
 
     clear_ui_manager_singleton()
 
