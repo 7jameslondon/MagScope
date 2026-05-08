@@ -15,7 +15,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QByteArray, QCoreApplication, QEvent, QPointF, QRect, QRectF, QSettings, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -2513,6 +2513,41 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     assert marker_size == ui_manager.beads_in_view_marker_size
 
 
+def test_update_plot_figure_size_emits_device_pixel_ratio(ui_manager):
+    class FakeFigureSizeSignal:
+        def __init__(self):
+            self.calls = []
+
+        def emit(self, *args) -> None:
+            self.calls.append(args)
+
+    signal = FakeFigureSizeSignal()
+    ui_manager.plot_worker = SimpleNamespace(figure_size_signal=signal)
+    ui_manager.plots_widget = SimpleNamespace(devicePixelRatioF=lambda: 1.5)
+
+    try:
+        ui_manager.update_plot_figure_size(320, 180)
+
+        assert signal.calls == [(320, 180, 1.5)]
+    finally:
+        ui_manager.plots_widget = None
+
+
+def test_set_plot_image_preserves_device_pixel_ratio(qtbot, ui_manager):
+    label = QLabel()
+    qtbot.addWidget(label)
+    ui_manager.plots_widget = label
+    image = QImage(20, 10, QImage.Format.Format_RGBA8888)
+    image.setDevicePixelRatio(2.0)
+
+    try:
+        ui_manager._set_plot_image(image)
+
+        assert label.pixmap().devicePixelRatio() == pytest.approx(2.0)
+    finally:
+        ui_manager.plots_widget = None
+
+
 @pytest.mark.skipif(
     sys.platform == 'win32' and sys.version_info >= (3, 13),
     reason='FigureCanvasQTAgg teardown segfaults on Windows Python 3.13 in CI',
@@ -2542,6 +2577,11 @@ def test_plot_worker_uses_constrained_zero_gap_layout(qtbot):
         assert worker.axes[0].get_shared_x_axes().joined(worker.axes[0], worker.axes[2])
         assert not any(line.get_visible() for line in worker.axes[0].xaxis.get_ticklines())
         assert not any(line.get_visible() for line in worker.axes[1].xaxis.get_ticklines())
+
+        worker._update_figure_size(320, 180, 2.0)
+        worker._recreate_figure_if_needed()
+        assert worker.figure.get_dpi() == pytest.approx(200.0)
+        assert worker.canvas.get_width_height() == (640, 360)
 
         layout_params = worker.figure.get_layout_engine().get()
         assert layout_params['w_pad'] == pytest.approx(0.02)

@@ -529,7 +529,8 @@ class UIManager(ManagerProcessBase):
 
         # Create the live plots in a separate thread (but dont start it)
         self.plots_widget = ResizableLabel(ignore_pixmap_size_hint=True)
-        self.plots_widget.setScaledContents(True)
+        self.plots_widget.setScaledContents(False)
+        self.plots_widget.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.plots_widget.setMinimumSize(1, 1)
         self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.plots_thread = QThread()
@@ -681,12 +682,17 @@ class UIManager(ManagerProcessBase):
 
     def update_plot_figure_size(self, w, h):
         if hasattr(self, 'plot_worker') and self.plot_worker is not None:
-            self.plot_worker.figure_size_signal.emit(w, h)
+            device_pixel_ratio = 1.0
+            if self.plots_widget is not None:
+                device_pixel_ratio = self.plots_widget.devicePixelRatioF()
+            self.plot_worker.figure_size_signal.emit(w, h, device_pixel_ratio)
 
     def _set_plot_image(self, img: QImage) -> None:
         if self.plots_widget is None:
             return
-        self.plots_widget.setPixmap(QPixmap.fromImage(img))
+        pixmap = QPixmap.fromImage(img)
+        pixmap.setDevicePixelRatio(img.devicePixelRatio())
+        self.plots_widget.setPixmap(pixmap)
 
     @staticmethod
     def _disconnect_signal(signal, callback) -> None:

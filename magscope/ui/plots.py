@@ -33,7 +33,7 @@ class PlotWorker(QObject):
     selected_bead_signal = pyqtSignal(int)
     reference_bead_signal = pyqtSignal(int)
     stop_signal = pyqtSignal()
-    figure_size_signal = pyqtSignal(int, int)
+    figure_size_signal = pyqtSignal(int, int, float)
     time_mode_signal = pyqtSignal(str)
     relative_window_signal = pyqtSignal(object)
 
@@ -57,6 +57,7 @@ class PlotWorker(QObject):
         self.fig_width = 5
         self.fig_height = 4
         self.dpi = 100
+        self.device_pixel_ratio = 1.0
 
         self.time_mode = "absolute"
         self.relative_window_seconds: float | None = 300
@@ -158,10 +159,11 @@ class PlotWorker(QObject):
         buf = np.frombuffer(self.canvas.buffer_rgba(), dtype=np.uint8).reshape((h, w, 4))
 
         # Convert numpy RGBA -> QImage
-        img = QImage(buf.data, w, h, QImage.Format.Format_RGBA8888)
+        img = QImage(buf.data, w, h, QImage.Format.Format_RGBA8888).copy()
+        img.setDevicePixelRatio(self.device_pixel_ratio)
 
         # Emit figure as a buffer to the main GUI
-        self.image_signal.emit(img.copy())
+        self.image_signal.emit(img)
 
     def add_plot(self, plot: TimeSeriesPlotBase):
         """ Used to add plots before the process has started """
@@ -220,14 +222,15 @@ class PlotWorker(QObject):
         self._tracks_snapshot = None
         self.plots = []
 
-    def _update_figure_size(self, width: int, height: int):
+    def _update_figure_size(self, width: int, height: int, device_pixel_ratio: float):
         """Slot: update figure size based on QLabel dimensions."""
         if width > 0 and height > 0:
             self.mutex.lock()
             try:
-                # Convert pixels to inches
+                # Convert logical pixels to inches. DPI is scaled separately for high-DPI displays.
                 self.fig_width = max(1, width / self.dpi)
                 self.fig_height = max(1, height / self.dpi)
+                self.device_pixel_ratio = max(1.0, float(device_pixel_ratio))
                 self.figure_size_changed = True
             finally:
                 self.mutex.unlock()
@@ -236,8 +239,9 @@ class PlotWorker(QObject):
         """Recreate figure and canvas if size changed."""
         self.mutex.lock()
         if self.figure_size_changed:
+            self.figure.set_dpi(self.dpi * self.device_pixel_ratio)
             self.figure.set_size_inches(self.fig_width, self.fig_height)
-            self.figure_size_changed  = False
+            self.figure_size_changed = False
         self.mutex.unlock()
 
     def _set_time_mode(self, time_mode: str):
