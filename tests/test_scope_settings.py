@@ -152,7 +152,7 @@ def test_gui_accent_color_setting_validates_hex_color():
         settings[GUI_ACCENT_COLOR_SETTING] = '#abcd'
 
 
-def test_gui_live_plot_progress_bar_setting_coerces_boolean_strings():
+def test_gui_live_plot_progress_indicator_setting_coerces_boolean_strings():
     settings = MagScopeSettings()
 
     assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True

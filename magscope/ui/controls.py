@@ -460,13 +460,13 @@ class MagScopeSettingsPanel(QWidget):
         apply_accent_color = getattr(self.manager, "_apply_accent_color", None)
         if callable(apply_accent_color):
             apply_accent_color(settings[GUI_ACCENT_COLOR_SETTING])
-        apply_progress_bar_enabled = getattr(
+        apply_progress_indicator_enabled = getattr(
             self.manager,
-            "_apply_live_plot_progress_bar_enabled",
+            "_apply_live_plot_progress_indicator_enabled",
             None,
         )
-        if callable(apply_progress_bar_enabled):
-            apply_progress_bar_enabled()
+        if callable(apply_progress_indicator_enabled):
+            apply_progress_indicator_enabled()
         command = UpdateSettingsCommand(settings=settings.clone())
         self.manager.send_ipc(command)
         self._refresh_fields()
@@ -2260,7 +2260,7 @@ class PreferencesDialog(QDialog):
             accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
             self.accent_color_input.setText(accent_color)
             self._update_accent_color_swatch(accent_color)
-            self.live_plot_progress_bar_checkbox.checkbox.setChecked(
+            self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
                 self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
             )
             self.tracking_options_panel._set_options(
@@ -2316,7 +2316,7 @@ class PreferencesDialog(QDialog):
         accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
-        self.live_plot_progress_bar_checkbox.checkbox.setChecked(
+        self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
             self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
         )
         self._set_preferences_file_status('All preferences reset to defaults')
@@ -2407,14 +2407,14 @@ class PreferencesDialog(QDialog):
         live_plots_inner.setContentsMargins(14, 10, 14, 10)
         live_plots_inner.setSpacing(6)
 
-        self.live_plot_progress_bar_checkbox = LabeledCheckbox(
-            label_text="Show live plot loading bar",
+        self.live_plot_progress_indicator_checkbox = LabeledCheckbox(
+            label_text="Show live plot loading indicator",
             widths=(190, 0),
             default=self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING],
-            callback=self._apply_live_plot_progress_bar_setting,
+            callback=self._apply_live_plot_progress_indicator_setting,
         )
-        self.live_plot_progress_bar_checkbox.setObjectName("LivePlotProgressBarCheckbox")
-        live_plots_inner.addWidget(self.live_plot_progress_bar_checkbox)
+        self.live_plot_progress_indicator_checkbox.setObjectName("LivePlotProgressIndicatorCheckbox")
+        live_plots_inner.addWidget(self.live_plot_progress_indicator_checkbox)
         layout.addWidget(live_plots_panel)
 
         self.appearance_status_label = FlashLabel()
@@ -2477,7 +2477,7 @@ class PreferencesDialog(QDialog):
         self.settings_panel._refresh_fields()
         self.appearance_status_label.setText('Accent color updated')
 
-    def _apply_live_plot_progress_bar_setting(self, checked: bool) -> None:
+    def _apply_live_plot_progress_indicator_setting(self, checked: bool) -> None:
         settings = self.manager.settings.clone()
         settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = checked
         if settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] == self.manager.settings[
@@ -2487,17 +2487,17 @@ class PreferencesDialog(QDialog):
 
         self.manager.settings = settings.clone()
         self.settings_panel._current_settings = settings.clone()
-        apply_progress_bar_enabled = getattr(
+        apply_progress_indicator_enabled = getattr(
             self.manager,
-            '_apply_live_plot_progress_bar_enabled',
+            '_apply_live_plot_progress_indicator_enabled',
             None,
         )
-        if callable(apply_progress_bar_enabled):
-            apply_progress_bar_enabled()
+        if callable(apply_progress_indicator_enabled):
+            apply_progress_indicator_enabled()
         self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
         self.settings_panel._refresh_fields()
         self.appearance_status_label.setText(
-            'Live plot loading bar shown' if checked else 'Live plot loading bar hidden'
+            'Live plot loading indicator shown' if checked else 'Live plot loading indicator hidden'
         )
 
     def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
@@ -2639,17 +2639,17 @@ class PreferencesDialog(QDialog):
             apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
             if callable(apply_accent_color):
                 apply_accent_color(DEFAULT_GUI_ACCENT_COLOR)
-            apply_progress_bar_enabled = getattr(
+            apply_progress_indicator_enabled = getattr(
                 self.manager,
-                '_apply_live_plot_progress_bar_enabled',
+                '_apply_live_plot_progress_indicator_enabled',
                 None,
             )
-            if callable(apply_progress_bar_enabled):
-                apply_progress_bar_enabled()
+            if callable(apply_progress_indicator_enabled):
+                apply_progress_indicator_enabled()
             self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
             self.accent_color_input.setText(DEFAULT_GUI_ACCENT_COLOR)
             self._update_accent_color_swatch(DEFAULT_GUI_ACCENT_COLOR)
-            self.live_plot_progress_bar_checkbox.checkbox.setChecked(
+            self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
                 settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
             )
             self.settings_panel._refresh_fields()

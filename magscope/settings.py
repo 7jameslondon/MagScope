@@ -478,7 +478,7 @@ class MagScopeSettings(MutableMapping[str, Any]):
             GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
             value_type=bool,
             default=True,
-            display_name="Show live plot loading bar",
+            display_name="Show live plot loading indicator",
         ),
     }
 

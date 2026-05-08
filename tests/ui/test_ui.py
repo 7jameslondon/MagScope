@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -73,6 +72,8 @@ from magscope.ui.theme import ACCENT_COLOR, PANEL_BACKGROUND_COLOR, set_accent_c
 from magscope.ui.ui import (
     Controls,
     LoadingWindow,
+    LivePlotProgressIndicator,
+    PLOT_PROGRESS_INDICATOR_SIZE,
     UIManager,
     VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY,
     _StartupReadyWindow,
@@ -1028,14 +1029,18 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (8, 6, 8, 8)
     assert plots_wrapper.autoFillBackground()
     assert plots_wrapper.palette().color(plots_wrapper.backgroundRole()).name() == PANEL_BACKGROUND_COLOR
-    plots_progress_bar = manager.plots_dock.widget().findChild(QProgressBar, 'LivePlotsProgressBar')
-    assert plots_progress_bar is manager.plots_progress_bar
-    assert plots_progress_bar.minimum() == 0
-    assert plots_progress_bar.maximum() == 1000
-    assert not plots_progress_bar.isTextVisible()
-    assert plots_progress_bar.minimumHeight() == 2
-    assert plots_progress_bar.maximumHeight() == 2
-    assert f'background: {ACCENT_COLOR};' in plots_progress_bar.styleSheet()
+    plots_progress_indicator = manager.plots_dock.widget().findChild(
+        LivePlotProgressIndicator,
+        'LivePlotsProgressIndicator',
+    )
+    assert plots_progress_indicator is manager.plots_progress_indicator
+    assert plots_progress_indicator.parent() is plots_wrapper
+    assert plots_progress_indicator.pos().x() == 8
+    assert plots_progress_indicator.pos().y() == 6
+    assert plots_progress_indicator.minimum() == 0
+    assert plots_progress_indicator.maximum() == 1000
+    assert plots_progress_indicator.width() == PLOT_PROGRESS_INDICATOR_SIZE
+    assert plots_progress_indicator.height() == PLOT_PROGRESS_INDICATOR_SIZE
     assert manager._plot_progress_timer is not None
     assert manager._plot_progress_timer.interval() == 33
     assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
@@ -1790,7 +1795,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert dialog.sidebar.count() == 3
     assert dialog.accent_color_input.text() == ACCENT_COLOR
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
-    assert not dialog.live_plot_progress_bar_checkbox.checkbox.isChecked()
+    assert not dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert not hasattr(dialog, 'apply_accent_color_button')
     assert not hasattr(dialog, 'accent_color_status_label')
     assert hasattr(dialog, 'reset_all_preferences_button')
@@ -1802,7 +1807,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
 
     assert reset_calls == [True]
     assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
-    assert dialog.live_plot_progress_bar_checkbox.checkbox.isChecked()
+    assert dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
 
     clear_ui_manager_singleton()
@@ -1832,7 +1837,7 @@ def test_preferences_applies_accent_color_setting(qtbot):
     clear_ui_manager_singleton()
 
 
-def test_preferences_applies_live_plot_progress_bar_setting(qtbot):
+def test_preferences_applies_live_plot_progress_indicator_setting(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.settings = MagScopeSettings()
@@ -1840,18 +1845,18 @@ def test_preferences_applies_live_plot_progress_bar_setting(qtbot):
     commands = []
     apply_calls = []
     manager.send_ipc = lambda command: commands.append(command)
-    manager._apply_live_plot_progress_bar_enabled = lambda: apply_calls.append(
+    manager._apply_live_plot_progress_indicator_enabled = lambda: apply_calls.append(
         manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
     )
 
     dialog = PreferencesDialog(manager)
     qtbot.addWidget(dialog)
 
-    dialog.live_plot_progress_bar_checkbox.checkbox.setChecked(False)
+    dialog.live_plot_progress_indicator_checkbox.checkbox.setChecked(False)
 
     assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
     assert apply_calls == [False]
-    assert dialog.appearance_status_label.text() == 'Live plot loading bar hidden'
+    assert dialog.appearance_status_label.text() == 'Live plot loading indicator hidden'
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
     assert commands[0].settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
@@ -1940,7 +1945,7 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     assert manager.settings['magnification'] == MagScopeSettings()['magnification']
     assert manager.settings[GUI_ACCENT_COLOR_SETTING] == ACCENT_COLOR
     assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
-    assert dialog.live_plot_progress_bar_checkbox.checkbox.isChecked()
+    assert dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert dialog.tracking_options_panel._current_options == default_tracking_options()
     assert reset_calls == [True]
     assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
@@ -2609,13 +2614,13 @@ def test_set_plot_image_resets_live_plot_progress(qtbot, monkeypatch, ui_manager
     from magscope.ui import ui as ui_module
 
     label = QLabel()
-    progress_bar = QProgressBar()
+    progress_indicator = LivePlotProgressIndicator()
     qtbot.addWidget(label)
-    qtbot.addWidget(progress_bar)
-    progress_bar.setRange(0, 1000)
-    progress_bar.setValue(750)
+    qtbot.addWidget(progress_indicator)
+    progress_indicator.setRange(0, 1000)
+    progress_indicator.setValue(750)
     ui_manager.plots_widget = label
-    ui_manager.plots_progress_bar = progress_bar
+    ui_manager.plots_progress_indicator = progress_indicator
     ui_manager._plot_progress_last_image_time = 100.0
     ui_manager._plot_progress_started_at = 101.0
     ui_manager._plot_progress_interval_seconds = 1.0
@@ -2625,7 +2630,7 @@ def test_set_plot_image_resets_live_plot_progress(qtbot, monkeypatch, ui_manager
     try:
         ui_manager._set_plot_image(image)
 
-        assert progress_bar.value() == 0
+        assert progress_indicator.value() == 0
         assert ui_manager._plot_progress_last_image_time == pytest.approx(102.5)
         assert ui_manager._plot_progress_started_at == pytest.approx(102.5)
         assert ui_manager._plot_progress_interval_seconds == pytest.approx(2.5)
@@ -2634,16 +2639,16 @@ def test_set_plot_image_resets_live_plot_progress(qtbot, monkeypatch, ui_manager
         ui_manager._stop_timer(ui_manager._plot_progress_timer)
         ui_manager._plot_progress_timer = None
         ui_manager.plots_widget = None
-        ui_manager.plots_progress_bar = None
+        ui_manager.plots_progress_indicator = None
 
 
 def test_live_plot_progress_timer_fills_and_holds(qtbot, monkeypatch, ui_manager):
     from magscope.ui import ui as ui_module
 
-    progress_bar = QProgressBar()
-    qtbot.addWidget(progress_bar)
-    progress_bar.setRange(0, 1000)
-    ui_manager.plots_progress_bar = progress_bar
+    progress_indicator = LivePlotProgressIndicator()
+    qtbot.addWidget(progress_indicator)
+    progress_indicator.setRange(0, 1000)
+    ui_manager.plots_progress_indicator = progress_indicator
     ui_manager._plot_progress_started_at = 10.0
     ui_manager._plot_progress_interval_seconds = 2.0
     times = iter([11.0, 13.0, 14.0])
@@ -2651,57 +2656,63 @@ def test_live_plot_progress_timer_fills_and_holds(qtbot, monkeypatch, ui_manager
 
     try:
         ui_manager._update_plot_progress()
-        assert progress_bar.value() == 500
+        assert progress_indicator.value() == 500
 
         ui_manager._update_plot_progress()
-        assert progress_bar.value() == progress_bar.maximum()
+        assert progress_indicator.value() == progress_indicator.maximum()
 
         ui_manager._update_plot_progress()
-        assert progress_bar.value() == progress_bar.maximum()
+        assert progress_indicator.value() == progress_indicator.maximum()
         assert ui_manager._plot_progress_started_at == pytest.approx(10.0)
     finally:
-        ui_manager.plots_progress_bar = None
+        ui_manager.plots_progress_indicator = None
 
 
-def test_live_plot_progress_bar_uses_updated_accent_color(qtbot, ui_manager):
-    progress_bar = ui_manager._create_live_plot_progress_bar()
-    qtbot.addWidget(progress_bar)
-    ui_manager.plots_progress_bar = progress_bar
+def test_live_plot_progress_indicator_refreshes_on_updated_accent_color(qtbot, ui_manager):
+    class FakeProgressIndicator:
+        def __init__(self):
+            self.update_calls = 0
+
+        def update(self):
+            self.update_calls += 1
+
+    progress_indicator = FakeProgressIndicator()
+    ui_manager.plots_progress_indicator = progress_indicator
 
     try:
         ui_manager._apply_accent_color('#336699')
 
-        assert 'background: #336699;' in progress_bar.styleSheet()
+        assert progress_indicator.update_calls == 1
     finally:
-        ui_manager.plots_progress_bar = None
+        ui_manager.plots_progress_indicator = None
 
 
-def test_live_plot_progress_bar_setting_hides_bar_and_stops_timer(qtbot, ui_manager):
-    progress_bar = QProgressBar()
-    qtbot.addWidget(progress_bar)
+def test_live_plot_progress_indicator_setting_hides_indicator_and_stops_timer(qtbot, ui_manager):
+    progress_indicator = LivePlotProgressIndicator()
+    qtbot.addWidget(progress_indicator)
     ui_manager.settings = MagScopeSettings()
-    ui_manager.plots_progress_bar = progress_bar
+    ui_manager.plots_progress_indicator = progress_indicator
     ui_manager._ensure_plot_progress_timer()
     assert ui_manager._plot_progress_timer is not None
 
     ui_manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = False
-    ui_manager._apply_live_plot_progress_bar_enabled()
+    ui_manager._apply_live_plot_progress_indicator_enabled()
 
-    assert not progress_bar.isVisible()
+    assert progress_indicator.isHidden()
     assert ui_manager._plot_progress_timer is None
 
     ui_manager._reset_plot_progress()
     assert ui_manager._plot_progress_timer is None
 
     ui_manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = True
-    ui_manager._apply_live_plot_progress_bar_enabled()
+    ui_manager._apply_live_plot_progress_indicator_enabled()
 
-    assert progress_bar.isVisible()
+    assert not progress_indicator.isHidden()
     assert ui_manager._plot_progress_timer is not None
 
     ui_manager._stop_timer(ui_manager._plot_progress_timer)
     ui_manager._plot_progress_timer = None
-    ui_manager.plots_progress_bar = None
+    ui_manager.plots_progress_indicator = None
 
 
 @pytest.mark.skipif(
