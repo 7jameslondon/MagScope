@@ -12,6 +12,7 @@ from magscope import settings as settings_module
 from magscope.settings import (
     DEFAULT_GUI_ACCENT_COLOR,
     GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
     PREFERENCES_BUNDLE_VERSION,
     TRACKING_OPTIONS_QSETTINGS_GROUP,
@@ -149,6 +150,22 @@ def test_gui_accent_color_setting_validates_hex_color():
 
     with pytest.raises(ValueError):
         settings[GUI_ACCENT_COLOR_SETTING] = '#abcd'
+
+
+def test_gui_live_plot_progress_bar_setting_coerces_boolean_strings():
+    settings = MagScopeSettings()
+
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+    assert GUI_LIVE_PLOT_PROGRESS_BAR_SETTING not in list(MagScopeSettings.magscope_panel_keys())
+
+    settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'false'
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
+
+    settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'yes'
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+
+    with pytest.raises(ValueError):
+        settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'sometimes'
 
 
 def test_roi_must_be_even():
