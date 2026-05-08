@@ -1755,7 +1755,7 @@ def test_magscope_preferences_apply_field_edits_immediately(qtbot):
     magnification.editingFinished.emit()
 
     assert manager.settings['magnification'] == 2.5
-    assert dialog.settings_panel._setting_value_labels['magnification'].text() == 'Saved: 2.5'
+    assert dialog.settings_panel._setting_value_labels['magnification'].text() == '2.5'
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
     assert commands[0].settings['magnification'] == 2.5
