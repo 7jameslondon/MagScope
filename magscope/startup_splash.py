@@ -1,5 +1,7 @@
 from importlib import resources
 
+from magscope.app_icon import load_app_icon, set_windows_app_user_model_id
+
 
 _STARTUP_SPLASH_LOGO_SIZE = (568, 288)
 
@@ -116,11 +118,17 @@ def run_startup_splash(close_event) -> None:
     from PyQt6.QtCore import QTimer
     from PyQt6.QtWidgets import QApplication
 
+    set_windows_app_user_model_id()
     app = QApplication.instance()
     if app is None:
         app = QApplication(["MagScope Splash"])
+    app_icon = load_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
 
     window = _build_startup_splash_window()
+    if not app_icon.isNull():
+        window.setWindowIcon(app_icon)
     window.show()
 
     if screen := app.primaryScreen():

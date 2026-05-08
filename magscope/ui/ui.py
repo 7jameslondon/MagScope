@@ -66,6 +66,7 @@ from PyQt6.QtWidgets import (
 )
 
 from magscope._logging import get_logger
+from magscope.app_icon import load_app_icon, set_windows_app_user_model_id
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
 from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
@@ -679,9 +680,13 @@ class UIManager(ManagerProcessBase):
         }
 
     def setup(self):
+        set_windows_app_user_model_id()
         self.qt_app = QApplication.instance()
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
+        app_icon = load_app_icon()
+        if not app_icon.isNull():
+            self.qt_app.setWindowIcon(app_icon)
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
         palette = self.qt_app.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(APP_BACKGROUND_COLOR))
@@ -726,6 +731,8 @@ class UIManager(ManagerProcessBase):
         # Create the main window. Viewer panes are dock widgets owned by this window.
         window = _StartupReadyWindow(self._notify_startup_ready)
         window.setWindowTitle("MagScope")
+        if not app_icon.isNull():
+            window.setWindowIcon(app_icon)
         screen = QApplication.screens()[0]
         geometry = screen.geometry()
         window.setGeometry(

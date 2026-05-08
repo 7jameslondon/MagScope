@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from magscope.app_icon import TASKBAR_ICON_RESOURCE, WINDOW_ICON_RESOURCE, load_app_icon
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
     CancelGeneratedZLUTEvaluationCommand,
@@ -2556,6 +2557,24 @@ def test_material_symbols_font_is_packaged():
     font_resource = resources.files('magscope').joinpath('assets/MaterialSymbolsRounded.ttf')
 
     assert font_resource.is_file()
+
+
+def test_app_icons_are_packaged():
+    for resource_name in (TASKBAR_ICON_RESOURCE, WINDOW_ICON_RESOURCE):
+        icon_resource = resources.files('magscope').joinpath('assets', resource_name)
+
+        assert icon_resource.is_file()
+
+
+def test_app_icon_loads_small_and_large_sizes(qtbot):
+    icon = load_app_icon()
+
+    assert not icon.isNull()
+    available_sizes = {(size.width(), size.height()) for size in icon.availableSizes()}
+    assert (16, 16) in available_sizes
+    assert (32, 32) in available_sizes
+    assert (48, 48) in available_sizes
+    assert (256, 256) in available_sizes
 
 
 def test_resizable_label_can_ignore_pixmap_size_hint(qtbot):

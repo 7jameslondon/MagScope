@@ -33,6 +33,7 @@ exclude_patterns = []
 
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
+html_favicon = "../../magscope/assets/app_icon_window.svg"
 html_logo = "../../assets/logo.svg"
 
 html_theme_options = {

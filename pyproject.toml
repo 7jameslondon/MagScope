@@ -62,6 +62,8 @@ exclude = ["tests*", "docs*", "examples*", "assets*"]
 
 [tool.setuptools.package-data]
 "magscope" = [
+    "assets/app_icon_taskbar.svg",
+    "assets/app_icon_window.svg",
     "assets/logo.png",
     "assets/MaterialSymbolsRounded.ttf",
     "simulation_zlut.txt"
