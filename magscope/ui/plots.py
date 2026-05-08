@@ -89,16 +89,23 @@ class PlotWorker(QObject):
             figsize=(self.fig_width, self.fig_height),
             dpi=self.dpi,
             facecolor=PANEL_BACKGROUND_COLOR,
+            constrained_layout=True,
+        )
+        self.figure.set_constrained_layout_pads(
+            w_pad=0.02,
+            h_pad=0.0,
+            hspace=0.0,
+            wspace=0.0,
         )
         self.canvas = FigureCanvas(self.figure)
         self.axes = self.figure.subplots(nrows=self.n_plots, ncols=1, sharex=True, sharey=False)
 
-        # Formating to make it look good
-        self.figure.tight_layout()
-        self.figure.subplots_adjust(hspace=0.08)
+        # Formatting to make it look good
         for ax in self.axes:
             ax.set_facecolor(PANEL_BACKGROUND_COLOR)  # Set background color
             ax.margins(x=0)  # Set margins
+        for ax in self.axes[:-1]:
+            ax.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
         self.axes[-1].set_xlabel('Time (h:m:s)')
         self.axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
 

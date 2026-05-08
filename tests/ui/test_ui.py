@@ -61,7 +61,7 @@ from magscope.ui.controls import (
     ZLUTGenerationDialog,
     ZLUTSweepPreviewWidget,
 )
-from magscope.ui.plots import TracksTimeSeriesPlot
+from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase, TracksTimeSeriesPlot
 from magscope.ui.search import PanelControlTarget, SearchHighlighter, SearchRegistry
 from magscope.ui.theme import ACCENT_COLOR, set_accent_color
 from magscope.ui.ui import (
@@ -2511,6 +2511,45 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     np.testing.assert_allclose(plotted_x, expected_x)
     np.testing.assert_allclose(plotted_y, expected_y)
     assert marker_size == ui_manager.beads_in_view_marker_size
+
+
+@pytest.mark.skipif(
+    sys.platform == 'win32' and sys.version_info >= (3, 13),
+    reason='FigureCanvasQTAgg teardown segfaults on Windows Python 3.13 in CI',
+)
+def test_plot_worker_uses_constrained_zero_gap_layout(qtbot):
+    class DummyTimeSeriesPlot(TimeSeriesPlotBase):
+        def setup(self):
+            self.axes.set_ylabel(self.ylabel)
+
+        def update(self):
+            pass
+
+    worker = PlotWorker()
+    worker.plots = [
+        DummyTimeSeriesPlot('TracksBuffer', 'X (nm)'),
+        DummyTimeSeriesPlot('TracksBuffer', 'Y (nm)'),
+        DummyTimeSeriesPlot('TracksBuffer', 'Z (nm)'),
+    ]
+    worker.set_locks({})
+    worker.setup()
+    qtbot.addWidget(worker.canvas)
+
+    try:
+        assert worker.figure.get_constrained_layout()
+        assert len(worker.axes) == 3
+        assert worker.axes[0].get_shared_x_axes().joined(worker.axes[0], worker.axes[1])
+        assert worker.axes[0].get_shared_x_axes().joined(worker.axes[0], worker.axes[2])
+        assert not any(line.get_visible() for line in worker.axes[0].xaxis.get_ticklines())
+        assert not any(line.get_visible() for line in worker.axes[1].xaxis.get_ticklines())
+
+        layout_params = worker.figure.get_layout_engine().get()
+        assert layout_params['w_pad'] == pytest.approx(0.02)
+        assert layout_params['h_pad'] == pytest.approx(0.0)
+        assert layout_params['hspace'] == pytest.approx(0.0)
+        assert layout_params['wspace'] == pytest.approx(0.0)
+    finally:
+        worker.dispose()
 
 
 def test_tracks_time_series_plot_sorts_unsorted_timestamps_before_plotting():
