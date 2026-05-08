@@ -1499,9 +1499,12 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_bar.actions()[-1].text() == 'Help'
     assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
-    search_container = manager._menu_row.layout().itemAt(1).widget()
+    help_button = manager._menu_row.findChild(QFrame, 'HelpMenuButton')
+    help_text = help_button.findChild(QLabel, 'HelpMenuButtonText')
+    help_icon = help_button.findChild(QLabel, 'HelpMenuButtonIcon')
+    assert manager._menu_row.layout().itemAt(1).widget() is help_button
+    search_container = manager._menu_row.layout().itemAt(2).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
     assert manager._menu_row.objectName() == 'MainMenuRow'
@@ -1510,6 +1513,17 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert menu_divider.height() == 1
     assert '#808080' in menu_divider.styleSheet()
     assert isinstance(search_box, QLineEdit)
+    assert isinstance(help_button, QFrame)
+    assert isinstance(help_text, QLabel)
+    assert isinstance(help_icon, QLabel)
+    assert help_text.text() == 'Help'
+    assert help_icon.text() == 'arrow_outward'
+    assert help_text.font().family() == manager._menu_bar.font().family()
+    assert help_text.font().pointSizeF() == manager._menu_bar.font().pointSizeF()
+    assert help_button.testAttribute(Qt.WidgetAttribute.WA_Hover)
+    assert 'QFrame#HelpMenuButton:hover' in help_button.styleSheet()
+    assert 'rgba(255, 255, 255, 24)' in help_button.styleSheet()
+    assert help_button.height() == manager._menu_bar.height()
     assert search_box.isVisible()
     assert search_box.placeholderText() == 'Search for controls ...'
     assert search_box.toolTip() == 'Search shows where controls are; it does not run actions.'

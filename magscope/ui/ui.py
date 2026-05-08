@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from importlib import resources
 import json
-from math import floor, ceil
+from math import ceil, floor
 import os
 import sys
 from time import time
@@ -23,6 +23,7 @@ from PyQt6.QtCore import (
     QThread,
     QTimer,
     QUrl,
+    pyqtSignal,
 )
 from PyQt6.QtGui import (
     QAction,
@@ -123,6 +124,65 @@ logger = get_logger("ui.ui")
 
 VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS = 500
 VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY = "viewerDockSeparatorHoverReady"
+
+
+class _MenuLinkWidget(QFrame):
+    clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        text: str,
+        icon_name: str,
+        *,
+        text_font: QFont,
+        icon_font: QFont,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("HelpMenuButton")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(4)
+
+        text_label = QLabel(text, self)
+        text_label.setObjectName("HelpMenuButtonText")
+        text_label.setFont(text_font)
+        text_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(text_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        icon_label = QLabel(icon_name, self)
+        icon_label.setObjectName("HelpMenuButtonIcon")
+        icon_label.setFont(icon_font)
+        icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.setStyleSheet(
+            """
+            QFrame#HelpMenuButton {
+                border: none;
+                background: transparent;
+            }
+            QFrame#HelpMenuButton:hover {
+                background-color: rgba(255, 255, 255, 24);
+            }
+            QFrame#HelpMenuButton:pressed {
+                background-color: rgba(255, 255, 255, 40);
+            }
+            """
+        )
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+        ):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
 
 def _set_widget_background(widget: QWidget, color_name: str) -> None:
@@ -286,6 +346,7 @@ class UIManager(ManagerProcessBase):
         self._search_status_timer: QTimer | None = None
         self._menu_row: QWidget | None = None
         self._menu_bar: QMenuBar | None = None
+        self._help_menu_button: _MenuLinkWidget | None = None
         self._layout_menu: QMenu | None = None
         self._auto_bead_selection_action: QAction | None = None
         self._zlut_menu: QMenu | None = None
@@ -1589,17 +1650,47 @@ class UIManager(ManagerProcessBase):
         elif name == "Z-LUT":
             self._zlut_menu = menu
 
+    def _attach_help_menu_button(self) -> None:
+        if self._help_menu_button is None or self._menu_row is None:
+            return
+
+        if self._menu_bar is not None:
+            target_height = max(
+                self._menu_bar.height(),
+                self._menu_bar.sizeHint().height(),
+                self._menu_bar.fontMetrics().height() + 14,
+                22,
+            )
+            self._help_menu_button.setFixedHeight(target_height)
+
+        menu_row_layout = self._menu_row.layout()
+        if menu_row_layout is None:
+            return
+
+        if self._help_menu_button.parent() is not self._menu_row:
+            self._help_menu_button.setParent(self._menu_row)
+
+        if menu_row_layout.indexOf(self._help_menu_button) < 0:
+            menu_row_layout.insertWidget(1, self._help_menu_button)
+
     def _create_preferences_menu_action(self, window: QMainWindow) -> None:
         preferences_action = QAction("Preferences", window)
         preferences_action.triggered.connect(lambda _checked=False: self._show_preferences_dialog())
         window.menuBar().addAction(preferences_action)
 
     def _create_help_menu_action(self, window: QMainWindow) -> None:
-        help_action = QAction("Help", window)
-        help_action.triggered.connect(
+        help_button = _MenuLinkWidget(
+            "Help",
+            "arrow_outward",
+            text_font=window.menuBar().font(),
+            icon_font=self._material_symbols_font(point_size=13),
+            parent=window,
+        )
+        help_button.clicked.connect(
             lambda _checked=False: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io"))
         )
-        window.menuBar().addAction(help_action)
+        self._help_menu_button = help_button
+        self._attach_help_menu_button()
 
     def _create_search_menu_widget(self, window: QMainWindow) -> None:
         self._refresh_search_registry()
@@ -1664,6 +1755,7 @@ class UIManager(ManagerProcessBase):
         menu_container_layout.addWidget(menu_divider)
         window.setMenuWidget(menu_container)
         self._menu_row = menu_row
+        self._attach_help_menu_button()
         self._search_box = search_box
         self._search_status_label = search_status_label
         search_status_label.destroyed.connect(lambda _obj=None: self._clear_search_status_label_ref())
