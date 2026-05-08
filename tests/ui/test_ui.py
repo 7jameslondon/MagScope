@@ -1751,14 +1751,22 @@ def test_magscope_preferences_apply_field_edits_immediately(qtbot):
     qtbot.addWidget(dialog)
 
     magnification = dialog.settings_panel._setting_inputs['magnification']
-    magnification.setText('2.5')
+    saved_label = dialog.settings_panel._setting_value_labels['magnification']
+    saved_value = str(manager.settings['magnification'])
+    new_value = '2.5' if saved_value != '2.5' else '4.0'
+
+    assert saved_label.text() == ''
+
+    magnification.setText(new_value)
+    assert saved_label.text() == saved_value
+
     magnification.editingFinished.emit()
 
-    assert manager.settings['magnification'] == 2.5
-    assert dialog.settings_panel._setting_value_labels['magnification'].text() == '2.5'
+    assert manager.settings['magnification'] == float(new_value)
+    assert saved_label.text() == ''
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
-    assert commands[0].settings['magnification'] == 2.5
+    assert commands[0].settings['magnification'] == float(new_value)
 
     clear_ui_manager_singleton()
 

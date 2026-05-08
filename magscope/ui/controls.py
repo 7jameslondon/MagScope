@@ -35,7 +35,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -412,36 +411,13 @@ class MagScopeSettingsPanel(QWidget):
         self.setMaximumWidth(760)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(9)
-
-        title = QLabel("Core Settings")
-        font = title.font()
-        font.setPointSize(font.pointSize() + 4)
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
-
-        file_helper = QLabel(
-            "Import or export MagScope, tracking, appearance, and layout preferences together."
-        )
-        file_helper.setWordWrap(True)
-        file_helper.setObjectName("preferencesDescription")
-        layout.addWidget(file_helper)
+        layout.setContentsMargins(20, 6, 20, 12)
+        layout.setSpacing(6)
 
         if file_status_label is not None:
             file_status_label.setWordWrap(True)
+            file_status_label.setVisible(bool(file_status_label.text()))
             layout.addWidget(file_status_label)
-
-        description = QLabel(
-            "Adjust core MagScope settings. Changes are applied when a field "
-            "loses focus or Enter is pressed."
-        )
-        description.setWordWrap(True)
-        description.setObjectName("preferencesDescription")
-        layout.addWidget(description)
-
-        layout.addWidget(self._settings_header())
 
         for group_title, keys in self._SETTING_GROUPS:
             group = self._build_setting_group(group_title, keys)
@@ -492,7 +468,7 @@ class MagScopeSettingsPanel(QWidget):
             value = self._current_settings[key]
             lineedit.setText(str(value))
             if key in self._setting_value_labels:
-                self._setting_value_labels[key].setText(str(value))
+                self._update_saved_label_for_input(key)
 
     def _apply_setting_from_input(self, key: str) -> None:
         lineedit = self._setting_inputs.get(key)
@@ -547,11 +523,15 @@ class MagScopeSettingsPanel(QWidget):
             lineedit.editingFinished.connect(  # type: ignore[arg-type]
                 lambda k=key: self._apply_setting_from_input(k)
             )
+            lineedit.textChanged.connect(  # type: ignore[arg-type]
+                lambda _text, k=key: self._update_saved_label_for_input(k)
+            )
             grid.addWidget(lineedit, row, 1)
             self._setting_inputs[key] = lineedit
 
-            saved_label = QLabel(str(self._current_settings[key]))
+            saved_label = QLabel("")
             saved_label.setObjectName("preferencesSavedLabel")
+            saved_label.setVisible(False)
             grid.addWidget(saved_label, row, 2)
             self._setting_value_labels[key] = saved_label
 
@@ -562,38 +542,16 @@ class MagScopeSettingsPanel(QWidget):
         group_layout.addWidget(panel)
         return group
 
-    def _settings_header(self) -> QWidget:
-        header = QWidget(self)
-        grid = QGridLayout(header)
-        grid.setContentsMargins(14, 0, 14, 0)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(0)
+    def _update_saved_label_for_input(self, key: str) -> None:
+        lineedit = self._setting_inputs.get(key)
+        label = self._setting_value_labels.get(key)
+        if lineedit is None or label is None:
+            return
 
-        setting_header = self._column_header("Setting")
-        setting_header.setFixedWidth(155)
-        setting_header.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(setting_header, 0, 0)
-
-        value_header = self._column_header("Value")
-        value_header.setFixedWidth(120)
-        value_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(value_header, 0, 1)
-
-        saved_header = self._column_header("Saved")
-        saved_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(saved_header, 0, 2)
-
-        grid.setColumnStretch(0, 0)
-        grid.setColumnStretch(1, 0)
-        grid.setColumnStretch(2, 1)
-
-        return header
-
-    @staticmethod
-    def _column_header(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("preferencesColumnHeader")
-        return label
+        saved_value = str(self._current_settings[key])
+        unsaved = lineedit.text().strip() != saved_value
+        label.setText(saved_value if unsaved else "")
+        label.setVisible(unsaved)
 
 
 class AcquisitionPanel(ControlPanelBase):
@@ -2138,10 +2096,6 @@ class PreferencesDialog(QDialog):
                 color: #bbbbbb;
                 background: transparent;
             }}
-            #preferencesColumnHeader {{
-                color: #777777;
-                font-size: 11px;
-            }}
             #preferencesSavedLabel {{
                 color: #777777;
                 font-size: 11px;
@@ -2151,7 +2105,8 @@ class PreferencesDialog(QDialog):
                 color: #888888;
             }}
             #preferencesFooter {{
-                background-color: #161616;
+                background-color: #141414;
+                border-top: 1px solid #242424;
             }}
             #preferencesFooter QPushButton {{
                 background-color: #242424;
@@ -2192,6 +2147,7 @@ class PreferencesDialog(QDialog):
 
         self.preferences_file_status = FlashLabel()
         self.preferences_file_status.setText("")
+        self.preferences_file_status.setVisible(False)
 
         header_layout.addStretch(1)
         layout.addWidget(header)
@@ -2239,6 +2195,7 @@ class PreferencesDialog(QDialog):
 
         footer_content = QWidget(footer)
         footer_content.setMaximumWidth(760)
+        footer_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         footer_content_layout = QHBoxLayout(footer_content)
         footer_content_layout.setContentsMargins(0, 0, 0, 0)
         footer_content_layout.addStretch(1)
@@ -2247,7 +2204,6 @@ class PreferencesDialog(QDialog):
         footer_content_layout.addWidget(self.reset_section_button)
 
         footer_layout.addWidget(footer_content)
-        footer_layout.addStretch(1)
         right_layout.addWidget(footer)
 
         self.sidebar = QListWidget(self)
@@ -2302,7 +2258,7 @@ class PreferencesDialog(QDialog):
             QMessageBox.critical(self, 'Preferences', str(exc))
             return
 
-        self.preferences_file_status.setText(f'Imported preferences from {os.path.basename(path)}')
+        self._set_preferences_file_status(f'Imported preferences from {os.path.basename(path)}')
 
     def _on_save_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -2327,7 +2283,7 @@ class PreferencesDialog(QDialog):
             QMessageBox.critical(self, 'Preferences', str(exc))
             return
 
-        self.preferences_file_status.setText(f'Exported preferences to {os.path.basename(path)}')
+        self._set_preferences_file_status(f'Exported preferences to {os.path.basename(path)}')
 
     def _on_reset_all_preferences_clicked(self) -> None:
         confirmation = QMessageBox.question(
@@ -2346,7 +2302,11 @@ class PreferencesDialog(QDialog):
         accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
-        self.preferences_file_status.setText('All preferences reset to defaults')
+        self._set_preferences_file_status('All preferences reset to defaults')
+
+    def _set_preferences_file_status(self, message: str) -> None:
+        self.preferences_file_status.setText(message)
+        self.preferences_file_status.setVisible(bool(message))
 
     def _create_appearance_layout_tab(self) -> QWidget:
         tab = QWidget(self)
