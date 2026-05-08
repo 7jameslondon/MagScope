@@ -12,6 +12,7 @@ import yaml
 
 DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
 GUI_ACCENT_COLOR_SETTING = 'gui accent color'
+GUI_LIVE_PLOT_PROGRESS_BAR_SETTING = 'gui live plot progress bar'
 PREFERENCES_BUNDLE_VERSION = 1
 TRACKING_OPTIONS_QSETTINGS_GROUP = 'TrackingOptions'
 TRACKING_OPTIONS_QSETTINGS_KEY = 'options_yaml'
@@ -309,13 +310,22 @@ class SettingSpec:
             value = value.strip()
             if value == "":
                 raise ValueError(f"Setting '{self.key}' cannot be empty")
-            try:
-                if float in self._candidate_types:
-                    coerced = float(value)
+            if bool in self._candidate_types:
+                normalized = value.lower()
+                if normalized in {'true', '1', 'yes'}:
+                    coerced = True
+                elif normalized in {'false', '0', 'no'}:
+                    coerced = False
                 else:
-                    coerced = int(value)
-            except (TypeError, ValueError):
-                coerced = value
+                    coerced = value
+            else:
+                try:
+                    if float in self._candidate_types:
+                        coerced = float(value)
+                    else:
+                        coerced = int(value)
+                except (TypeError, ValueError):
+                    coerced = value
         else:
             coerced = value
 
@@ -365,7 +375,10 @@ class MagScopeSettings(MutableMapping[str, Any]):
     _QSETTINGS_ORGANIZATION = "MagScope"
     _QSETTINGS_APPLICATION = "MagScope"
     _QSETTINGS_GROUP = "MagScopeSettings"
-    _MAG_SCOPE_PANEL_EXCLUDED_KEYS = {GUI_ACCENT_COLOR_SETTING}
+    _MAG_SCOPE_PANEL_EXCLUDED_KEYS = {
+        GUI_ACCENT_COLOR_SETTING,
+        GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    }
 
     _SETTING_SPECS: dict[str, SettingSpec] = {
         "ROI": SettingSpec(
@@ -460,6 +473,12 @@ class MagScopeSettings(MutableMapping[str, Any]):
             default=DEFAULT_GUI_ACCENT_COLOR,
             display_name="Accent color",
             validator=normalize_hex_color,
+        ),
+        GUI_LIVE_PLOT_PROGRESS_BAR_SETTING: SettingSpec(
+            GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+            value_type=bool,
+            default=True,
+            display_name="Show live plot loading indicator",
         ),
     }
 

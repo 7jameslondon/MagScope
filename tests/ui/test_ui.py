@@ -15,7 +15,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QByteArray, QCoreApplication, QEvent, QPointF, QRect, QRectF, QSettings, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -46,7 +46,12 @@ from magscope.ipc_commands import (
     UpdateTrackingOptionsCommand,
 )
 from magscope.hardware import FocusMotorBase
-from magscope.settings import GUI_ACCENT_COLOR_SETTING, MagScopeSettings, default_tracking_options
+from magscope.settings import (
+    GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    MagScopeSettings,
+    default_tracking_options,
+)
 from magscope.ui.controls import (
     AcquisitionPanel,
     AllanDeviationPanel,
@@ -61,12 +66,14 @@ from magscope.ui.controls import (
     ZLUTGenerationDialog,
     ZLUTSweepPreviewWidget,
 )
-from magscope.ui.plots import TracksTimeSeriesPlot
+from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase, TracksTimeSeriesPlot
 from magscope.ui.search import PanelControlTarget, SearchHighlighter, SearchRegistry
-from magscope.ui.theme import ACCENT_COLOR, set_accent_color
+from magscope.ui.theme import ACCENT_COLOR, PANEL_BACKGROUND_COLOR, set_accent_color
 from magscope.ui.ui import (
     Controls,
     LoadingWindow,
+    LivePlotProgressIndicator,
+    PLOT_PROGRESS_INDICATOR_SIZE,
     UIManager,
     VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY,
     _StartupReadyWindow,
@@ -1015,6 +1022,27 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     assert manager.plots_dock is not None
     assert contains_widget(manager.camera_dock.widget(), manager.video_viewer)
     assert contains_widget(manager.plots_dock.widget(), manager.plots_widget)
+    assert manager.camera_dock.widget().findChild(QWidget, 'LiveCameraDockViewerWrapper') is None
+    plots_wrapper = manager.plots_dock.widget().findChild(QWidget, 'LivePlotsDockViewerWrapper')
+    assert plots_wrapper is not None
+    margins = plots_wrapper.layout().contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (8, 6, 8, 8)
+    assert plots_wrapper.autoFillBackground()
+    assert plots_wrapper.palette().color(plots_wrapper.backgroundRole()).name() == PANEL_BACKGROUND_COLOR
+    plots_progress_indicator = manager.plots_dock.widget().findChild(
+        LivePlotProgressIndicator,
+        'LivePlotsProgressIndicator',
+    )
+    assert plots_progress_indicator is manager.plots_progress_indicator
+    assert plots_progress_indicator.parent() is plots_wrapper
+    assert plots_progress_indicator.pos().x() == 8
+    assert plots_progress_indicator.pos().y() == 6
+    assert plots_progress_indicator.minimum() == 0
+    assert plots_progress_indicator.maximum() == 1000
+    assert plots_progress_indicator.width() == PLOT_PROGRESS_INDICATOR_SIZE
+    assert plots_progress_indicator.height() == PLOT_PROGRESS_INDICATOR_SIZE
+    assert manager._plot_progress_timer is not None
+    assert manager._plot_progress_timer.interval() == 33
     assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert manager.plots_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert 'QLabel { color: red; }' in window.styleSheet()
@@ -1764,6 +1792,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     clear_ui_manager_singleton()
     manager = UIManager()
     manager.settings = MagScopeSettings()
+    manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = False
     manager.windows = []
     commands = []
     manager.send_ipc = lambda command: commands.append(command)
@@ -1780,6 +1809,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert dialog.sidebar.count() == 3
     assert dialog.accent_color_input.text() == ACCENT_COLOR
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
+    assert not dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert not hasattr(dialog, 'apply_accent_color_button')
     assert not hasattr(dialog, 'accent_color_status_label')
     assert not hasattr(dialog, 'choose_accent_color_button')
@@ -1802,6 +1832,8 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     dialog._on_reset_current_section()
 
     assert reset_calls == [True]
+    assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+    assert dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
 
     clear_ui_manager_singleton()
@@ -1848,6 +1880,33 @@ def test_preferences_applies_accent_color_setting(qtbot, monkeypatch):
     assert len(commands) == 1
     assert isinstance(commands[0], UpdateSettingsCommand)
     assert commands[0].settings[GUI_ACCENT_COLOR_SETTING] == '#ffce5a'
+
+    clear_ui_manager_singleton()
+
+
+def test_preferences_applies_live_plot_progress_indicator_setting(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    commands = []
+    apply_calls = []
+    manager.send_ipc = lambda command: commands.append(command)
+    manager._apply_live_plot_progress_indicator_enabled = lambda: apply_calls.append(
+        manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
+    )
+
+    dialog = PreferencesDialog(manager)
+    qtbot.addWidget(dialog)
+
+    dialog.live_plot_progress_indicator_checkbox.checkbox.setChecked(False)
+
+    assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
+    assert apply_calls == [False]
+    assert dialog.appearance_status_label.text() == 'Live plot loading indicator hidden'
+    assert len(commands) == 1
+    assert isinstance(commands[0], UpdateSettingsCommand)
+    assert commands[0].settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
 
     clear_ui_manager_singleton()
 
@@ -1911,6 +1970,7 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     settings = MagScopeSettings()
     settings['magnification'] = 4.0
     settings[GUI_ACCENT_COLOR_SETTING] = '#336699'
+    settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = False
     manager = UIManager()
     manager.settings = settings
     manager.windows = []
@@ -1931,6 +1991,8 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
 
     assert manager.settings['magnification'] == MagScopeSettings()['magnification']
     assert manager.settings[GUI_ACCENT_COLOR_SETTING] == ACCENT_COLOR
+    assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+    assert dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
     assert dialog.tracking_options_panel._current_options == default_tracking_options()
     assert reset_calls == [True]
     assert any(isinstance(command, UpdateSettingsCommand) for command in commands)
@@ -2558,6 +2620,190 @@ def test_update_beads_in_view_handles_disabled_and_recent_points(ui_manager):
     np.testing.assert_allclose(plotted_x, expected_x)
     np.testing.assert_allclose(plotted_y, expected_y)
     assert marker_size == ui_manager.beads_in_view_marker_size
+
+
+def test_update_plot_figure_size_emits_device_pixel_ratio(ui_manager):
+    class FakeFigureSizeSignal:
+        def __init__(self):
+            self.calls = []
+
+        def emit(self, *args) -> None:
+            self.calls.append(args)
+
+    signal = FakeFigureSizeSignal()
+    ui_manager.plot_worker = SimpleNamespace(figure_size_signal=signal)
+    ui_manager.plots_widget = SimpleNamespace(devicePixelRatioF=lambda: 1.5)
+
+    try:
+        ui_manager.update_plot_figure_size(320, 180)
+
+        assert signal.calls == [(320, 180, 1.5)]
+    finally:
+        ui_manager.plots_widget = None
+
+
+def test_set_plot_image_preserves_device_pixel_ratio(qtbot, ui_manager):
+    label = QLabel()
+    qtbot.addWidget(label)
+    ui_manager.plots_widget = label
+    image = QImage(20, 10, QImage.Format.Format_RGBA8888)
+    image.setDevicePixelRatio(2.0)
+
+    try:
+        ui_manager._set_plot_image(image)
+
+        assert label.pixmap().devicePixelRatio() == pytest.approx(2.0)
+    finally:
+        ui_manager.plots_widget = None
+
+
+def test_set_plot_image_resets_live_plot_progress(qtbot, monkeypatch, ui_manager):
+    from magscope.ui import ui as ui_module
+
+    label = QLabel()
+    progress_indicator = LivePlotProgressIndicator()
+    qtbot.addWidget(label)
+    qtbot.addWidget(progress_indicator)
+    progress_indicator.setRange(0, 1000)
+    progress_indicator.setValue(750)
+    ui_manager.plots_widget = label
+    ui_manager.plots_progress_indicator = progress_indicator
+    ui_manager._plot_progress_last_image_time = 100.0
+    ui_manager._plot_progress_started_at = 101.0
+    ui_manager._plot_progress_interval_seconds = 1.0
+    monkeypatch.setattr(ui_module, 'time', lambda: 102.5)
+    image = QImage(20, 10, QImage.Format.Format_RGBA8888)
+
+    try:
+        ui_manager._set_plot_image(image)
+
+        assert progress_indicator.value() == 0
+        assert ui_manager._plot_progress_last_image_time == pytest.approx(102.5)
+        assert ui_manager._plot_progress_started_at == pytest.approx(102.5)
+        assert ui_manager._plot_progress_interval_seconds == pytest.approx(2.5)
+        assert ui_manager._plot_progress_timer is not None
+    finally:
+        ui_manager._stop_timer(ui_manager._plot_progress_timer)
+        ui_manager._plot_progress_timer = None
+        ui_manager.plots_widget = None
+        ui_manager.plots_progress_indicator = None
+
+
+def test_live_plot_progress_timer_fills_and_holds(qtbot, monkeypatch, ui_manager):
+    from magscope.ui import ui as ui_module
+
+    progress_indicator = LivePlotProgressIndicator()
+    qtbot.addWidget(progress_indicator)
+    progress_indicator.setRange(0, 1000)
+    ui_manager.plots_progress_indicator = progress_indicator
+    ui_manager._plot_progress_started_at = 10.0
+    ui_manager._plot_progress_interval_seconds = 2.0
+    times = iter([11.0, 13.0, 14.0])
+    monkeypatch.setattr(ui_module, 'time', lambda: next(times))
+
+    try:
+        ui_manager._update_plot_progress()
+        assert progress_indicator.value() == 500
+
+        ui_manager._update_plot_progress()
+        assert progress_indicator.value() == progress_indicator.maximum()
+
+        ui_manager._update_plot_progress()
+        assert progress_indicator.value() == progress_indicator.maximum()
+        assert ui_manager._plot_progress_started_at == pytest.approx(10.0)
+    finally:
+        ui_manager.plots_progress_indicator = None
+
+
+def test_live_plot_progress_indicator_refreshes_on_updated_accent_color(qtbot, ui_manager):
+    class FakeProgressIndicator:
+        def __init__(self):
+            self.update_calls = 0
+
+        def update(self):
+            self.update_calls += 1
+
+    progress_indicator = FakeProgressIndicator()
+    ui_manager.plots_progress_indicator = progress_indicator
+
+    try:
+        ui_manager._apply_accent_color('#336699')
+
+        assert progress_indicator.update_calls == 1
+    finally:
+        ui_manager.plots_progress_indicator = None
+
+
+def test_live_plot_progress_indicator_setting_hides_indicator_and_stops_timer(qtbot, ui_manager):
+    progress_indicator = LivePlotProgressIndicator()
+    qtbot.addWidget(progress_indicator)
+    ui_manager.settings = MagScopeSettings()
+    ui_manager.plots_progress_indicator = progress_indicator
+    ui_manager._ensure_plot_progress_timer()
+    assert ui_manager._plot_progress_timer is not None
+
+    ui_manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = False
+    ui_manager._apply_live_plot_progress_indicator_enabled()
+
+    assert progress_indicator.isHidden()
+    assert ui_manager._plot_progress_timer is None
+
+    ui_manager._reset_plot_progress()
+    assert ui_manager._plot_progress_timer is None
+
+    ui_manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = True
+    ui_manager._apply_live_plot_progress_indicator_enabled()
+
+    assert not progress_indicator.isHidden()
+    assert ui_manager._plot_progress_timer is not None
+
+    ui_manager._stop_timer(ui_manager._plot_progress_timer)
+    ui_manager._plot_progress_timer = None
+    ui_manager.plots_progress_indicator = None
+
+
+@pytest.mark.skipif(
+    sys.platform == 'win32' and sys.version_info >= (3, 13),
+    reason='FigureCanvasQTAgg teardown segfaults on Windows Python 3.13 in CI',
+)
+def test_plot_worker_uses_constrained_zero_gap_layout(qtbot):
+    class DummyTimeSeriesPlot(TimeSeriesPlotBase):
+        def setup(self):
+            self.axes.set_ylabel(self.ylabel)
+
+        def update(self):
+            pass
+
+    worker = PlotWorker()
+    worker.plots = [
+        DummyTimeSeriesPlot('TracksBuffer', 'X (nm)'),
+        DummyTimeSeriesPlot('TracksBuffer', 'Y (nm)'),
+        DummyTimeSeriesPlot('TracksBuffer', 'Z (nm)'),
+    ]
+    worker.set_locks({})
+    worker.setup()
+    qtbot.addWidget(worker.canvas)
+
+    try:
+        assert worker.figure.get_constrained_layout()
+        assert len(worker.axes) == 3
+        assert worker.axes[0].get_shared_x_axes().joined(worker.axes[0], worker.axes[1])
+        assert worker.axes[0].get_shared_x_axes().joined(worker.axes[0], worker.axes[2])
+        assert not any(line.get_visible() for line in worker.axes[0].xaxis.get_ticklines())
+        assert not any(line.get_visible() for line in worker.axes[1].xaxis.get_ticklines())
+
+        worker._update_figure_size(320, 180, 2.0)
+        worker._recreate_figure_if_needed()
+        assert worker.figure.get_dpi() == pytest.approx(200.0)
+        assert worker.canvas.get_width_height() == (640, 360)
+
+        layout_params = worker.figure.get_layout_engine().get()
+        assert layout_params['w_pad'] == pytest.approx(0.02)
+        assert layout_params['h_pad'] == pytest.approx(0.0)
+        assert layout_params['hspace'] == pytest.approx(0.0)
+        assert layout_params['wspace'] == pytest.approx(0.0)
+    finally:
+        worker.dispose()
 
 
 def test_tracks_time_series_plot_sorts_unsorted_timestamps_before_plotting():

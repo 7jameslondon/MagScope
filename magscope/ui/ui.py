@@ -35,7 +35,9 @@ from PyQt6.QtGui import (
     QGuiApplication,
     QImage,
     QKeySequence,
+    QPainter,
     QPalette,
+    QPen,
     QPixmap,
     QShortcut,
 )
@@ -107,13 +109,19 @@ from magscope.ui.search import (
     SearchTarget,
     normalize_search_text,
 )
-from magscope.ui.theme import APP_BACKGROUND_COLOR, get_accent_color, set_accent_color
+from magscope.ui.theme import (
+    APP_BACKGROUND_COLOR,
+    PANEL_BACKGROUND_COLOR,
+    get_accent_color,
+    set_accent_color,
+)
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import (
     GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
     tracking_options_from_qsettings,
 )
@@ -124,6 +132,13 @@ logger = get_logger("ui.ui")
 
 VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS = 500
 VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY = "viewerDockSeparatorHoverReady"
+PLOT_PROGRESS_MAXIMUM = 1000
+PLOT_PROGRESS_TIMER_INTERVAL_MS = 33
+PLOT_PROGRESS_DEFAULT_INTERVAL_SECONDS = 1.0
+PLOT_PROGRESS_MIN_INTERVAL_SECONDS = 0.1
+PLOT_PROGRESS_INDICATOR_SIZE = 14
+PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR = '#666666'
+PLOT_PROGRESS_INDICATOR_RING_WIDTH = 2
 
 
 class _MenuLinkWidget(QFrame):
@@ -192,6 +207,64 @@ def _set_widget_background(widget: QWidget, color_name: str) -> None:
     palette.setColor(QPalette.ColorRole.Base, color)
     widget.setPalette(palette)
     widget.setAutoFillBackground(True)
+
+
+class LivePlotProgressIndicator(QWidget):
+    """Small circular progress indicator for live plot refreshes."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._minimum = 0
+        self._maximum = PLOT_PROGRESS_MAXIMUM
+        self._value = 0
+        self.setObjectName("LivePlotsProgressIndicator")
+        self.setFixedSize(PLOT_PROGRESS_INDICATOR_SIZE, PLOT_PROGRESS_INDICATOR_SIZE)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def minimum(self) -> int:
+        return self._minimum
+
+    def maximum(self) -> int:
+        return self._maximum
+
+    def value(self) -> int:
+        return self._value
+
+    def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt-style API
+        self._minimum = int(minimum)
+        self._maximum = max(self._minimum + 1, int(maximum))
+        self.setValue(self._value)
+
+    def setValue(self, value: int) -> None:  # noqa: N802 - Qt-style API
+        clamped = max(self._minimum, min(self._maximum, int(value)))
+        if clamped == self._value:
+            return
+        self._value = clamped
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        ring_width = PLOT_PROGRESS_INDICATOR_RING_WIDTH
+        margin = ring_width / 2 + 1.0
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+
+        background_pen = QPen(QColor(PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR), ring_width)
+        background_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(background_pen)
+        painter.drawEllipse(rect)
+
+        fraction = (self._value - self._minimum) / (self._maximum - self._minimum)
+        if fraction <= 0:
+            return
+
+        progress_pen = QPen(QColor(get_accent_color()), ring_width)
+        progress_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(progress_pen)
+        painter.drawArc(rect, 90 * 16, int(-360 * 16 * min(1.0, fraction)))
 
 
 class _StartupReadyWindow(QMainWindow):
@@ -306,6 +379,11 @@ class UIManager(ManagerProcessBase):
         self.plots_dock_title_bar: QWidget | None = None
         self.plots_dock_header: QWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
+        self.plots_progress_indicator: LivePlotProgressIndicator | None = None
+        self._plot_progress_timer: QTimer | None = None
+        self._plot_progress_started_at: float | None = None
+        self._plot_progress_last_image_time: float | None = None
+        self._plot_progress_interval_seconds = PLOT_PROGRESS_DEFAULT_INTERVAL_SECONDS
         self._preferences_dialog: PreferencesDialog | None = None
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
@@ -425,6 +503,31 @@ class UIManager(ManagerProcessBase):
                 background: {accent_color};
             }}
         """
+
+    def _refresh_plot_progress_indicator(self) -> None:
+        if self.plots_progress_indicator is None:
+            return
+        self.plots_progress_indicator.update()
+
+    def _live_plot_progress_indicator_enabled(self) -> bool:
+        if self.settings is None:
+            return True
+        try:
+            return bool(self.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING])
+        except (KeyError, TypeError):
+            return True
+
+    def _apply_live_plot_progress_indicator_enabled(self) -> None:
+        enabled = self._live_plot_progress_indicator_enabled()
+        if self.plots_progress_indicator is not None:
+            self.plots_progress_indicator.setVisible(enabled)
+            if enabled:
+                self.plots_progress_indicator.raise_()
+        if enabled:
+            self._ensure_plot_progress_timer()
+        else:
+            self._stop_timer(self._plot_progress_timer)
+            self._plot_progress_timer = None
 
     @staticmethod
     def _install_viewer_dock_separator_hover_delay(window: QMainWindow) -> None:
@@ -590,7 +693,8 @@ class UIManager(ManagerProcessBase):
 
         # Create the live plots in a separate thread (but dont start it)
         self.plots_widget = ResizableLabel(ignore_pixmap_size_hint=True)
-        self.plots_widget.setScaledContents(True)
+        self.plots_widget.setScaledContents(False)
+        self.plots_widget.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.plots_widget.setMinimumSize(1, 1)
         self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.plots_thread = QThread()
@@ -685,6 +789,7 @@ class UIManager(ManagerProcessBase):
         previous_roi = self._last_applied_roi
         super().set_settings(settings)
         self._apply_accent_color(self._current_accent_color())
+        self._apply_live_plot_progress_indicator_enabled()
         self._show_settings_persistence_warning_if_needed()
 
         new_roi = self.settings["ROI"]
@@ -712,6 +817,7 @@ class UIManager(ManagerProcessBase):
             if accent_role is not None:
                 palette.setColor(accent_role, QColor(accent_color))
             self.qt_app.setPalette(palette)
+        self._refresh_plot_progress_indicator()
         for window in getattr(self, 'windows', []):
             if isinstance(window, QMainWindow):
                 self._apply_viewer_dock_separator_style(window)
@@ -742,12 +848,71 @@ class UIManager(ManagerProcessBase):
 
     def update_plot_figure_size(self, w, h):
         if hasattr(self, 'plot_worker') and self.plot_worker is not None:
-            self.plot_worker.figure_size_signal.emit(w, h)
+            device_pixel_ratio = 1.0
+            if self.plots_widget is not None:
+                device_pixel_ratio = self.plots_widget.devicePixelRatioF()
+            self.plot_worker.figure_size_signal.emit(w, h, device_pixel_ratio)
 
     def _set_plot_image(self, img: QImage) -> None:
         if self.plots_widget is None:
             return
-        self.plots_widget.setPixmap(QPixmap.fromImage(img))
+        pixmap = QPixmap.fromImage(img)
+        pixmap.setDevicePixelRatio(img.devicePixelRatio())
+        self.plots_widget.setPixmap(pixmap)
+        self._reset_plot_progress()
+
+    def _create_live_plot_progress_indicator(self) -> LivePlotProgressIndicator:
+        return LivePlotProgressIndicator()
+
+    def _ensure_plot_progress_timer(self) -> None:
+        if (
+            self._plot_progress_timer is not None
+            or self.plots_progress_indicator is None
+            or not self._live_plot_progress_indicator_enabled()
+        ):
+            return
+
+        if self._plot_progress_started_at is None:
+            self._plot_progress_started_at = time()
+        self._plot_progress_timer = QTimer(self.plots_progress_indicator)
+        self._plot_progress_timer.timeout.connect(self._update_plot_progress)
+        self._plot_progress_timer.setInterval(PLOT_PROGRESS_TIMER_INTERVAL_MS)
+        self._plot_progress_timer.start()
+
+    def _reset_plot_progress(self) -> None:
+        now = time()
+        if self._plot_progress_last_image_time is not None:
+            self._plot_progress_interval_seconds = max(
+                PLOT_PROGRESS_MIN_INTERVAL_SECONDS,
+                now - self._plot_progress_last_image_time,
+            )
+        self._plot_progress_last_image_time = now
+        self._plot_progress_started_at = now
+
+        if self.plots_progress_indicator is not None:
+            self.plots_progress_indicator.setValue(0)
+        self._ensure_plot_progress_timer()
+
+    def _update_plot_progress(self) -> None:
+        if self.plots_progress_indicator is None:
+            return
+
+        now = time()
+        if self._plot_progress_started_at is None:
+            self._plot_progress_started_at = now
+            self.plots_progress_indicator.setValue(0)
+            return
+
+        elapsed_seconds = now - self._plot_progress_started_at
+        progress = min(
+            PLOT_PROGRESS_MAXIMUM,
+            int(
+                PLOT_PROGRESS_MAXIMUM
+                * elapsed_seconds
+                / max(PLOT_PROGRESS_MIN_INTERVAL_SECONDS, self._plot_progress_interval_seconds)
+            ),
+        )
+        self.plots_progress_indicator.setValue(progress)
 
     @staticmethod
     def _disconnect_signal(signal, callback) -> None:
@@ -841,6 +1006,8 @@ class UIManager(ManagerProcessBase):
         self._timer = None
         self._stop_timer(self._timer_video_view)
         self._timer_video_view = None
+        self._stop_timer(self._plot_progress_timer)
+        self._plot_progress_timer = None
 
         if self.video_viewer is not None:
             coordinates_changed = getattr(self.video_viewer, 'coordinatesChanged', None)
@@ -898,6 +1065,7 @@ class UIManager(ManagerProcessBase):
         self.video_viewer = None
         self._close_widget(getattr(self, 'plots_widget', None))
         self.plots_widget = None
+        self.plots_progress_indicator = None
 
         if self.qt_app is not None:
             self.qt_app.quit()
@@ -1361,11 +1529,15 @@ class UIManager(ManagerProcessBase):
             "Live Plots",
         )
         self.plots_dock.setTitleBarWidget(self.plots_dock_title_bar)
+        self.plots_progress_indicator = self._create_live_plot_progress_indicator()
         plots_container, self.plots_dock_header = self._create_viewer_dock_content(
             self.plots_dock,
             self.plots_widget,
+            viewer_margins=(8, 6, 8, 8),
+            viewer_overlay=self.plots_progress_indicator,
         )
         self.plots_dock.setWidget(plots_container)
+        self._apply_live_plot_progress_indicator_enabled()
         self.plots_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self.plots_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetClosable
@@ -1427,6 +1599,8 @@ class UIManager(ManagerProcessBase):
         dock: QDockWidget,
         viewer: QWidget,
         toolbar: QWidget | None = None,
+        viewer_margins: tuple[int, int, int, int] | None = None,
+        viewer_overlay: QWidget | None = None,
     ) -> tuple[QWidget, QWidget]:
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1455,7 +1629,22 @@ class UIManager(ManagerProcessBase):
         container_layout.addWidget(header, 0)
         if toolbar is not None:
             container_layout.addWidget(toolbar, 0)
-        container_layout.addWidget(viewer, 1)
+        if viewer_margins is None:
+            container_layout.addWidget(viewer, 1)
+        else:
+            viewer_wrapper = QWidget(container)
+            viewer_wrapper.setObjectName(f"{dock.objectName()}ViewerWrapper")
+            viewer_wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            _set_widget_background(viewer_wrapper, PANEL_BACKGROUND_COLOR)
+            viewer_layout = QVBoxLayout(viewer_wrapper)
+            viewer_layout.setContentsMargins(*viewer_margins)
+            viewer_layout.setSpacing(0)
+            viewer_layout.addWidget(viewer)
+            if viewer_overlay is not None:
+                viewer_overlay.setParent(viewer_wrapper)
+                viewer_overlay.move(viewer_margins[0], viewer_margins[1])
+                viewer_overlay.raise_()
+            container_layout.addWidget(viewer_wrapper, 1)
         return container, header
 
     def _create_live_bead_toolbar(self) -> QWidget:
