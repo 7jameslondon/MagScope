@@ -1,6 +1,7 @@
 import ctypes
 from importlib import resources
 import sys
+from typing import Any
 
 
 APP_USER_MODEL_ID = "MagScope.MagScope.Desktop"
@@ -16,6 +17,13 @@ _ICON_PIXMAP_SIZES = (
     (128, TASKBAR_ICON_RESOURCE),
     (256, TASKBAR_ICON_RESOURCE),
 )
+_WINDOWS_ICON_HANDLES: list[int] = []
+
+_WM_SETICON = 0x0080
+_ICON_SMALL = 0
+_ICON_BIG = 1
+_GCLP_HICON = -14
+_GCLP_HICONSM = -34
 
 
 def set_windows_app_user_model_id(app_id: str = APP_USER_MODEL_ID) -> None:
@@ -62,3 +70,75 @@ def load_app_icon():
         icon.addPixmap(pixmap)
 
     return icon
+
+
+def apply_windows_native_window_icon(window: Any) -> None:
+    """Apply native Windows small and taskbar icons to an existing Qt window."""
+
+    if sys.platform != "win32":
+        return
+
+    try:
+        hwnd = int(window.winId())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return
+    if hwnd <= 0:
+        return
+
+    small_icon = _load_windows_hicon(WINDOW_ICON_RESOURCE, 32)
+    big_icon = _load_windows_hicon(TASKBAR_ICON_RESOURCE, 256)
+    if small_icon == 0 or big_icon == 0:
+        return
+
+    _set_windows_window_icon(hwnd, _ICON_SMALL, small_icon)
+    _set_windows_window_icon(hwnd, _ICON_BIG, big_icon)
+    _set_windows_class_icon(hwnd, _GCLP_HICONSM, small_icon)
+    _set_windows_class_icon(hwnd, _GCLP_HICON, big_icon)
+
+    # Windows keeps references to these HICONs after WM_SETICON/ClassLongPtr.
+    # Retain them for the process lifetime so taskbar icons do not dangle.
+    _WINDOWS_ICON_HANDLES.extend((small_icon, big_icon))
+
+
+def _load_windows_hicon(resource_name: str, size: int) -> int:
+    from PyQt6.QtCore import QSize, Qt
+    from PyQt6.QtGui import QPixmap
+
+    resource = resources.files("magscope").joinpath("assets", resource_name)
+    if not resource.is_file():
+        return 0
+
+    with resources.as_file(resource) as icon_path:
+        pixmap = QPixmap(str(icon_path))
+    if pixmap.isNull():
+        return 0
+
+    pixmap = pixmap.scaled(
+        QSize(size, size),
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    return int(pixmap.toImage().toHICON())
+
+
+def _set_windows_window_icon(hwnd: int, icon_type: int, hicon: int) -> None:
+    from ctypes import wintypes
+
+    send_message = ctypes.windll.user32.SendMessageW
+    send_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    send_message.restype = wintypes.LPARAM
+    send_message(hwnd, _WM_SETICON, icon_type, hicon)
+
+
+def _set_windows_class_icon(hwnd: int, index: int, hicon: int) -> None:
+    from ctypes import wintypes
+
+    if ctypes.sizeof(ctypes.c_void_p) == ctypes.sizeof(ctypes.c_long):
+        set_class_long = ctypes.windll.user32.SetClassLongW
+        set_class_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        set_class_long.restype = ctypes.c_long
+    else:
+        set_class_long = ctypes.windll.user32.SetClassLongPtrW
+        set_class_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_class_long.restype = ctypes.c_ssize_t
+    set_class_long(hwnd, index, hicon)

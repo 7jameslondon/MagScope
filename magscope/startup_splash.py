@@ -1,6 +1,10 @@
 from importlib import resources
 
-from magscope.app_icon import load_app_icon, set_windows_app_user_model_id
+from magscope.app_icon import (
+    apply_windows_native_window_icon,
+    load_app_icon,
+    set_windows_app_user_model_id,
+)
 
 
 _STARTUP_SPLASH_LOGO_SIZE = (568, 288)
@@ -130,6 +134,8 @@ def run_startup_splash(close_event) -> None:
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     window.show()
+    apply_windows_native_window_icon(window)
+    QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
 
     if screen := app.primaryScreen():
         geometry = screen.availableGeometry()

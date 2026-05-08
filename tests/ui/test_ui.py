@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+import magscope.app_icon as app_icon
 from magscope.app_icon import TASKBAR_ICON_RESOURCE, WINDOW_ICON_RESOURCE, load_app_icon
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
@@ -2575,6 +2576,47 @@ def test_app_icon_loads_small_and_large_sizes(qtbot):
     assert (32, 32) in available_sizes
     assert (48, 48) in available_sizes
     assert (256, 256) in available_sizes
+
+
+def test_windows_native_window_icon_sets_small_and_big_icons(monkeypatch):
+    window_calls = []
+    class_calls = []
+
+    class FakeWindow:
+        def winId(self):
+            return 1234
+
+    def fake_load_hicon(resource_name: str, size: int) -> int:
+        return {
+            WINDOW_ICON_RESOURCE: 11,
+            TASKBAR_ICON_RESOURCE: 22,
+        }[resource_name]
+
+    monkeypatch.setattr(app_icon.sys, 'platform', 'win32')
+    monkeypatch.setattr(app_icon, '_WINDOWS_ICON_HANDLES', [])
+    monkeypatch.setattr(app_icon, '_load_windows_hicon', fake_load_hicon)
+    monkeypatch.setattr(
+        app_icon,
+        '_set_windows_window_icon',
+        lambda hwnd, icon_type, hicon: window_calls.append((hwnd, icon_type, hicon)),
+    )
+    monkeypatch.setattr(
+        app_icon,
+        '_set_windows_class_icon',
+        lambda hwnd, index, hicon: class_calls.append((hwnd, index, hicon)),
+    )
+
+    app_icon.apply_windows_native_window_icon(FakeWindow())
+
+    assert window_calls == [
+        (1234, app_icon._ICON_SMALL, 11),
+        (1234, app_icon._ICON_BIG, 22),
+    ]
+    assert class_calls == [
+        (1234, app_icon._GCLP_HICONSM, 11),
+        (1234, app_icon._GCLP_HICON, 22),
+    ]
+    assert app_icon._WINDOWS_ICON_HANDLES == [11, 22]
 
 
 def test_resizable_label_can_ignore_pixmap_size_hint(qtbot):

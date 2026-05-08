@@ -66,7 +66,11 @@ from PyQt6.QtWidgets import (
 )
 
 from magscope._logging import get_logger
-from magscope.app_icon import load_app_icon, set_windows_app_user_model_id
+from magscope.app_icon import (
+    apply_windows_native_window_icon,
+    load_app_icon,
+    set_windows_app_user_model_id,
+)
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
 from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
@@ -755,6 +759,8 @@ class UIManager(ManagerProcessBase):
             window.show()
         else:
             window.showMaximized()
+        apply_windows_native_window_icon(window)
+        QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
 
         self._show_settings_persistence_warning_if_needed()
 

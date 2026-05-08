@@ -1,5 +1,10 @@
 from importlib import import_module
 
+from magscope.app_icon import set_windows_app_user_model_id as _set_windows_app_user_model_id
+
+_set_windows_app_user_model_id()
+del _set_windows_app_user_model_id
+
 _SUBMODULES = {
     'camera',
     'datatypes',
