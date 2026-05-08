@@ -106,7 +106,12 @@ from magscope.ui.search import (
     SearchTarget,
     normalize_search_text,
 )
-from magscope.ui.theme import APP_BACKGROUND_COLOR, get_accent_color, set_accent_color
+from magscope.ui.theme import (
+    APP_BACKGROUND_COLOR,
+    PANEL_BACKGROUND_COLOR,
+    get_accent_color,
+    set_accent_color,
+)
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
@@ -1309,6 +1314,7 @@ class UIManager(ManagerProcessBase):
         plots_container, self.plots_dock_header = self._create_viewer_dock_content(
             self.plots_dock,
             self.plots_widget,
+            viewer_margins=(8, 6, 8, 8),
         )
         self.plots_dock.setWidget(plots_container)
         self.plots_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
@@ -1372,6 +1378,7 @@ class UIManager(ManagerProcessBase):
         dock: QDockWidget,
         viewer: QWidget,
         toolbar: QWidget | None = None,
+        viewer_margins: tuple[int, int, int, int] | None = None,
     ) -> tuple[QWidget, QWidget]:
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1400,7 +1407,18 @@ class UIManager(ManagerProcessBase):
         container_layout.addWidget(header, 0)
         if toolbar is not None:
             container_layout.addWidget(toolbar, 0)
-        container_layout.addWidget(viewer, 1)
+        if viewer_margins is None:
+            container_layout.addWidget(viewer, 1)
+        else:
+            viewer_wrapper = QWidget(container)
+            viewer_wrapper.setObjectName(f"{dock.objectName()}ViewerWrapper")
+            viewer_wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            _set_widget_background(viewer_wrapper, PANEL_BACKGROUND_COLOR)
+            viewer_layout = QVBoxLayout(viewer_wrapper)
+            viewer_layout.setContentsMargins(*viewer_margins)
+            viewer_layout.setSpacing(0)
+            viewer_layout.addWidget(viewer)
+            container_layout.addWidget(viewer_wrapper, 1)
         return container, header
 
     def _create_live_bead_toolbar(self) -> QWidget:

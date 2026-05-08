@@ -63,7 +63,7 @@ from magscope.ui.controls import (
 )
 from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase, TracksTimeSeriesPlot
 from magscope.ui.search import PanelControlTarget, SearchHighlighter, SearchRegistry
-from magscope.ui.theme import ACCENT_COLOR, set_accent_color
+from magscope.ui.theme import ACCENT_COLOR, PANEL_BACKGROUND_COLOR, set_accent_color
 from magscope.ui.ui import (
     Controls,
     LoadingWindow,
@@ -1015,6 +1015,13 @@ def test_create_central_widgets_and_viewer_docks_attach_expected_children(qtbot)
     assert manager.plots_dock is not None
     assert contains_widget(manager.camera_dock.widget(), manager.video_viewer)
     assert contains_widget(manager.plots_dock.widget(), manager.plots_widget)
+    assert manager.camera_dock.widget().findChild(QWidget, 'LiveCameraDockViewerWrapper') is None
+    plots_wrapper = manager.plots_dock.widget().findChild(QWidget, 'LivePlotsDockViewerWrapper')
+    assert plots_wrapper is not None
+    margins = plots_wrapper.layout().contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (8, 6, 8, 8)
+    assert plots_wrapper.autoFillBackground()
+    assert plots_wrapper.palette().color(plots_wrapper.backgroundRole()).name() == PANEL_BACKGROUND_COLOR
     assert manager.camera_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert manager.plots_dock.toggleViewAction() in window.menuBar().actions()[0].menu().actions()
     assert 'QLabel { color: red; }' in window.styleSheet()
