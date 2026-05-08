@@ -2103,22 +2103,26 @@ class UIManager(ManagerProcessBase):
                 raise ValueError('appearance_layout.viewer_dock_state is invalid')
             self._sync_viewer_dock_headers()
 
-        if geometry is not None:
-            settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
-        if dock_state is not None:
-            settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
+        try:
+            controls_preferences = preferences.get('controls', {})
+            controls = self.controls
+            if controls_preferences and controls is not None and hasattr(controls, 'import_preferences'):
+                controls.import_preferences(controls_preferences)
 
-        splitter_sizes = preferences.get('splitter_sizes', {})
-        if splitter_sizes is not None:
-            for key, raw_sizes in splitter_sizes.items():
-                settings.setValue(str(key), [int(size) for size in raw_sizes])
+            if geometry is not None:
+                settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
+            if dock_state is not None:
+                settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
 
-        controls_preferences = preferences.get('controls', {})
-        controls = self.controls
-        if controls_preferences and controls is not None and hasattr(controls, 'import_preferences'):
-            controls.import_preferences(controls_preferences)
+            splitter_sizes = preferences.get('splitter_sizes', {})
+            if splitter_sizes is not None:
+                for key, raw_sizes in splitter_sizes.items():
+                    settings.setValue(str(key), [int(size) for size in raw_sizes])
 
-        settings.sync()
+            settings.sync()
+        except Exception:
+            restore_previous_layout()
+            raise
 
     def validate_appearance_layout_preferences(self, preferences: Mapping[str, Any]) -> None:
         if not isinstance(preferences, Mapping):

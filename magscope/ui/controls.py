@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QBoxLayout,
+    QApplication,
     QColorDialog,
     QComboBox,
     QDialog,
@@ -422,7 +423,7 @@ class MagScopeSettingsPanel(QWidget):
         layout.addWidget(title)
 
         file_helper = QLabel(
-            "Save or load MagScope, tracking, appearance, and layout preferences together."
+            "Import or export MagScope, tracking, appearance, and layout preferences together."
         )
         file_helper.setWordWrap(True)
         file_helper.setObjectName("preferencesDescription")
@@ -2177,15 +2178,15 @@ class PreferencesDialog(QDialog):
         header_layout.setSpacing(8)
         header_layout.addWidget(QLabel("Preferences file:"))
 
-        self.load_preferences_button = QPushButton("Load Preferences...")
+        self.load_preferences_button = QPushButton("Import")
         self.load_preferences_button.clicked.connect(self._on_load_preferences_clicked)  # type: ignore[arg-type]
         header_layout.addWidget(self.load_preferences_button)
 
-        self.save_preferences_button = QPushButton("Save Preferences...")
+        self.save_preferences_button = QPushButton("Export")
         self.save_preferences_button.clicked.connect(self._on_save_preferences_clicked)  # type: ignore[arg-type]
         header_layout.addWidget(self.save_preferences_button)
 
-        self.reset_all_preferences_button = QPushButton("Reset All Preferences")
+        self.reset_all_preferences_button = QPushButton("Reset All")
         self.reset_all_preferences_button.clicked.connect(self._on_reset_all_preferences_clicked)  # type: ignore[arg-type]
         header_layout.addWidget(self.reset_all_preferences_button)
 
@@ -2254,9 +2255,11 @@ class PreferencesDialog(QDialog):
         self.sidebar.setSpacing(0)
         self.sidebar.currentRowChanged.connect(self._on_sidebar_selection)  # type: ignore[arg-type]
 
-        icon_font = type(self.manager)._material_symbols_font(point_size=14)
+        icon_size = QSize(20, 20)
+        self.sidebar.setIconSize(icon_size)
+        icon_font = type(self.manager)._material_symbols_font(point_size=16)
         for icon_name, label in self._SIDEBAR_SECTIONS:
-            icon = self._make_material_symbol_icon(icon_font, icon_name, "#888888", 16)
+            icon = self._make_material_symbol_icon(icon_font, icon_name, "#888888", icon_size.width())
             item = QListWidgetItem(icon, label)
             item.setSizeHint(QSize(0, 48))
             self.sidebar.addItem(item)
@@ -2271,7 +2274,7 @@ class PreferencesDialog(QDialog):
     def _on_load_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            'Load preferences',
+            'Import preferences',
             '',
             'YAML Files (*.yaml);;All Files (*)',
         )
@@ -2292,19 +2295,19 @@ class PreferencesDialog(QDialog):
             self._update_accent_color_swatch(accent_color)
             self.tracking_options_panel._set_options(
                 bundle['tracking'],
-                f'Loaded preferences from {os.path.basename(path)}',
+                f'Imported preferences from {os.path.basename(path)}',
                 populate_inputs=True,
             )
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, 'Preferences', str(exc))
             return
 
-        self.preferences_file_status.setText(f'Loaded preferences from {os.path.basename(path)}')
+        self.preferences_file_status.setText(f'Imported preferences from {os.path.basename(path)}')
 
     def _on_save_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            'Save preferences',
+            'Export preferences',
             'magscope-preferences.yaml',
             'YAML Files (*.yaml);;All Files (*)',
         )
@@ -2324,7 +2327,7 @@ class PreferencesDialog(QDialog):
             QMessageBox.critical(self, 'Preferences', str(exc))
             return
 
-        self.preferences_file_status.setText(f'Saved preferences to {os.path.basename(path)}')
+        self.preferences_file_status.setText(f'Exported preferences to {os.path.basename(path)}')
 
     def _on_reset_all_preferences_clicked(self) -> None:
         confirmation = QMessageBox.question(
@@ -2494,12 +2497,16 @@ class PreferencesDialog(QDialog):
         color: str = "#888888",
         size: int = 16,
     ) -> QIcon:
-        pixmap = QPixmap(size, size)
+        screen = QApplication.primaryScreen()
+        ratio = max(screen.devicePixelRatio() if screen is not None else 1.0, 1.0)
+        pixmap = QPixmap(round(size * ratio), round(size * ratio))
+        pixmap.setDevicePixelRatio(ratio)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         painter.setFont(font)
         painter.setPen(QColor(color))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        painter.drawText(0, 0, size, size, Qt.AlignmentFlag.AlignCenter, text)
         painter.end()
         return QIcon(pixmap)
 
