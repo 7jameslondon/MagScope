@@ -134,6 +134,8 @@ class _MenuLinkWidget(QFrame):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("HelpMenuButton")
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -161,10 +163,10 @@ class _MenuLinkWidget(QFrame):
                 background: transparent;
             }
             QFrame#HelpMenuButton:hover {
-                background-color: rgba(0, 0, 0, 16);
+                background-color: rgba(255, 255, 255, 24);
             }
             QFrame#HelpMenuButton:pressed {
-                background-color: rgba(0, 0, 0, 28);
+                background-color: rgba(255, 255, 255, 40);
             }
             """
         )
@@ -337,7 +339,7 @@ class UIManager(ManagerProcessBase):
         self._search_status_timer: QTimer | None = None
         self._menu_row: QWidget | None = None
         self._menu_bar: QMenuBar | None = None
-        self._help_menu_button: QToolButton | None = None
+        self._help_menu_button: _MenuLinkWidget | None = None
         self._layout_menu: QMenu | None = None
         self._auto_bead_selection_action: QAction | None = None
         self._zlut_menu: QMenu | None = None
@@ -1598,7 +1600,6 @@ class UIManager(ManagerProcessBase):
             icon_font=self._material_symbols_font(point_size=13),
             parent=window,
         )
-        help_button.setObjectName("HelpMenuButton")
         help_button.clicked.connect(
             lambda _checked=False: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io"))
         )

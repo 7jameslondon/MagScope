@@ -1453,6 +1453,9 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert help_icon.text() == 'arrow_outward'
     assert help_text.font().family() == manager._menu_bar.font().family()
     assert help_text.font().pointSizeF() == manager._menu_bar.font().pointSizeF()
+    assert help_button.testAttribute(Qt.WidgetAttribute.WA_Hover)
+    assert 'QFrame#HelpMenuButton:hover' in help_button.styleSheet()
+    assert 'rgba(255, 255, 255, 24)' in help_button.styleSheet()
     assert help_button.height() == manager._menu_bar.height()
     assert search_box.isVisible()
     assert search_box.placeholderText() == 'Search for controls ...'
