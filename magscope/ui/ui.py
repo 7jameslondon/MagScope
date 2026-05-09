@@ -1,5 +1,4 @@
 from collections import OrderedDict
-from ctypes import wintypes
 from importlib import resources
 import json
 from math import ceil, floor
@@ -17,6 +16,7 @@ from PyQt6.QtCore import (
     QObject,
     QMimeData,
     QPoint,
+    QRect,
     QRectF,
     QSettings,
     QStringListModel,
@@ -146,58 +146,74 @@ PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR = '#666666'
 PLOT_PROGRESS_INDICATOR_RING_WIDTH = 2
 MAIN_TOP_BAR_HEIGHT = 34
 MAIN_WINDOW_ICON_SIZE = 18
-MAIN_WINDOW_CONTROL_WIDTH = 48
-FRAMELESS_RESIZE_MARGIN = 6
+MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH = 144
+DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
+FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
-_WINDOWS_WM_NCHITTEST = 0x0084
-_WINDOWS_HTCLIENT = 1
-_WINDOWS_HTCAPTION = 2
-_WINDOWS_HTLEFT = 10
-_WINDOWS_HTRIGHT = 11
-_WINDOWS_HTTOP = 12
-_WINDOWS_HTTOPLEFT = 13
-_WINDOWS_HTTOPRIGHT = 14
-_WINDOWS_HTBOTTOM = 15
-_WINDOWS_HTBOTTOMLEFT = 16
-_WINDOWS_HTBOTTOMRIGHT = 17
+
+
+def _default_restored_window_geometry(
+    window: QWidget,
+    available_geometry: QRect | None = None,
+) -> QRect:
+    if available_geometry is None:
+        screen = window.screen() or QGuiApplication.primaryScreen()
+        available_geometry = screen.availableGeometry() if screen is not None else QRect(0, 0, 1200, 800)
+
+    minimum_width = max(1, window.minimumWidth())
+    minimum_height = max(1, window.minimumHeight())
+    width = min(
+        available_geometry.width(),
+        max(minimum_width, round(available_geometry.width() * DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION)),
+    )
+    height = min(
+        available_geometry.height(),
+        max(minimum_height, round(available_geometry.height() * DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION)),
+    )
+    return QRect(
+        available_geometry.x() + (available_geometry.width() - width) // 2,
+        available_geometry.y() + (available_geometry.height() - height) // 2,
+        width,
+        height,
+    )
+
+
+def _is_fullscreenish_geometry(geometry: QRect, available_geometry: QRect) -> bool:
+    tolerance = FULLSCREENISH_GEOMETRY_TOLERANCE
+    return (
+        geometry.width() >= available_geometry.width() - tolerance
+        and geometry.height() >= available_geometry.height() - tolerance
+        and geometry.left() <= available_geometry.left() + tolerance
+        and geometry.top() <= available_geometry.top() + tolerance
+        and geometry.right() >= available_geometry.right() - tolerance
+        and geometry.bottom() >= available_geometry.bottom() - tolerance
+    )
+
+
+def _restore_default_geometry_if_fullscreenish(window: QWidget) -> None:
+    screen = window.screen() or QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+
+    available_geometry = screen.availableGeometry()
+    if _is_fullscreenish_geometry(window.geometry(), available_geometry):
+        window.setGeometry(_default_restored_window_geometry(window, available_geometry))
 
 
 class _UnifiedTopBar(QWidget):
     def __init__(self, window: QMainWindow, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._window = window
-        self._maximize_button: QToolButton | None = None
         self._drag_start_global_pos: QPoint | None = None
         self._drag_start_window_pos: QPoint | None = None
         self._system_move_started = False
-        window.installEventFilter(self)
-
-    def set_maximize_button(self, button: QToolButton) -> None:
-        self._maximize_button = button
-        self.sync_maximize_button()
-
-    def sync_maximize_button(self) -> None:
-        if self._maximize_button is None:
-            return
-
-        if self._window.isMaximized():
-            self._maximize_button.setText("filter_none")
-            self._maximize_button.setToolTip("Restore")
-        else:
-            self._maximize_button.setText("crop_square")
-            self._maximize_button.setToolTip("Maximize")
 
     def toggle_maximized(self) -> None:
         if self._window.isMaximized():
             self._window.showNormal()
+            _restore_default_geometry_if_fullscreenish(self._window)
         else:
             self._window.showMaximized()
-        self.sync_maximize_button()
-
-    def eventFilter(self, watched, event):  # type: ignore[override]
-        if watched is self._window and event.type() == QEvent.Type.WindowStateChange:
-            self.sync_maximize_button()
-        return super().eventFilter(watched, event)
 
     def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.MouseButton.LeftButton:
@@ -211,12 +227,11 @@ class _UnifiedTopBar(QWidget):
             self._drag_start_global_pos = event.globalPosition().toPoint()
             self._drag_start_window_pos = self._window.frameGeometry().topLeft()
             self._system_move_started = False
-            if sys.platform != "win32":
-                window_handle = self._window.windowHandle()
-                if window_handle is not None and window_handle.startSystemMove():
-                    self._system_move_started = True
-                    event.accept()
-                    return
+            window_handle = self._window.windowHandle()
+            if window_handle is not None and window_handle.startSystemMove():
+                self._system_move_started = True
+                event.accept()
+                return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
@@ -248,139 +263,52 @@ class _UnifiedTopBar(QWidget):
         super().mouseReleaseEvent(event)
 
 
-class _FramelessWindowResizeFilter(QObject):
-    def __init__(self, window: QMainWindow) -> None:
-        super().__init__(window)
-        self._window = window
-        self._qt_app = QApplication.instance()
-        if self._qt_app is not None:
-            self._qt_app.installEventFilter(self)
-        window.destroyed.connect(lambda _obj=None: self._remove_event_filter())
+class _UnifiedTopMenuBar(QMenuBar):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hovered_action: QAction | None = None
+        self.setMouseTracking(True)
 
-    def eventFilter(self, watched, event):  # type: ignore[override]
-        try:
-            if not self._is_target_widget(watched):
-                return super().eventFilter(watched, event)
-            if self._window.isMaximized() or self._window.isFullScreen():
-                return super().eventFilter(watched, event)
-            if event.type() != QEvent.Type.MouseButtonPress:
-                return super().eventFilter(watched, event)
-            if event.button() != Qt.MouseButton.LeftButton:
-                return super().eventFilter(watched, event)
-
-            edges = self._resize_edges_at(event.globalPosition().toPoint())
-            if edges == Qt.Edge(0):
-                return super().eventFilter(watched, event)
-
-            window_handle = self._window.windowHandle()
-            if window_handle is not None and window_handle.startSystemResize(edges):
-                event.accept()
-                return True
-            return super().eventFilter(watched, event)
-        except RuntimeError:
-            self._remove_event_filter()
-            return False
-
-    def _remove_event_filter(self) -> None:
-        if self._qt_app is None:
+    def _set_hovered_action(self, action: QAction | None) -> None:
+        if action is self._hovered_action:
             return
-        try:
-            self._qt_app.removeEventFilter(self)
-        except RuntimeError:
-            pass
-        self._qt_app = None
+        self._hovered_action = action
+        self.update()
 
-    def _is_target_widget(self, watched) -> bool:
-        return isinstance(watched, QWidget) and (
-            watched is self._window or self._window.isAncestorOf(watched)
-        )
-
-    def _resize_edges_at(self, global_pos: QPoint) -> Qt.Edge:
-        pos = self._window.mapFromGlobal(global_pos)
-        rect = self._window.rect()
-        edges = Qt.Edge(0)
-        if pos.x() <= FRAMELESS_RESIZE_MARGIN:
-            edges |= Qt.Edge.LeftEdge
-        elif pos.x() >= rect.width() - FRAMELESS_RESIZE_MARGIN:
-            edges |= Qt.Edge.RightEdge
-        if pos.y() >= rect.height() - FRAMELESS_RESIZE_MARGIN:
-            edges |= Qt.Edge.BottomEdge
-        return edges
-
-
-def _signed_windows_word(value: int) -> int:
-    value &= 0xffff
-    if value & 0x8000:
-        return value - 0x10000
-    return value
-
-
-def _windows_point_from_lparam(lparam: int) -> QPoint:
-    return QPoint(
-        _signed_windows_word(lparam),
-        _signed_windows_word(lparam >> 16),
-    )
-
-
-def _windows_resize_hit_test(window: QMainWindow, local_pos: QPoint) -> int | None:
-    if window.isMaximized() or window.isFullScreen():
+    def _action_at_full_height(self, pos: QPoint) -> QAction | None:
+        if pos.y() < 0 or pos.y() > self.height():
+            return None
+        for action in self.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+            rect = self.actionGeometry(action)
+            if rect.isValid() and rect.left() <= pos.x() <= rect.right():
+                return action
         return None
 
-    rect = window.rect()
-    left = local_pos.x() <= FRAMELESS_RESIZE_MARGIN
-    right = local_pos.x() >= rect.width() - FRAMELESS_RESIZE_MARGIN
-    top = local_pos.y() <= FRAMELESS_RESIZE_MARGIN
-    bottom = local_pos.y() >= rect.height() - FRAMELESS_RESIZE_MARGIN
+    def _full_height_action_rect(self, action: QAction) -> Any:
+        rect = self.actionGeometry(action)
+        rect.setTop(0)
+        rect.setHeight(self.height())
+        return rect
 
-    if top and left:
-        return _WINDOWS_HTTOPLEFT
-    if top and right:
-        return _WINDOWS_HTTOPRIGHT
-    if bottom and left:
-        return _WINDOWS_HTBOTTOMLEFT
-    if bottom and right:
-        return _WINDOWS_HTBOTTOMRIGHT
-    if left:
-        return _WINDOWS_HTLEFT
-    if right:
-        return _WINDOWS_HTRIGHT
-    if top:
-        return _WINDOWS_HTTOP
-    if bottom:
-        return _WINDOWS_HTBOTTOM
-    return None
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_hovered_action(self._action_at_full_height(event.position().toPoint()))
+        super().mouseMoveEvent(event)
 
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_hovered_action(None)
+        super().leaveEvent(event)
 
-def _is_top_bar_interactive_child(widget: QWidget | None, top_bar: _UnifiedTopBar) -> bool:
-    while widget is not None and widget is not top_bar:
-        if isinstance(widget, (QMenuBar, QLineEdit, QToolButton)):
-            return True
-        if widget.objectName() in {"MenuSearchContainer", "MainWindowControls"}:
-            return True
-        widget = widget.parentWidget()
-    return False
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        action = self._hovered_action or self.activeAction()
+        if action is not None and action.isEnabled() and action in self.actions():
+            rect = self._full_height_action_rect(action)
+            if rect.isValid():
+                painter = QPainter(self)
+                painter.fillRect(rect, QColor(255, 255, 255, 24))
 
-
-def _windows_native_frame_hit_test(window: QMainWindow, global_pos: QPoint) -> int:
-    local_pos = window.mapFromGlobal(global_pos)
-    if not window.rect().contains(local_pos):
-        return _WINDOWS_HTCLIENT
-
-    resize_result = _windows_resize_hit_test(window, local_pos)
-    if resize_result is not None:
-        return resize_result
-
-    top_bar = window.findChild(_UnifiedTopBar, "MainMenuRow")
-    if top_bar is None:
-        return _WINDOWS_HTCLIENT
-    top_bar_pos = top_bar.mapFromGlobal(global_pos)
-    if not top_bar.rect().contains(top_bar_pos):
-        return _WINDOWS_HTCLIENT
-
-    child = window.childAt(local_pos)
-    if _is_top_bar_interactive_child(child, top_bar):
-        return _WINDOWS_HTCLIENT
-    return _WINDOWS_HTCAPTION
+        super().paintEvent(event)
 
 
 def _set_widget_background(widget: QWidget, color_name: str) -> None:
@@ -457,7 +385,6 @@ class _StartupReadyWindow(QMainWindow):
         self._startup_ready_scheduled = False
         self._startup_ready_fallback_scheduled = False
         self._startup_shown = False
-        self._native_frame_hit_test_enabled = False
 
     def event(self, event):
         event_type = event.type()
@@ -468,30 +395,6 @@ class _StartupReadyWindow(QMainWindow):
         elif event_type == QEvent.Type.Paint:
             self._maybe_schedule_startup_ready(after_paint=True)
         return super().event(event)
-
-    def nativeEvent(self, event_type, message):  # type: ignore[override]
-        if sys.platform != "win32" or not self._native_frame_hit_test_enabled:
-            return False, 0
-
-        try:
-            msg = wintypes.MSG.from_address(int(message))
-        except Exception:
-            return False, 0
-
-        if msg.message != _WINDOWS_WM_NCHITTEST:
-            return False, 0
-
-        try:
-            hit_result = _windows_native_frame_hit_test(
-                self,
-                _windows_point_from_lparam(int(msg.lParam)),
-            )
-        except Exception:
-            return False, 0
-        return True, hit_result
-
-    def set_native_frame_hit_test_enabled(self, enabled: bool) -> None:
-        self._native_frame_hit_test_enabled = enabled
 
     def _schedule_startup_ready_fallback(self) -> None:
         if self._startup_ready_fallback_scheduled:
@@ -520,7 +423,6 @@ class _StartupReadyWindow(QMainWindow):
             return
 
         self._startup_ready_scheduled = True
-        self.set_native_frame_hit_test_enabled(True)
         QTimer.singleShot(0, self._on_ready)
 
 
@@ -654,9 +556,8 @@ class UIManager(ManagerProcessBase):
         self._top_bar: _UnifiedTopBar | None = None
         self._help_menu_action: QAction | None = None
         self._window_icon_label: QLabel | None = None
-        self._window_minimize_button: QToolButton | None = None
-        self._window_maximize_button: QToolButton | None = None
-        self._window_close_button: QToolButton | None = None
+        self._title_bar_safe_area_spacer: QWidget | None = None
+        self._title_bar_safe_area_window_handle: Any = None
         self._layout_menu: QMenu | None = None
         self._auto_bead_selection_action: QAction | None = None
         self._zlut_menu: QMenu | None = None
@@ -702,15 +603,30 @@ class UIManager(ManagerProcessBase):
 
     @staticmethod
     def _configure_unified_top_bar_window(window: QMainWindow) -> None:
+        flags = window.windowFlags() & ~Qt.WindowType.FramelessWindowHint
         window.setWindowFlags(
-            window.windowFlags()
-            | Qt.WindowType.FramelessWindowHint
+            flags
+            | Qt.WindowType.ExpandedClientAreaHint
+            | Qt.WindowType.NoTitleBarBackgroundHint
+            | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowSystemMenuHint
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        if getattr(window, "_frameless_window_resize_filter", None) is None:
-            window._frameless_window_resize_filter = _FramelessWindowResizeFilter(window)
+        UIManager._ensure_unified_top_menu_bar(window)
+
+    @staticmethod
+    def _ensure_unified_top_menu_bar(window: QMainWindow) -> _UnifiedTopMenuBar:
+        menu_bar = window.menuBar()
+        if isinstance(menu_bar, _UnifiedTopMenuBar):
+            return menu_bar
+
+        unified_menu_bar = _UnifiedTopMenuBar(window)
+        for action in list(menu_bar.actions()):
+            menu_bar.removeAction(action)
+            unified_menu_bar.addAction(action)
+        window.setMenuBar(unified_menu_bar)
+        return unified_menu_bar
 
     @staticmethod
     def _viewer_dock_separator_stylesheet() -> str:
@@ -977,13 +893,10 @@ class UIManager(ManagerProcessBase):
         self._configure_unified_top_bar_window(window)
         if not app_icon.isNull():
             window.setWindowIcon(app_icon)
-        screen = QApplication.screens()[0]
-        geometry = screen.geometry()
-        window.setGeometry(
-            geometry.x(), geometry.y(), geometry.width(), geometry.height()
-        )
         window.setMinimumWidth(300)
         window.setMinimumHeight(300)
+        screen = QApplication.screens()[0]
+        window.setGeometry(_default_restored_window_geometry(window, screen.availableGeometry()))
         window.closeEvent = lambda _, w=window: self.quit()
         window.setCentralWidget(self.central_widgets[0])
         self.windows.append(window)
@@ -999,6 +912,7 @@ class UIManager(ManagerProcessBase):
             window.show()
         else:
             window.showMaximized()
+        self._install_title_bar_safe_area_updates(window)
         apply_windows_native_window_icon(window)
         QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
 
@@ -1300,6 +1214,8 @@ class UIManager(ManagerProcessBase):
                 pass
         self._search_status_timer = None
         self._search_status_label = None
+        self._title_bar_safe_area_spacer = None
+        self._title_bar_safe_area_window_handle = None
 
         for window in self.windows:
             self._close_widget(window)
@@ -2105,77 +2021,39 @@ class UIManager(ManagerProcessBase):
         window.menuBar().addAction(help_action)
         self._help_menu_action = help_action
 
-    def _create_window_control_button(
-        self,
-        parent: QWidget,
-        object_name: str,
-        text: str,
-        tooltip: str,
-        callback: Callable[[], None],
-        target_height: int,
-    ) -> QToolButton:
-        button = QToolButton(parent)
-        button.setObjectName(object_name)
-        button.setText(text)
-        button.setToolTip(tooltip)
-        button.setFont(self._material_symbols_font(point_size=13))
-        button.setFixedSize(MAIN_WINDOW_CONTROL_WIDTH, target_height)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.clicked.connect(lambda _checked=False: callback())
-        return button
+    @staticmethod
+    def _title_bar_right_safe_area_width(window: QMainWindow) -> int:
+        window_handle = window.windowHandle()
+        if window_handle is not None:
+            margins = window_handle.safeAreaMargins()
+            right_margin = max(0, margins.right())
+            if right_margin > 0:
+                return right_margin
 
-    def _create_window_controls(
-        self,
-        parent: QWidget,
-        window: QMainWindow,
-        top_bar: _UnifiedTopBar,
-        target_height: int,
-    ) -> QWidget:
-        controls = QWidget(parent)
-        controls.setObjectName("MainWindowControls")
-        controls.setFixedHeight(target_height)
-        controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        controls_layout = QHBoxLayout(controls)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(0)
+        if sys.platform == "win32":
+            return MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH
+        return 0
 
-        minimize_button = self._create_window_control_button(
-            controls,
-            "MainWindowMinimizeButton",
-            "minimize",
-            "Minimize",
-            window.showMinimized,
-            target_height,
-        )
-        maximize_button = self._create_window_control_button(
-            controls,
-            "MainWindowMaximizeButton",
-            "crop_square",
-            "Maximize",
-            top_bar.toggle_maximized,
-            target_height,
-        )
-        close_button = self._create_window_control_button(
-            controls,
-            "MainWindowCloseButton",
-            "close",
-            "Close",
-            window.close,
-            target_height,
+    def _update_title_bar_safe_area_spacing(self, window: QMainWindow) -> None:
+        if self._title_bar_safe_area_spacer is None:
+            return
+        self._title_bar_safe_area_spacer.setFixedWidth(
+            self._title_bar_right_safe_area_width(window)
         )
 
-        controls_layout.addWidget(minimize_button)
-        controls_layout.addWidget(maximize_button)
-        controls_layout.addWidget(close_button)
-        top_bar.set_maximize_button(maximize_button)
+    def _install_title_bar_safe_area_updates(self, window: QMainWindow) -> None:
+        self._update_title_bar_safe_area_spacing(window)
+        window_handle = window.windowHandle()
+        if window_handle is None or window_handle is self._title_bar_safe_area_window_handle:
+            return
 
-        self._window_minimize_button = minimize_button
-        self._window_maximize_button = maximize_button
-        self._window_close_button = close_button
-        return controls
+        self._title_bar_safe_area_window_handle = window_handle
+        window_handle.safeAreaMarginsChanged.connect(
+            lambda *_args, w=window: self._update_title_bar_safe_area_spacing(w)
+        )
 
     @staticmethod
-    def _apply_top_bar_style(menu_container: QWidget) -> None:
+    def _apply_top_bar_style(menu_container: QWidget, menu_bar_vertical_padding: int) -> None:
         menu_container.setStyleSheet(
             f"""
             QWidget#MainMenuContainer, QWidget#MainMenuRow {{
@@ -2184,54 +2062,32 @@ class UIManager(ManagerProcessBase):
             QMenuBar#MainMenuBar {{
                 background: transparent;
                 color: #d0d0d0;
+                padding-top: {menu_bar_vertical_padding}px;
+                padding-bottom: {menu_bar_vertical_padding}px;
             }}
             QMenuBar#MainMenuBar::item {{
                 background: transparent;
                 padding: 0px 10px;
             }}
             QMenuBar#MainMenuBar::item:selected {{
-                background-color: rgba(255, 255, 255, 24);
-            }}
-            QWidget#MainWindowControls {{
-                background: transparent;
-            }}
-            QToolButton#MainWindowMinimizeButton,
-            QToolButton#MainWindowMaximizeButton,
-            QToolButton#MainWindowCloseButton {{
-                border: none;
-                background: transparent;
-                color: #d0d0d0;
-                padding: 0px;
-            }}
-            QToolButton#MainWindowMinimizeButton:hover,
-            QToolButton#MainWindowMaximizeButton:hover {{
-                background-color: rgba(255, 255, 255, 24);
-            }}
-            QToolButton#MainWindowMinimizeButton:pressed,
-            QToolButton#MainWindowMaximizeButton:pressed {{
-                background-color: rgba(255, 255, 255, 40);
-            }}
-            QToolButton#MainWindowCloseButton:hover {{
-                background-color: #c42b1c;
-                color: #ffffff;
-            }}
-            QToolButton#MainWindowCloseButton:pressed {{
-                background-color: #8f1f14;
-                color: #ffffff;
+                background-color: transparent;
             }}
             """
         )
 
     def _create_search_menu_widget(self, window: QMainWindow) -> None:
         self._refresh_search_registry()
-        menu_bar = window.menuBar()
+        menu_bar = self._ensure_unified_top_menu_bar(window)
         menu_bar.setObjectName("MainMenuBar")
         self._menu_bar = menu_bar
+        menu_bar_natural_height = menu_bar.sizeHint().height()
         target_height = max(
-            menu_bar.sizeHint().height(),
+            menu_bar_natural_height,
             menu_bar.fontMetrics().height() + 14,
             MAIN_TOP_BAR_HEIGHT,
         )
+        menu_bar_vertical_padding = max(0, (target_height - menu_bar.fontMetrics().height()) // 2)
+        menu_bar.setFixedHeight(target_height)
         menu_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         menu_container = QWidget(window)
@@ -2296,11 +2152,12 @@ class UIManager(ManagerProcessBase):
         search_status_label.setVisible(False)
         menu_row_layout.addWidget(search_status_label, 0, Qt.AlignmentFlag.AlignVCenter)
         menu_row_layout.addStretch(1)
-        menu_row_layout.addWidget(
-            self._create_window_controls(menu_row, window, menu_row, target_height),
-            0,
-            Qt.AlignmentFlag.AlignVCenter,
-        )
+
+        title_bar_safe_area_spacer = QWidget(menu_row)
+        title_bar_safe_area_spacer.setObjectName("MainTitleBarSafeAreaSpacer")
+        title_bar_safe_area_spacer.setFixedHeight(target_height)
+        title_bar_safe_area_spacer.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        menu_row_layout.addWidget(title_bar_safe_area_spacer, 0, Qt.AlignmentFlag.AlignVCenter)
 
         menu_divider = QFrame(menu_container)
         menu_divider.setObjectName("MainMenuDivider")
@@ -2311,13 +2168,16 @@ class UIManager(ManagerProcessBase):
 
         menu_container_layout.addWidget(menu_row)
         menu_container_layout.addWidget(menu_divider)
-        self._apply_top_bar_style(menu_container)
+        self._apply_top_bar_style(menu_container, menu_bar_vertical_padding)
         window.setMenuWidget(menu_container)
         self._top_bar = menu_row
         self._menu_row = menu_row
         self._window_icon_label = icon_label
+        self._title_bar_safe_area_spacer = title_bar_safe_area_spacer
         self._search_box = search_box
         self._search_status_label = search_status_label
+        self._update_title_bar_safe_area_spacing(window)
+        QTimer.singleShot(0, lambda w=window: self._install_title_bar_safe_area_updates(w))
         search_status_label.destroyed.connect(lambda _obj=None: self._clear_search_status_label_ref())
         self._search_status_timer = QTimer(menu_row)
         self._search_status_timer.setSingleShot(True)

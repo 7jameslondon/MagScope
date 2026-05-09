@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 )
 
 import magscope.app_icon as app_icon
+import magscope.ui.ui as ui_module
 from magscope.app_icon import TASKBAR_ICON_RESOURCE, WINDOW_ICON_RESOURCE, load_app_icon
 from magscope.ipc_commands import (
     AddRandomBeadsCommand,
@@ -88,12 +89,12 @@ from magscope.ui.ui import (
     PLOT_PROGRESS_INDICATOR_SIZE,
     UIManager,
     VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY,
-    _WINDOWS_HTCAPTION,
-    _WINDOWS_HTCLIENT,
-    _WINDOWS_HTRIGHT,
+    MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH,
     _StartupReadyWindow,
     _UnifiedTopBar,
-    _windows_native_frame_hit_test,
+    _UnifiedTopMenuBar,
+    _default_restored_window_geometry,
+    _is_fullscreenish_geometry,
 )
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.utils import AcquisitionMode
@@ -1551,32 +1552,26 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     search_container = manager._menu_row.layout().itemAt(2).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
-    window_controls = manager._menu_row.findChild(QWidget, 'MainWindowControls')
+    title_bar_safe_area_spacer = manager._menu_row.findChild(
+        QWidget,
+        'MainTitleBarSafeAreaSpacer',
+    )
     assert manager._menu_row.objectName() == 'MainMenuRow'
     assert icon_label is manager._window_icon_label
     assert search_container.objectName() == 'MenuSearchContainer'
-    assert window_controls is not None
+    assert title_bar_safe_area_spacer is manager._title_bar_safe_area_spacer
+    assert isinstance(manager._menu_bar, _UnifiedTopMenuBar)
+    assert manager._menu_bar.height() == manager._menu_row.height()
     assert search_container.height() == manager._menu_row.height()
-    assert window_controls.height() == manager._menu_row.height()
-    assert abs(
-        manager._menu_bar.geometry().center().y() - manager._menu_row.rect().center().y()
-    ) <= 1
+    assert title_bar_safe_area_spacer.height() == manager._menu_row.height()
     assert manager._help_menu_action in manager._menu_bar.actions()
     assert manager._help_menu_action.text() == 'Help'
-    assert manager._menu_bar.actionGeometry(manager._help_menu_action).center().y() == (
-        manager._menu_bar.rect().center().y()
-    )
-    assert manager._window_minimize_button is window_controls.findChild(
-        QToolButton,
-        'MainWindowMinimizeButton',
-    )
-    assert manager._window_maximize_button is window_controls.findChild(
-        QToolButton,
-        'MainWindowMaximizeButton',
-    )
-    assert manager._window_close_button is window_controls.findChild(
-        QToolButton,
-        'MainWindowCloseButton',
+    assert abs(
+        manager._menu_bar.actionGeometry(manager._help_menu_action).center().y()
+        - manager._menu_bar.rect().center().y()
+    ) <= 1
+    assert manager._menu_bar._full_height_action_rect(manager._help_menu_action).height() == (
+        manager._menu_row.height()
     )
     assert menu_divider is not None
     assert menu_divider.height() == 1
@@ -1593,7 +1588,7 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     clear_ui_manager_singleton()
 
 
-def test_unified_top_bar_uses_app_icon_and_window_controls(qtbot):
+def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
     window = QMainWindow()
@@ -1607,10 +1602,11 @@ def test_unified_top_bar_uses_app_icon_and_window_controls(qtbot):
     qtbot.wait(0)
 
     flags = window.windowFlags()
-    assert flags & Qt.WindowType.FramelessWindowHint
+    assert not (flags & Qt.WindowType.FramelessWindowHint)
+    assert flags & Qt.WindowType.ExpandedClientAreaHint
+    assert flags & Qt.WindowType.NoTitleBarBackgroundHint
     assert flags & Qt.WindowType.WindowSystemMenuHint
     assert flags & Qt.WindowType.WindowMaximizeButtonHint
-    assert window._frameless_window_resize_filter is not None
     assert isinstance(manager._top_bar, _UnifiedTopBar)
 
     icon_label = manager._top_bar.findChild(QLabel, 'MainWindowIcon')
@@ -1618,36 +1614,18 @@ def test_unified_top_bar_uses_app_icon_and_window_controls(qtbot):
     assert icon_label.toolTip() == 'MagScope'
     assert icon_label.pixmap() is not None
     assert not icon_label.pixmap().isNull()
-
-    assert manager._window_minimize_button.text() == 'minimize'
-    assert manager._window_minimize_button.toolTip() == 'Minimize'
-    assert manager._window_maximize_button.text() == 'crop_square'
-    assert manager._window_maximize_button.toolTip() == 'Maximize'
-    assert manager._window_close_button.text() == 'close'
-    assert manager._window_close_button.toolTip() == 'Close'
-
-    manager._window_maximize_button.click()
-    qtbot.wait(0)
-    assert window.isMaximized()
-    assert manager._window_maximize_button.text() == 'filter_none'
-    assert manager._window_maximize_button.toolTip() == 'Restore'
-
-    manager._window_maximize_button.click()
-    qtbot.wait(0)
-    assert not window.isMaximized()
-    assert manager._window_maximize_button.text() == 'crop_square'
-    assert manager._window_maximize_button.toolTip() == 'Maximize'
+    assert manager._menu_row.findChild(QWidget, 'MainWindowControls') is None
 
     clear_ui_manager_singleton()
 
 
-def test_unified_top_bar_windows_hit_test_keeps_snap_caption(qtbot):
+def test_unified_top_bar_reserves_native_caption_button_space(qtbot, monkeypatch):
     clear_ui_manager_singleton()
+    monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
     manager = UIManager()
-    window = _StartupReadyWindow(lambda: None)
+    window = QMainWindow()
     qtbot.addWidget(window)
     window.setWindowTitle('MagScope')
-    window.resize(1000, 400)
 
     manager._configure_unified_top_bar_window(window)
     manager._create_help_menu_action(window)
@@ -1655,32 +1633,45 @@ def test_unified_top_bar_windows_hit_test_keeps_snap_caption(qtbot):
     window.show()
     qtbot.wait(0)
 
-    top_bar = manager._top_bar
-    window_controls = top_bar.findChild(QWidget, 'MainWindowControls')
-    caption_pos = top_bar.mapToGlobal(
-        QPoint(window_controls.x() - 8, top_bar.height() // 2)
+    assert manager._title_bar_safe_area_spacer.width() == (
+        UIManager._title_bar_right_safe_area_width(window)
     )
-    menu_pos = manager._menu_bar.mapToGlobal(
-        QPoint(manager._menu_bar.width() // 2, manager._menu_bar.height() // 2)
-    )
-    search_pos = manager._search_box.mapToGlobal(
-        QPoint(manager._search_box.width() // 2, manager._search_box.height() // 2)
-    )
-    close_pos = manager._window_close_button.mapToGlobal(
-        QPoint(
-            manager._window_close_button.width() // 2,
-            manager._window_close_button.height() // 2,
-        )
-    )
-    right_edge_pos = window.mapToGlobal(QPoint(window.width() - 1, window.height() // 2))
-
-    assert _windows_native_frame_hit_test(window, caption_pos) == _WINDOWS_HTCAPTION
-    assert _windows_native_frame_hit_test(window, menu_pos) == _WINDOWS_HTCLIENT
-    assert _windows_native_frame_hit_test(window, search_pos) == _WINDOWS_HTCLIENT
-    assert _windows_native_frame_hit_test(window, close_pos) == _WINDOWS_HTCLIENT
-    assert _windows_native_frame_hit_test(window, right_edge_pos) == _WINDOWS_HTRIGHT
+    assert manager._title_bar_safe_area_spacer.height() == manager._menu_row.height()
 
     clear_ui_manager_singleton()
+
+
+def test_title_bar_safe_area_uses_windows_fallback(monkeypatch):
+    monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
+    window = SimpleNamespace(windowHandle=lambda: None)
+
+    assert UIManager._title_bar_right_safe_area_width(window) == (
+        MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH
+    )
+
+
+def test_title_bar_safe_area_prefers_qt_safe_margin(monkeypatch):
+    monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
+    margins = SimpleNamespace(right=lambda: MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH + 20)
+    window_handle = SimpleNamespace(safeAreaMargins=lambda: margins)
+    window = SimpleNamespace(windowHandle=lambda: window_handle)
+
+    assert UIManager._title_bar_right_safe_area_width(window) == (
+        MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH + 20
+    )
+
+
+def test_default_restored_main_window_geometry_is_smaller_than_screen(qtbot):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setMinimumSize(300, 300)
+    available_geometry = QRect(100, 200, 1000, 800)
+
+    geometry = _default_restored_window_geometry(window, available_geometry)
+
+    assert geometry == QRect(150, 240, 900, 720)
+    assert not _is_fullscreenish_geometry(geometry, available_geometry)
+    assert _is_fullscreenish_geometry(QRect(100, 200, 1000, 800), available_geometry)
 
 
 def test_search_registry_ranks_exact_alias_and_fuzzy_matches():
