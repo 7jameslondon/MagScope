@@ -1607,7 +1607,9 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert flags & Qt.WindowType.NoTitleBarBackgroundHint
     assert flags & Qt.WindowType.WindowSystemMenuHint
     assert flags & Qt.WindowType.WindowMaximizeButtonHint
+    assert window.testAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect)
     assert isinstance(manager._top_bar, _UnifiedTopBar)
+    assert window.menuWidget().geometry().top() == 0
 
     icon_label = manager._top_bar.findChild(QLabel, 'MainWindowIcon')
     assert icon_label is manager._window_icon_label

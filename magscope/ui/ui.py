@@ -613,6 +613,9 @@ class UIManager(ManagerProcessBase):
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
         )
+        # QWidget layouts otherwise respect the titlebar safe-area margin and
+        # leave the custom menu row below the native caption strip.
+        window.setAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect, True)
         UIManager._ensure_unified_top_menu_bar(window)
 
     @staticmethod
