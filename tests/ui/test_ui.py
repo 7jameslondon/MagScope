@@ -14,7 +14,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QByteArray, QCoreApplication, QEvent, QPointF, QRect, QRectF, QSettings, Qt
+from PyQt6.QtCore import (
+    QByteArray,
+    QCoreApplication,
+    QEvent,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSettings,
+    Qt,
+)
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -78,7 +88,12 @@ from magscope.ui.ui import (
     PLOT_PROGRESS_INDICATOR_SIZE,
     UIManager,
     VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY,
+    _WINDOWS_HTCAPTION,
+    _WINDOWS_HTCLIENT,
+    _WINDOWS_HTRIGHT,
     _StartupReadyWindow,
+    _UnifiedTopBar,
+    _windows_native_frame_hit_test,
 )
 from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.utils import AcquisitionMode
@@ -1529,37 +1544,141 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
-    help_button = manager._menu_row.findChild(QFrame, 'HelpMenuButton')
-    help_text = help_button.findChild(QLabel, 'HelpMenuButtonText')
-    help_icon = help_button.findChild(QLabel, 'HelpMenuButtonIcon')
-    assert manager._menu_row.layout().itemAt(1).widget() is help_button
+    assert isinstance(manager._menu_row, _UnifiedTopBar)
+    icon_label = manager._menu_row.findChild(QLabel, 'MainWindowIcon')
+    assert manager._menu_row.layout().itemAt(0).widget() is icon_label
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
     search_container = manager._menu_row.layout().itemAt(2).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
+    window_controls = manager._menu_row.findChild(QWidget, 'MainWindowControls')
     assert manager._menu_row.objectName() == 'MainMenuRow'
+    assert icon_label is manager._window_icon_label
     assert search_container.objectName() == 'MenuSearchContainer'
+    assert window_controls is not None
+    assert search_container.height() == manager._menu_row.height()
+    assert window_controls.height() == manager._menu_row.height()
+    assert abs(
+        manager._menu_bar.geometry().center().y() - manager._menu_row.rect().center().y()
+    ) <= 1
+    assert manager._help_menu_action in manager._menu_bar.actions()
+    assert manager._help_menu_action.text() == 'Help'
+    assert manager._menu_bar.actionGeometry(manager._help_menu_action).center().y() == (
+        manager._menu_bar.rect().center().y()
+    )
+    assert manager._window_minimize_button is window_controls.findChild(
+        QToolButton,
+        'MainWindowMinimizeButton',
+    )
+    assert manager._window_maximize_button is window_controls.findChild(
+        QToolButton,
+        'MainWindowMaximizeButton',
+    )
+    assert manager._window_close_button is window_controls.findChild(
+        QToolButton,
+        'MainWindowCloseButton',
+    )
     assert menu_divider is not None
     assert menu_divider.height() == 1
     assert '#808080' in menu_divider.styleSheet()
     assert isinstance(search_box, QLineEdit)
-    assert isinstance(help_button, QFrame)
-    assert isinstance(help_text, QLabel)
-    assert isinstance(help_icon, QLabel)
-    assert help_text.text() == 'Help'
-    assert help_icon.text() == 'arrow_outward'
-    assert help_text.font().family() == manager._menu_bar.font().family()
-    assert help_text.font().pointSizeF() == manager._menu_bar.font().pointSizeF()
-    assert help_button.testAttribute(Qt.WidgetAttribute.WA_Hover)
-    assert 'QFrame#HelpMenuButton:hover' in help_button.styleSheet()
-    assert 'rgba(255, 255, 255, 24)' in help_button.styleSheet()
-    assert help_button.height() == manager._menu_bar.height()
     assert search_box.isVisible()
     assert search_box.placeholderText() == 'Search for controls ...'
     assert search_box.toolTip() == 'Search shows where controls are; it does not run actions.'
     assert search_box.width() == 300
+    assert search_box.height() == manager._menu_row.height() - 8
     assert manager._find_search_target('Auto Bead').label == 'Auto Bead Selection'
     assert manager._menu_row.findChild(QLabel, 'MenuSearchStatusLabel') is manager._search_status_label
+
+    clear_ui_manager_singleton()
+
+
+def test_unified_top_bar_uses_app_icon_and_window_controls(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setWindowTitle('MagScope')
+    window.setWindowIcon(load_app_icon())
+
+    manager._configure_unified_top_bar_window(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    flags = window.windowFlags()
+    assert flags & Qt.WindowType.FramelessWindowHint
+    assert flags & Qt.WindowType.WindowSystemMenuHint
+    assert flags & Qt.WindowType.WindowMaximizeButtonHint
+    assert window._frameless_window_resize_filter is not None
+    assert isinstance(manager._top_bar, _UnifiedTopBar)
+
+    icon_label = manager._top_bar.findChild(QLabel, 'MainWindowIcon')
+    assert icon_label is manager._window_icon_label
+    assert icon_label.toolTip() == 'MagScope'
+    assert icon_label.pixmap() is not None
+    assert not icon_label.pixmap().isNull()
+
+    assert manager._window_minimize_button.text() == 'minimize'
+    assert manager._window_minimize_button.toolTip() == 'Minimize'
+    assert manager._window_maximize_button.text() == 'crop_square'
+    assert manager._window_maximize_button.toolTip() == 'Maximize'
+    assert manager._window_close_button.text() == 'close'
+    assert manager._window_close_button.toolTip() == 'Close'
+
+    manager._window_maximize_button.click()
+    qtbot.wait(0)
+    assert window.isMaximized()
+    assert manager._window_maximize_button.text() == 'filter_none'
+    assert manager._window_maximize_button.toolTip() == 'Restore'
+
+    manager._window_maximize_button.click()
+    qtbot.wait(0)
+    assert not window.isMaximized()
+    assert manager._window_maximize_button.text() == 'crop_square'
+    assert manager._window_maximize_button.toolTip() == 'Maximize'
+
+    clear_ui_manager_singleton()
+
+
+def test_unified_top_bar_windows_hit_test_keeps_snap_caption(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = _StartupReadyWindow(lambda: None)
+    qtbot.addWidget(window)
+    window.setWindowTitle('MagScope')
+    window.resize(1000, 400)
+
+    manager._configure_unified_top_bar_window(window)
+    manager._create_help_menu_action(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    top_bar = manager._top_bar
+    window_controls = top_bar.findChild(QWidget, 'MainWindowControls')
+    caption_pos = top_bar.mapToGlobal(
+        QPoint(window_controls.x() - 8, top_bar.height() // 2)
+    )
+    menu_pos = manager._menu_bar.mapToGlobal(
+        QPoint(manager._menu_bar.width() // 2, manager._menu_bar.height() // 2)
+    )
+    search_pos = manager._search_box.mapToGlobal(
+        QPoint(manager._search_box.width() // 2, manager._search_box.height() // 2)
+    )
+    close_pos = manager._window_close_button.mapToGlobal(
+        QPoint(
+            manager._window_close_button.width() // 2,
+            manager._window_close_button.height() // 2,
+        )
+    )
+    right_edge_pos = window.mapToGlobal(QPoint(window.width() - 1, window.height() // 2))
+
+    assert _windows_native_frame_hit_test(window, caption_pos) == _WINDOWS_HTCAPTION
+    assert _windows_native_frame_hit_test(window, menu_pos) == _WINDOWS_HTCLIENT
+    assert _windows_native_frame_hit_test(window, search_pos) == _WINDOWS_HTCLIENT
+    assert _windows_native_frame_hit_test(window, close_pos) == _WINDOWS_HTCLIENT
+    assert _windows_native_frame_hit_test(window, right_edge_pos) == _WINDOWS_HTRIGHT
 
     clear_ui_manager_singleton()
 
@@ -2084,13 +2203,13 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
 
     manager._guide_to_search_result('dock')
 
     assert window.menuWidget() is menu_container
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(0).widget() is manager._menu_bar
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
 
