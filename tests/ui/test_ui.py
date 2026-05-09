@@ -1546,9 +1546,11 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
     assert isinstance(manager._menu_row, _UnifiedTopBar)
     icon_label = manager._menu_row.findChild(QLabel, 'MainWindowIcon')
+    title_label = manager._menu_row.findChild(QLabel, 'MainWindowTitleLabel')
     assert manager._menu_row.layout().itemAt(0).widget() is icon_label
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
-    search_container = manager._menu_row.layout().itemAt(2).widget()
+    assert manager._menu_row.layout().itemAt(1).widget() is title_label
+    assert manager._menu_row.layout().itemAt(2).widget() is manager._top_bar_menu_controls
+    search_container = manager._menu_row.layout().itemAt(3).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
     title_bar_safe_area_spacer = manager._menu_row.findChild(
@@ -1557,6 +1559,9 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     )
     assert manager._menu_row.objectName() == 'MainMenuRow'
     assert icon_label is manager._window_icon_label
+    assert title_label is manager._window_title_label
+    assert title_label.text() == 'MagScope'
+    assert title_label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     assert search_container.objectName() == 'MenuSearchContainer'
     assert title_bar_safe_area_spacer is manager._title_bar_safe_area_spacer
     assert isinstance(manager._menu_bar, _UnifiedTopMenuBar)
@@ -1603,6 +1608,7 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert flags & Qt.WindowType.ExpandedClientAreaHint
     assert flags & Qt.WindowType.NoTitleBarBackgroundHint
     assert flags & Qt.WindowType.CustomizeWindowHint
+    assert not (flags & Qt.WindowType.WindowTitleHint)
     assert not (flags & Qt.WindowType.WindowSystemMenuHint)
     assert not (flags & Qt.WindowType.WindowMaximizeButtonHint)
     assert not (flags & Qt.WindowType.WindowCloseButtonHint)
@@ -1611,10 +1617,14 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert window.menuWidget().geometry().top() == 0
 
     icon_label = manager._top_bar.findChild(QLabel, 'MainWindowIcon')
+    title_label = manager._top_bar.findChild(QLabel, 'MainWindowTitleLabel')
     assert icon_label is manager._window_icon_label
     assert icon_label.toolTip() == 'MagScope'
     assert icon_label.pixmap() is not None
     assert not icon_label.pixmap().isNull()
+    assert title_label is manager._window_title_label
+    assert title_label.text() == 'MagScope'
+    assert title_label.toolTip() == 'MagScope'
     assert manager._menu_row.findChild(QWidget, 'MainWindowControls') is manager._window_controls
     assert manager._minimize_button.text() == ui_module.MAIN_CAPTION_MINIMIZE_ICON
     assert manager._maximize_restore_button.text() == ui_module.MAIN_CAPTION_MAXIMIZE_ICON
@@ -2316,13 +2326,13 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
+    assert manager._menu_row.layout().itemAt(2).widget() is manager._top_bar_menu_controls
 
     manager._guide_to_search_result('dock')
 
     assert window.menuWidget() is menu_container
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
+    assert manager._menu_row.layout().itemAt(2).widget() is manager._top_bar_menu_controls
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
 

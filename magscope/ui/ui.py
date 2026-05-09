@@ -642,6 +642,7 @@ class UIManager(ManagerProcessBase):
         self._top_bar: _UnifiedTopBar | None = None
         self._help_menu_action: QAction | None = None
         self._window_icon_label: QLabel | None = None
+        self._window_title_label: QLabel | None = None
         self._title_bar_safe_area_spacer: QWidget | None = None
         self._title_bar_safe_area_window_handle: Any = None
         self._layout_menu: QMenu | None = None
@@ -691,6 +692,7 @@ class UIManager(ManagerProcessBase):
     def _configure_unified_top_bar_window(window: QMainWindow) -> None:
         flags = window.windowFlags() & ~(
             Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowSystemMenuHint
             | Qt.WindowType.WindowMinMaxButtonsHint
             | Qt.WindowType.WindowCloseButtonHint
@@ -700,7 +702,6 @@ class UIManager(ManagerProcessBase):
             | Qt.WindowType.ExpandedClientAreaHint
             | Qt.WindowType.NoTitleBarBackgroundHint
             | Qt.WindowType.CustomizeWindowHint
-            | Qt.WindowType.WindowTitleHint
         )
         # QWidget layouts otherwise respect the titlebar safe-area margin and
         # leave the custom menu row below the native caption strip.
@@ -2155,6 +2156,11 @@ class UIManager(ManagerProcessBase):
             QWidget#MainTopBarMenuControls {{
                 background: transparent;
             }}
+            QLabel#MainWindowTitleLabel {{
+                background: transparent;
+                color: #f2f2f2;
+                padding: 0px 16px 0px 0px;
+            }}
             QToolButton[mainTopBarButton="true"] {{
                 background: transparent;
                 border: none;
@@ -2364,6 +2370,17 @@ class UIManager(ManagerProcessBase):
         if not window_icon.isNull():
             icon_label.setPixmap(window_icon.pixmap(MAIN_WINDOW_ICON_SIZE, MAIN_WINDOW_ICON_SIZE))
         menu_row_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        window_title = window.windowTitle() or "MagScope"
+        title_label = QLabel(window_title, menu_row)
+        title_label.setObjectName("MainWindowTitleLabel")
+        title_label.setFixedHeight(target_height)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        title_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        title_label.setToolTip(window_title)
+        menu_row_layout.addWidget(title_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
         menu_controls = self._create_top_bar_menu_controls(menu_bar, menu_row, target_height)
         menu_row_layout.addWidget(menu_controls, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -2428,6 +2445,7 @@ class UIManager(ManagerProcessBase):
         self._top_bar_menu_controls = menu_controls
         self._window_controls = window_controls
         self._window_icon_label = icon_label
+        self._window_title_label = title_label
         self._title_bar_safe_area_spacer = title_bar_safe_area_spacer
         self._search_box = search_box
         self._search_status_label = search_status_label
