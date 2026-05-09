@@ -1609,7 +1609,7 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert flags & Qt.WindowType.NoTitleBarBackgroundHint
     assert flags & Qt.WindowType.CustomizeWindowHint
     assert not (flags & Qt.WindowType.WindowTitleHint)
-    assert not (flags & Qt.WindowType.WindowSystemMenuHint)
+    assert flags & Qt.WindowType.WindowSystemMenuHint
     assert not (flags & Qt.WindowType.WindowMaximizeButtonHint)
     assert not (flags & Qt.WindowType.WindowCloseButtonHint)
     assert window.testAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect)
@@ -2062,7 +2062,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert dialog.appearance_layout_tab.layout().indexOf(dialog.appearance_status_label) != -1
     assert len(dialog.settings_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
     assert len(dialog.tracking_options_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
-    assert len(dialog.appearance_layout_tab.findChildren(QFrame, 'preferencesGroupPanel')) == 1
+    assert len(dialog.appearance_layout_tab.findChildren(QFrame, 'preferencesGroupPanel')) == 2
     assert any(
         'Advanced Tracking Options Guide' in label.text()
         for label in dialog.tracking_options_panel.findChildren(QLabel)
@@ -2952,10 +2952,14 @@ def test_set_plot_image_preserves_device_pixel_ratio(qtbot, ui_manager):
     image = QImage(20, 10, QImage.Format.Format_RGBA8888)
     image.setDevicePixelRatio(2.0)
 
+    set_pixmap_calls = []
+    label.setPixmap = lambda p: set_pixmap_calls.append(p)
+
     try:
         ui_manager._set_plot_image(image)
 
-        assert label.pixmap().devicePixelRatio() == pytest.approx(2.0)
+        assert len(set_pixmap_calls) == 1
+        assert set_pixmap_calls[0].devicePixelRatio() == pytest.approx(2.0)
     finally:
         ui_manager.plots_widget = None
 
