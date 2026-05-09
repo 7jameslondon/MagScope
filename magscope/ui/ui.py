@@ -311,6 +311,53 @@ class _UnifiedTopMenuBar(QMenuBar):
         super().paintEvent(event)
 
 
+def _top_bar_button_object_name(text: str) -> str:
+    suffix = "".join(character for character in text if character.isalnum())
+    return f"MainTopBarButton{suffix or 'Action'}"
+
+
+class _TopBarActionButton(QToolButton):
+    def __init__(self, action: QAction, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._action = action
+        self.setAutoRaise(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setProperty("mainTopBarButton", True)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        action.changed.connect(self._sync_from_action)
+        menu = action.menu()
+        if menu is not None:
+            menu.aboutToShow.connect(lambda b=self: b.setDown(True))
+            menu.aboutToHide.connect(lambda b=self: b.setDown(False))
+            self.clicked.connect(lambda _checked=False, b=self: b.show_action_menu())
+        else:
+            self.clicked.connect(lambda _checked=False, a=action: a.trigger())
+        self._sync_from_action()
+
+    def action(self) -> QAction:
+        return self._action
+
+    def _sync_from_action(self) -> None:
+        self.setText(self._action.text().replace("&", ""))
+        self.setEnabled(self._action.isEnabled())
+        tooltip = self._action.toolTip() or self._action.statusTip()
+        self.setToolTip(tooltip)
+
+    def show_action_menu(self, active_action: QAction | None = None) -> bool:
+        menu = self._action.menu()
+        if menu is None:
+            return False
+        if active_action is not None:
+            menu.setActiveAction(active_action)
+        QTimer.singleShot(0, lambda b=self, m=menu: b._popup_menu(m))
+        return True
+
+    def _popup_menu(self, menu: QMenu) -> None:
+        self.setDown(True)
+        menu.popup(self.mapToGlobal(QPoint(0, self.height())))
+
+
 def _set_widget_background(widget: QWidget, color_name: str) -> None:
     palette = widget.palette()
     color = QColor(color_name)
@@ -553,6 +600,9 @@ class UIManager(ManagerProcessBase):
         self._search_status_timer: QTimer | None = None
         self._menu_row: QWidget | None = None
         self._menu_bar: QMenuBar | None = None
+        self._top_bar_menu_controls: QWidget | None = None
+        self._top_bar_menu_buttons: dict[str, _TopBarActionButton] = {}
+        self._top_bar_action_buttons: dict[str, _TopBarActionButton] = {}
         self._top_bar: _UnifiedTopBar | None = None
         self._help_menu_action: QAction | None = None
         self._window_icon_label: QLabel | None = None
@@ -1945,7 +1995,8 @@ class UIManager(ManagerProcessBase):
         dock.show()
 
     def _create_view_menu(self, window: QMainWindow) -> None:
-        view_menu = window.menuBar().addMenu("Layout")
+        view_menu = QMenu("Layout", window)
+        window.menuBar().addMenu(view_menu)
         self._register_menu("Layout", view_menu)
         if self.camera_dock is not None:
             view_menu.addAction(self.camera_dock.toggleViewAction())
@@ -1960,7 +2011,8 @@ class UIManager(ManagerProcessBase):
         view_menu.addAction(reset_action)
 
     def _create_tools_menu(self, window: QMainWindow) -> None:
-        tools_menu = window.menuBar().addMenu("Tools")
+        tools_menu = QMenu("Tools", window)
+        window.menuBar().addMenu(tools_menu)
         self._register_menu("Tools", tools_menu)
         auto_bead_selection_action = QAction("Auto Bead Selection", window)
         auto_bead_selection_action.triggered.connect(
@@ -1971,7 +2023,8 @@ class UIManager(ManagerProcessBase):
         self._update_auto_bead_selection_action_state()
 
     def _create_zlut_menu(self, window: QMainWindow) -> None:
-        zlut_menu = window.menuBar().addMenu("Z-LUT")
+        zlut_menu = QMenu("Z-LUT", window)
+        window.menuBar().addMenu(zlut_menu)
         self._register_menu("Z-LUT", zlut_menu)
 
         new_action = QAction("New", window)
@@ -2062,6 +2115,20 @@ class UIManager(ManagerProcessBase):
             QWidget#MainMenuContainer, QWidget#MainMenuRow {{
                 background-color: {APP_BACKGROUND_COLOR};
             }}
+            QWidget#MainTopBarMenuControls {{
+                background: transparent;
+            }}
+            QToolButton[mainTopBarButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px 10px;
+            }}
+            QToolButton[mainTopBarButton="true"]:hover,
+            QToolButton[mainTopBarButton="true"]:pressed,
+            QToolButton[mainTopBarButton="true"]:checked {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
             QMenuBar#MainMenuBar {{
                 background: transparent;
                 color: #d0d0d0;
@@ -2078,10 +2145,44 @@ class UIManager(ManagerProcessBase):
             """
         )
 
+    def _create_top_bar_menu_controls(
+        self,
+        menu_bar: QMenuBar,
+        parent: QWidget,
+        target_height: int,
+    ) -> QWidget:
+        controls = QWidget(parent)
+        controls.setObjectName("MainTopBarMenuControls")
+        controls.setFixedHeight(target_height)
+        controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(0)
+
+        self._top_bar_menu_buttons = {}
+        self._top_bar_action_buttons = {}
+        for action in menu_bar.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+
+            button = _TopBarActionButton(action, controls)
+            button.setObjectName(_top_bar_button_object_name(action.text()))
+            button.setFixedHeight(target_height)
+            controls_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+            action_text = action.text().replace("&", "")
+            self._top_bar_action_buttons[action_text] = button
+            menu = action.menu()
+            if menu is not None:
+                self._top_bar_menu_buttons[menu.title().replace("&", "")] = button
+
+        return controls
+
     def _create_search_menu_widget(self, window: QMainWindow) -> None:
         self._refresh_search_registry()
         menu_bar = self._ensure_unified_top_menu_bar(window)
         menu_bar.setObjectName("MainMenuBar")
+        menu_bar.hide()
         self._menu_bar = menu_bar
         menu_bar_natural_height = menu_bar.sizeHint().height()
         target_height = max(
@@ -2118,7 +2219,8 @@ class UIManager(ManagerProcessBase):
         if not window_icon.isNull():
             icon_label.setPixmap(window_icon.pixmap(MAIN_WINDOW_ICON_SIZE, MAIN_WINDOW_ICON_SIZE))
         menu_row_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        menu_row_layout.addWidget(menu_bar, 0, Qt.AlignmentFlag.AlignVCenter)
+        menu_controls = self._create_top_bar_menu_controls(menu_bar, menu_row, target_height)
+        menu_row_layout.addWidget(menu_controls, 0, Qt.AlignmentFlag.AlignVCenter)
 
         search_container = QWidget(window)
         search_container.setObjectName("MenuSearchContainer")
@@ -2175,6 +2277,7 @@ class UIManager(ManagerProcessBase):
         window.setMenuWidget(menu_container)
         self._top_bar = menu_row
         self._menu_row = menu_row
+        self._top_bar_menu_controls = menu_controls
         self._window_icon_label = icon_label
         self._title_bar_safe_area_spacer = title_bar_safe_area_spacer
         self._search_box = search_box
@@ -2506,6 +2609,10 @@ class UIManager(ManagerProcessBase):
         completer = self._search_box.completer() if self._search_box is not None else None
         if completer is not None:
             completer.popup().hide()
+        menu_button = self._top_bar_menu_buttons.get(target.menu_name)
+        if menu_button is not None and menu_button.show_action_menu(action):
+            return
+
         menu_action_geometry = menu_bar.actionGeometry(menu.menuAction())
         menu.popup(menu_bar.mapToGlobal(menu_action_geometry.bottomLeft()))
 

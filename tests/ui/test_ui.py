@@ -1548,7 +1548,7 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert isinstance(manager._menu_row, _UnifiedTopBar)
     icon_label = manager._menu_row.findChild(QLabel, 'MainWindowIcon')
     assert manager._menu_row.layout().itemAt(0).widget() is icon_label
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
     search_container = manager._menu_row.layout().itemAt(2).widget()
     search_box = search_container.findChild(QLineEdit, 'MenuSearchBox')
     menu_divider = menu_container.findChild(QFrame, 'MainMenuDivider')
@@ -1561,18 +1561,16 @@ def test_menu_bar_search_box_follows_help_menu_item(qtbot):
     assert search_container.objectName() == 'MenuSearchContainer'
     assert title_bar_safe_area_spacer is manager._title_bar_safe_area_spacer
     assert isinstance(manager._menu_bar, _UnifiedTopMenuBar)
-    assert manager._menu_bar.height() == manager._menu_row.height()
+    assert manager._menu_bar.isHidden()
+    assert manager._top_bar_menu_controls.objectName() == 'MainTopBarMenuControls'
+    assert manager._top_bar_menu_controls.height() == manager._menu_row.height()
     assert search_container.height() == manager._menu_row.height()
     assert title_bar_safe_area_spacer.height() == manager._menu_row.height()
     assert manager._help_menu_action in manager._menu_bar.actions()
-    assert manager._help_menu_action.text() == 'Help'
-    assert abs(
-        manager._menu_bar.actionGeometry(manager._help_menu_action).center().y()
-        - manager._menu_bar.rect().center().y()
-    ) <= 1
-    assert manager._menu_bar._full_height_action_rect(manager._help_menu_action).height() == (
-        manager._menu_row.height()
-    )
+    help_button = manager._top_bar_action_buttons['Help']
+    assert help_button.action() is manager._help_menu_action
+    assert help_button.text() == 'Help'
+    assert help_button.height() == manager._menu_row.height()
     assert menu_divider is not None
     assert menu_divider.height() == 1
     assert '#808080' in menu_divider.styleSheet()
@@ -1639,6 +1637,84 @@ def test_unified_top_bar_reserves_native_caption_button_space(qtbot, monkeypatch
         UIManager._title_bar_right_safe_area_width(window)
     )
     assert manager._title_bar_safe_area_spacer.height() == manager._menu_row.height()
+
+    clear_ui_manager_singleton()
+
+
+def test_top_bar_menu_buttons_reuse_tools_and_zlut_menus(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    clicks = []
+    monkeypatch.setattr(manager, '_can_start_auto_bead_selection', lambda: True)
+    monkeypatch.setattr(manager, 'start_auto_bead_selection', lambda: clicks.append(True))
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_tools_menu(window)
+    manager._create_zlut_menu(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    tools_button = manager._top_bar_menu_buttons['Tools']
+    zlut_button = manager._top_bar_menu_buttons['Z-LUT']
+    assert isinstance(tools_button, QToolButton)
+    assert isinstance(zlut_button, QToolButton)
+    assert tools_button.action().menu() is manager._menus['Tools']
+    assert zlut_button.action().menu() is manager._zlut_menu
+    assert [action.text() for action in manager._zlut_menu.actions()] == [
+        'New',
+        'Load',
+        'Unload',
+        'Show Current',
+    ]
+    assert not manager._unload_zlut_action.isEnabled()
+    assert not manager._show_current_zlut_action.isEnabled()
+
+    qtbot.mouseClick(tools_button, Qt.MouseButton.LeftButton)
+    assert clicks == []
+    qtbot.waitUntil(lambda: manager._menus['Tools'].isVisible(), timeout=1000)
+    manager._menus['Tools'].close()
+
+    assert tools_button.show_action_menu(manager._auto_bead_selection_action)
+    assert manager._menus['Tools'].activeAction() is manager._auto_bead_selection_action
+    manager._auto_bead_selection_action.trigger()
+    assert clicks == [True]
+
+    manager._menus['Tools'].close()
+    manager._zlut_menu.close()
+    clear_ui_manager_singleton()
+
+
+def test_search_reveals_menu_actions_through_top_bar_button(qtbot, monkeypatch):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    dock_calls = []
+    manager._dock_all_viewers = lambda: dock_calls.append(True)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+
+    manager._create_view_menu(window)
+    manager._create_search_menu_widget(window)
+    layout_button = manager._top_bar_menu_buttons['Layout']
+    shown_actions = []
+
+    def show_action_menu(self, active_action=None):
+        shown_actions.append(active_action)
+        return True
+
+    monkeypatch.setattr(
+        ui_module.QGuiApplication,
+        'platformName',
+        staticmethod(lambda: 'windows'),
+    )
+    monkeypatch.setattr(layout_button, 'show_action_menu', MethodType(show_action_menu, layout_button))
+
+    manager._guide_to_search_result('dock')
+
+    assert dock_calls == []
+    assert shown_actions == [manager._layout_menu.activeAction()]
+    assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
 
     clear_ui_manager_singleton()
 
@@ -2196,13 +2272,13 @@ def test_search_suggests_dock_all_windows_without_executing(qtbot):
     menu_container = window.menuWidget()
     assert menu_container.objectName() == 'MainMenuContainer'
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
 
     manager._guide_to_search_result('dock')
 
     assert window.menuWidget() is menu_container
     assert menu_container.layout().itemAt(0).widget() is manager._menu_row
-    assert manager._menu_row.layout().itemAt(1).widget() is manager._menu_bar
+    assert manager._menu_row.layout().itemAt(1).widget() is manager._top_bar_menu_controls
     assert dock_calls == []
     assert manager._layout_menu.activeAction().text() == 'Dock All Windows'
 
