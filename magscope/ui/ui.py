@@ -147,6 +147,11 @@ PLOT_PROGRESS_INDICATOR_RING_WIDTH = 2
 MAIN_TOP_BAR_HEIGHT = 34
 MAIN_WINDOW_ICON_SIZE = 18
 MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH = 144
+MAIN_CAPTION_BUTTON_WIDTH = 46
+MAIN_CAPTION_MINIMIZE_ICON = "minimize"
+MAIN_CAPTION_MAXIMIZE_ICON = "crop_square"
+MAIN_CAPTION_RESTORE_ICON = "filter_none"
+MAIN_CAPTION_CLOSE_ICON = "close"
 DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
 FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
@@ -356,6 +361,79 @@ class _TopBarActionButton(QToolButton):
     def _popup_menu(self, menu: QMenu) -> None:
         self.setDown(True)
         menu.popup(self.mapToGlobal(QPoint(0, self.height())))
+
+
+def _update_maximize_restore_button(window: QWidget, button: QToolButton) -> None:
+    if window.isMaximized():
+        button.setText(MAIN_CAPTION_RESTORE_ICON)
+        button.setToolTip("Restore")
+    else:
+        button.setText(MAIN_CAPTION_MAXIMIZE_ICON)
+        button.setToolTip("Maximize")
+
+
+def _inject_snap_styles(window: QWidget) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+    except RuntimeError:
+        return
+    if hwnd == 0:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        gwl_style = -16
+        ws_maximizebox = 0x00010000
+        ws_minimizebox = 0x00020000
+        swp_nomove = 0x0002
+        swp_nosize = 0x0001
+        swp_nozorder = 0x0004
+        swp_noactivate = 0x0010
+        swp_framechanged = 0x0020
+
+        user32 = ctypes.windll.user32
+        GetWindowLongPtrW = user32.GetWindowLongPtrW
+        GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        SetWindowLongPtrW = user32.SetWindowLongPtrW
+        SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        SetWindowLongPtrW.restype = ctypes.c_ssize_t
+
+        style = GetWindowLongPtrW(wintypes.HWND(hwnd), gwl_style)
+        SetWindowLongPtrW(
+            wintypes.HWND(hwnd),
+            gwl_style,
+            style | ws_maximizebox | ws_minimizebox,
+        )
+        user32.SetWindowPos(
+            wintypes.HWND(hwnd),
+            None,
+            0, 0, 0, 0,
+            swp_nomove | swp_nosize | swp_nozorder | swp_noactivate | swp_framechanged,
+        )
+    except Exception:
+        return
+
+
+class _CaptionButtonStateFilter(QObject):
+    def __init__(self, window: QWidget, maximize_restore_button: QToolButton) -> None:
+        super().__init__(window)
+        self._window = window
+        self._maximize_restore_button = maximize_restore_button
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if watched is self._window and event.type() == QEvent.Type.WindowStateChange:
+            QTimer.singleShot(0, self._update)
+        return super().eventFilter(watched, event)
+
+    def _update(self) -> None:
+        try:
+            _update_maximize_restore_button(self._window, self._maximize_restore_button)
+        except RuntimeError:
+            return
 
 
 def _set_widget_background(widget: QWidget, color_name: str) -> None:
@@ -603,6 +681,11 @@ class UIManager(ManagerProcessBase):
         self._top_bar_menu_controls: QWidget | None = None
         self._top_bar_menu_buttons: dict[str, _TopBarActionButton] = {}
         self._top_bar_action_buttons: dict[str, _TopBarActionButton] = {}
+        self._window_controls: QWidget | None = None
+        self._minimize_button: QToolButton | None = None
+        self._maximize_restore_button: QToolButton | None = None
+        self._close_button: QToolButton | None = None
+        self._caption_button_state_filter: _CaptionButtonStateFilter | None = None
         self._top_bar: _UnifiedTopBar | None = None
         self._help_menu_action: QAction | None = None
         self._window_icon_label: QLabel | None = None
@@ -657,13 +740,14 @@ class UIManager(ManagerProcessBase):
         flags = window.windowFlags() & ~(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
         )
         window.setWindowFlags(
             flags
             | Qt.WindowType.ExpandedClientAreaHint
             | Qt.WindowType.NoTitleBarBackgroundHint
-            | Qt.WindowType.WindowMinMaxButtonsHint
-            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.CustomizeWindowHint
         )
         # QWidget layouts otherwise respect the titlebar safe-area margin and
         # leave the custom menu row below the native caption strip.
@@ -967,6 +1051,7 @@ class UIManager(ManagerProcessBase):
             window.show()
         else:
             window.showMaximized()
+        _inject_snap_styles(window)
         self._install_title_bar_safe_area_updates(window)
         apply_windows_native_window_icon(window)
         QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
@@ -2088,8 +2173,6 @@ class UIManager(ManagerProcessBase):
             if right_margin > 0:
                 return right_margin
 
-        if sys.platform == "win32":
-            return MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH
         return 0
 
     def _update_title_bar_safe_area_spacing(self, window: QMainWindow) -> None:
@@ -2135,6 +2218,24 @@ class UIManager(ManagerProcessBase):
             QToolButton[mainTopBarButton="true"]:pressed,
             QToolButton[mainTopBarButton="true"]:checked {{
                 background-color: rgba(255, 255, 255, 24);
+            }}
+            QWidget#MainWindowControls {{
+                background: transparent;
+            }}
+            QToolButton[mainCaptionButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px;
+            }}
+            QToolButton[mainCaptionButton="true"]:hover,
+            QToolButton[mainCaptionButton="true"]:pressed {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
+            QToolButton[captionButtonRole="close"]:hover,
+            QToolButton[captionButtonRole="close"]:pressed {{
+                background-color: #c42b1c;
+                color: white;
             }}
             QMenuBar#MainMenuBar {{
                 background: transparent;
@@ -2184,6 +2285,97 @@ class UIManager(ManagerProcessBase):
                 self._top_bar_menu_buttons[menu.title().replace("&", "")] = button
 
         return controls
+
+    def _create_caption_button(
+        self,
+        parent: QWidget,
+        object_name: str,
+        icon_text: str,
+        tooltip: str,
+        callback: Callable[[], None],
+        target_height: int,
+        role: str,
+    ) -> QToolButton:
+        button = QToolButton(parent)
+        button.setObjectName(object_name)
+        button.setText(icon_text)
+        button.setToolTip(tooltip)
+        button.setFont(self._material_symbols_font(point_size=12))
+        button.setAutoRaise(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        button.setProperty("mainCaptionButton", True)
+        button.setProperty("captionButtonRole", role)
+        button.setFixedSize(MAIN_CAPTION_BUTTON_WIDTH, target_height)
+        button.clicked.connect(lambda _checked=False: callback())
+        return button
+
+    def _create_main_window_controls(
+        self,
+        window: QMainWindow,
+        parent: QWidget,
+        target_height: int,
+    ) -> QWidget:
+        controls = QWidget(parent)
+        controls.setObjectName("MainWindowControls")
+        controls.setFixedHeight(target_height)
+        controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(0)
+
+        minimize_button = self._create_caption_button(
+            controls,
+            "MainWindowMinimizeButton",
+            MAIN_CAPTION_MINIMIZE_ICON,
+            "Minimize",
+            window.showMinimized,
+            target_height,
+            "minimize",
+        )
+        maximize_restore_button = self._create_caption_button(
+            controls,
+            "MainWindowMaximizeRestoreButton",
+            MAIN_CAPTION_MAXIMIZE_ICON,
+            "Maximize",
+            lambda w=window: self._toggle_main_window_maximized(w),
+            target_height,
+            "maximize",
+        )
+        close_button = self._create_caption_button(
+            controls,
+            "MainWindowCloseButton",
+            MAIN_CAPTION_CLOSE_ICON,
+            "Close",
+            window.close,
+            target_height,
+            "close",
+        )
+
+        controls_layout.addWidget(minimize_button)
+        controls_layout.addWidget(maximize_restore_button)
+        controls_layout.addWidget(close_button)
+
+        self._minimize_button = minimize_button
+        self._maximize_restore_button = maximize_restore_button
+        self._close_button = close_button
+        self._caption_button_state_filter = _CaptionButtonStateFilter(
+            window,
+            maximize_restore_button,
+        )
+        window.installEventFilter(self._caption_button_state_filter)
+        _update_maximize_restore_button(window, maximize_restore_button)
+        return controls
+
+    def _toggle_main_window_maximized(self, window: QMainWindow) -> None:
+        if window.isMaximized():
+            window.showNormal()
+            _restore_default_geometry_if_fullscreenish(window)
+        else:
+            window.showMaximized()
+        if self._maximize_restore_button is not None:
+            _update_maximize_restore_button(window, self._maximize_restore_button)
+        _inject_snap_styles(window)
 
     def _create_search_menu_widget(self, window: QMainWindow) -> None:
         self._refresh_search_registry()
@@ -2276,6 +2468,9 @@ class UIManager(ManagerProcessBase):
         menu_row_layout.addWidget(search_status_label, 0, Qt.AlignmentFlag.AlignVCenter)
         menu_row_layout.addStretch(1)
 
+        window_controls = self._create_main_window_controls(window, menu_row, target_height)
+        menu_row_layout.addWidget(window_controls, 0, Qt.AlignmentFlag.AlignVCenter)
+
         title_bar_safe_area_spacer = QWidget(menu_row)
         title_bar_safe_area_spacer.setObjectName("MainTitleBarSafeAreaSpacer")
         title_bar_safe_area_spacer.setFixedHeight(target_height)
@@ -2296,6 +2491,7 @@ class UIManager(ManagerProcessBase):
         self._top_bar = menu_row
         self._menu_row = menu_row
         self._top_bar_menu_controls = menu_controls
+        self._window_controls = window_controls
         self._window_icon_label = icon_label
         self._window_title_label = title_label
         self._title_bar_safe_area_spacer = title_bar_safe_area_spacer

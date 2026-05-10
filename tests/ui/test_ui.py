@@ -1607,9 +1607,10 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert not (flags & Qt.WindowType.FramelessWindowHint)
     assert flags & Qt.WindowType.ExpandedClientAreaHint
     assert flags & Qt.WindowType.NoTitleBarBackgroundHint
+    assert flags & Qt.WindowType.CustomizeWindowHint
     assert flags & Qt.WindowType.WindowSystemMenuHint
-    assert flags & Qt.WindowType.WindowMinMaxButtonsHint
-    assert flags & Qt.WindowType.WindowCloseButtonHint
+    assert not (flags & Qt.WindowType.WindowMinMaxButtonsHint)
+    assert not (flags & Qt.WindowType.WindowCloseButtonHint)
     assert window.testAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect)
     assert isinstance(manager._top_bar, _UnifiedTopBar)
     assert window.menuWidget().geometry().top() == 0
@@ -1623,7 +1624,10 @@ def test_unified_top_bar_uses_native_titlebar_extension_and_app_icon(qtbot):
     assert title_label is manager._window_title_label
     assert title_label.text() == 'MagScope'
     assert title_label.toolTip() == 'MagScope'
-    assert manager._menu_row.findChild(QWidget, 'MainWindowControls') is None
+    assert manager._menu_row.findChild(QWidget, 'MainWindowControls') is manager._window_controls
+    assert manager._minimize_button.text() == ui_module.MAIN_CAPTION_MINIMIZE_ICON
+    assert manager._maximize_restore_button.text() == ui_module.MAIN_CAPTION_MAXIMIZE_ICON
+    assert manager._close_button.text() == ui_module.MAIN_CAPTION_CLOSE_ICON
 
     clear_ui_manager_singleton()
 
@@ -1648,6 +1652,50 @@ def test_unified_top_bar_reserves_native_caption_button_space(qtbot, monkeypatch
     assert manager._title_bar_safe_area_spacer.height() == manager._menu_row.height()
 
     clear_ui_manager_singleton()
+
+
+def test_custom_caption_maximize_restore_button_updates_icon(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    manager._configure_unified_top_bar_window(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+
+    maximize_restore_button = manager._maximize_restore_button
+    assert maximize_restore_button.text() == ui_module.MAIN_CAPTION_MAXIMIZE_ICON
+    assert maximize_restore_button.toolTip() == 'Maximize'
+
+    qtbot.mouseClick(maximize_restore_button, Qt.MouseButton.LeftButton)
+
+    assert window.isMaximized()
+    assert maximize_restore_button.text() == ui_module.MAIN_CAPTION_RESTORE_ICON
+    assert maximize_restore_button.toolTip() == 'Restore'
+
+    qtbot.mouseClick(maximize_restore_button, Qt.MouseButton.LeftButton)
+
+    assert not window.isMaximized()
+    assert maximize_restore_button.text() == ui_module.MAIN_CAPTION_MAXIMIZE_ICON
+    assert maximize_restore_button.toolTip() == 'Maximize'
+    clear_ui_manager_singleton()
+
+
+def test_caption_state_filter_updates_restore_icon_on_window_state_change(qtbot):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    maximize_restore_button = QToolButton()
+    qtbot.addWidget(maximize_restore_button)
+    state_filter = ui_module._CaptionButtonStateFilter(window, maximize_restore_button)
+    window.installEventFilter(state_filter)
+
+    window.showMaximized()
+    state_filter.eventFilter(window, QEvent(QEvent.Type.WindowStateChange))
+    qtbot.waitUntil(lambda: maximize_restore_button.text() != '', timeout=1000)
+
+    assert maximize_restore_button.text() == ui_module.MAIN_CAPTION_RESTORE_ICON
+    assert maximize_restore_button.toolTip() == 'Restore'
 
 
 def test_top_bar_menu_buttons_reuse_tools_and_zlut_menus(qtbot, monkeypatch):
@@ -1728,26 +1776,20 @@ def test_search_reveals_menu_actions_through_top_bar_button(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
-def test_title_bar_safe_area_uses_windows_fallback(monkeypatch):
+def test_title_bar_safe_area_returns_zero_without_qt_safe_margin(monkeypatch):
     monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
     window = SimpleNamespace(windowHandle=lambda: None)
 
-    assert UIManager._title_bar_right_safe_area_width(window) == (
-        ui_module.MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH
-    )
+    assert UIManager._title_bar_right_safe_area_width(window) == 0
 
 
 def test_title_bar_safe_area_prefers_qt_safe_margin(monkeypatch):
     monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
-    margins = SimpleNamespace(
-        right=lambda: ui_module.MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH + 20
-    )
+    margins = SimpleNamespace(right=lambda: 20)
     window_handle = SimpleNamespace(safeAreaMargins=lambda: margins)
     window = SimpleNamespace(windowHandle=lambda: window_handle)
 
-    assert UIManager._title_bar_right_safe_area_width(window) == (
-        ui_module.MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH + 20
-    )
+    assert UIManager._title_bar_right_safe_area_width(window) == 20
 
 
 def test_default_restored_main_window_geometry_is_smaller_than_screen(qtbot):
