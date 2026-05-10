@@ -1,4 +1,6 @@
 from collections import OrderedDict
+import ctypes
+from ctypes import wintypes
 from importlib import resources
 import json
 from math import ceil, floor
@@ -382,9 +384,6 @@ def _inject_snap_styles(window: QWidget) -> None:
     if hwnd == 0:
         return
     try:
-        import ctypes
-        from ctypes import wintypes
-
         gwl_style = -16
         ws_maximizebox = 0x00010000
         ws_minimizebox = 0x00020000
@@ -434,6 +433,31 @@ class _CaptionButtonStateFilter(QObject):
             _update_maximize_restore_button(self._window, self._maximize_restore_button)
         except RuntimeError:
             return
+
+
+_WM_NCHITTEST = 0x0084
+_HTCLIENT = 1
+_HTCAPTION = 2
+_HTLEFT = 10
+_HTRIGHT = 11
+_HTTOP = 12
+_HTTOPLEFT = 13
+_HTTOPRIGHT = 14
+_HTBOTTOM = 15
+_HTBOTTOMLEFT = 16
+_HTBOTTOMRIGHT = 17
+_BORDER_WIDTH = 6
+
+
+class _WinMSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", wintypes.POINT),
+    ]
 
 
 def _set_widget_background(widget: QWidget, color_name: str) -> None:
@@ -520,6 +544,48 @@ class _StartupReadyWindow(QMainWindow):
         elif event_type == QEvent.Type.Paint:
             self._maybe_schedule_startup_ready(after_paint=True)
         return super().event(event)
+
+    def nativeEvent(self, eventType, message):
+        if sys.platform != "win32":
+            return False, 0
+        if eventType != QByteArray(b"windows_generic_MSG"):
+            return False, 0
+
+        msg = ctypes.cast(int(message), ctypes.POINTER(_WinMSG)).contents
+        if msg.message == _WM_NCHITTEST:
+            user32 = ctypes.windll.user32
+
+            pt_x = ctypes.c_short(msg.lParam & 0xFFFF).value
+            pt_y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+
+            rect = wintypes.RECT()
+            user32.GetWindowRect(msg.hwnd, ctypes.byref(rect))
+
+            on_left = pt_x <= rect.left + _BORDER_WIDTH
+            on_right = pt_x >= rect.right - _BORDER_WIDTH
+            on_top = pt_y <= rect.top + _BORDER_WIDTH
+            on_bottom = pt_y >= rect.bottom - _BORDER_WIDTH
+
+            if on_top and on_left:
+                return True, _HTTOPLEFT
+            if on_top and on_right:
+                return True, _HTTOPRIGHT
+            if on_bottom and on_left:
+                return True, _HTBOTTOMLEFT
+            if on_bottom and on_right:
+                return True, _HTBOTTOMRIGHT
+            if on_top:
+                return True, _HTTOP
+            if on_left:
+                return True, _HTLEFT
+            if on_right:
+                return True, _HTRIGHT
+            if on_bottom:
+                return True, _HTBOTTOM
+
+            return True, _HTCLIENT
+
+        return False, 0
 
     def _schedule_startup_ready_fallback(self) -> None:
         if self._startup_ready_fallback_scheduled:
