@@ -84,6 +84,7 @@ VideoProcessorManager = videoprocessing.VideoProcessorManager
 VideoWorker = videoprocessing.VideoWorker
 BufferUnderflow = videoprocessing.BufferUnderflow
 CameraManager = camera.CameraManager
+DummyCameraBeads = camera.DummyCameraBeads
 
 
 class DummyQueue:
@@ -177,6 +178,14 @@ def camera_manager():
         video_process_completed_stacks=DummyValue(0),
     )
     return manager
+
+
+def test_dummy_camera_beads_keeps_internal_setting_keys():
+    dummy_camera = DummyCameraBeads()
+
+    assert 'framerate' in dummy_camera.settings
+    assert 'Frame Rate' not in dummy_camera.settings
+    assert dummy_camera.setting_display_names['framerate'] == 'Frame Rate'
 
 
 def test_add_task_returns_true_for_normal_processing_task(manager):

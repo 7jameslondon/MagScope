@@ -766,9 +766,10 @@ class CameraPanel(ControlPanelBase):
         self._last_settings_update: datetime.datetime | None = None
 
         self.settings = {}
+        setting_display_names = getattr(self.manager.camera_type, 'setting_display_names', {})
         for setting_name in self.manager.camera_type.settings:
             self.settings[setting_name] = LabeledLineEditWithValue(
-                label_text=setting_name,
+                label_text=setting_display_names.get(setting_name, setting_name),
                 widths=(0, 100, 50),
                 callback=lambda n=setting_name: self.callback_set_camera_setting(n))
             self.layout().addWidget(self.settings[setting_name])

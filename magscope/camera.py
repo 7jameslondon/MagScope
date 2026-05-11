@@ -192,6 +192,7 @@ class CameraBase(metaclass=ABCMeta):
     nm_per_px: float
     width: int
     settings: list[str] = ['framerate']
+    setting_display_names: dict[str, str] = {}
 
     def __init__(self):
         self.is_connected = False
@@ -490,16 +491,27 @@ class DummyCameraBeads(CameraBase):
 
     # Exposed settings
     settings = [
-        'Frame Rate',
-        '# of Fixed Beads',
-        'Z value of Fixed Beads',
-        '# of Tethered Beads',
-        'Z value of Tethered Beads',
-        'Tethered Bead Fluctuation in Z',
-        'Tethered Bead Fluctuation in XY',
-        'Gain',
-        'Seed'
+        'framerate',
+        'fixed_n',
+        'fixed_z',
+        'tethered_n',
+        'tethered_z',
+        'tethered_z_sigma',
+        'tethered_xy_sigma',
+        'gain',
+        'seed',
     ]
+    setting_display_names = {
+        'framerate': 'Frame Rate',
+        'fixed_n': '# of Fixed Beads',
+        'fixed_z': 'Z value of Fixed Beads',
+        'tethered_n': '# of Tethered Beads',
+        'tethered_z': 'Z value of Tethered Beads',
+        'tethered_z_sigma': 'Tethered Bead Fluctuation in Z',
+        'tethered_xy_sigma': 'Tethered Bead Fluctuation in XY',
+        'gain': 'Gain',
+        'seed': 'Seed',
+    }
 
     def __init__(self):
         super().__init__()
