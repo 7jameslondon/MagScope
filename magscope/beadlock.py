@@ -9,6 +9,7 @@ from magscope.hardware import FocusMotorBase
 from magscope.ipc import register_ipc_command
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
+    ExecuteZLockCommand,
     MoveFocusMotorAbsoluteCommand,
     MoveBeadsCommand,
     RemoveBeadFromPendingMovesCommand,
@@ -163,6 +164,7 @@ class BeadLockManager(ManagerProcessBase):
             command = MoveBeadsCommand(moves=moves_to_send)
             self.send_ipc(command)
 
+    @register_ipc_command(ExecuteZLockCommand)
     def do_z_lock(self, now=None):
         if now is None:
             now = time()
@@ -192,6 +194,7 @@ class BeadLockManager(ManagerProcessBase):
         if max_step <= 0:
             return
         correction = float(np.clip(correction, -max_step, max_step))
+        correction *= 0.5  # Apply a damping factor to prevent overshooting
         if np.isclose(correction, 0.0):
             return
 
@@ -397,7 +400,7 @@ class BeadLockManager(ManagerProcessBase):
 
     @register_ipc_command(SetZLockTargetCommand)
     @register_script_command(SetZLockTargetCommand)
-    def set_z_lock_target(self, value: float):
+    def set_z_lock_target(self, value: float | None):
         self.z_lock_target = value
         self._advance_z_lock_cutoff()
 

@@ -3325,6 +3325,9 @@ class UIManager(ManagerProcessBase):
         command = RemoveBeadsFromPendingMovesCommand(ids=moved_ids)
         self.send_ipc(command)
 
+        if hasattr(self.controls, 'xy_lock_panel'):
+            self.controls.xy_lock_panel.notify_correction()
+
     def add_bead(self, pos: QPoint):
         if self._bead_next_id >= self._bead_roi_capacity:
             self.show_error(
@@ -3715,6 +3718,8 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(UpdateZLockTargetCommand)
     def update_z_lock_target(self, value: float):
         self.controls.z_lock_panel.update_target(value)
+        if hasattr(self.controls.z_lock_panel, 'notify_correction'):
+            self.controls.z_lock_panel.notify_correction()
 
     @register_ipc_command(UpdateZLockIntervalCommand)
     def update_z_lock_interval(self, value: float):

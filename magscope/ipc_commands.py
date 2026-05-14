@@ -150,7 +150,7 @@ class UpdateZLockBeadCommand(Command):
 
 @dataclass(frozen=True)
 class UpdateZLockTargetCommand(Command):
-    value: float
+    value: float | None
 
 
 @dataclass(frozen=True)
@@ -341,6 +341,11 @@ class ExecuteXYLockCommand(Command):
 
 
 @dataclass(frozen=True)
+class ExecuteZLockCommand(Command):
+    """Request the Z-Lock manager to perform one correction cycle."""
+
+
+@dataclass(frozen=True)
 class SetXYLockIntervalCommand(Command):
     value: float
 
@@ -367,7 +372,7 @@ class SetZLockBeadCommand(Command):
 
 @dataclass(frozen=True)
 class SetZLockTargetCommand(Command):
-    value: float
+    value: float | None
 
 
 @dataclass(frozen=True)

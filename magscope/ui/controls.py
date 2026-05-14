@@ -8,13 +8,14 @@ import os
 import sys
 import textwrap
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
-from PyQt6.QtCore import QPointF, QSettings, QSize, QTimer, QUrl, Qt, QVariant, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QSettings, QSize, QTimer, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
@@ -22,16 +23,19 @@ from PyQt6.QtGui import (
     QIcon,
     QPalette,
     QPainter,
+    QPen,
     QPixmap,
     QPolygonF,
     QTextOption,
 )
 from PyQt6.QtWidgets import (
-    QBoxLayout,
     QApplication,
+    QBoxLayout,
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -45,6 +49,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedLayout,
     QStackedWidget,
     QTabWidget,
@@ -56,6 +61,7 @@ from PyQt6.QtWidgets import (
 
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
+    ExecuteZLockCommand,
     GetCameraSettingCommand,
     LoadScriptCommand,
     PauseScriptCommand,
@@ -2936,64 +2942,303 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {timestamp_text}')
 
 
+class _LockInfoButton(QToolButton):
+    """Compact info icon that shows a tooltip on hover."""
+
+    def __init__(self, tooltip_text: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setToolTip(tooltip_text)
+        self.setText('ⓘ')
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.setStyleSheet(
+            'QToolButton { border: none; background: transparent; color: #888; font-size: 15px; }'
+            'QToolButton:hover { color: #ccc; }'
+        )
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+
+class _LockStatusBadge(QLabel):
+    """Compact color-coded status label with rounded background."""
+
+    def __init__(self, text: str = '', parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(20)
+        self.setMinimumWidth(60)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._state = ''
+        self._apply_style()
+
+    def set_state(self, state: str) -> None:
+        self._state = state
+        self.setText(state)
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        if self._state == 'Active':
+            bg, fg = '#1a472a', '#4caf50'
+        elif self._state == 'Inactive':
+            bg, fg = '#2a2a2a', '#888'
+        elif self._state == 'Arming':
+            bg, fg = '#3d3520', '#ffce5a'
+        elif self._state == 'Target not set':
+            bg, fg = '#3d3520', '#ffce5a'
+        else:
+            bg, fg = '#2a2a2a', '#888'
+        self.setStyleSheet(
+            f'QLabel {{ background-color: {bg}; color: {fg}; '
+            f'border: 1px solid #3a3a3a; border-radius: 3px; '
+            f'padding: 0px 6px; font-size: 10px; font-weight: bold; }}'
+        )
+
+
+class _LockActivityIndicator(QWidget):
+    """Small circular ring indicator that fills over the lock interval and resets on correction."""
+
+    _SIZE = 14
+    _RING_WIDTH = 2
+    _BACKGROUND_COLOR = '#666666'
+    _MAXIMUM = 100
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._active = False
+        self._progress = 0
+        self._cycle_seconds = 10.0
+        self._flash_mode = False
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._recalc_interval()
+
+    def set_cycle_duration(self, seconds: float) -> None:
+        self._cycle_seconds = max(0.1, float(seconds))
+        self._recalc_interval()
+        if self._active and not self._flash_mode:
+            self._progress = 0
+            self.update()
+
+    def reset(self) -> None:
+        if not self._active:
+            return
+        self._progress = 0
+        self.update()
+
+    def set_active(self, active: bool) -> None:
+        if active == self._active:
+            return
+        self._active = active
+        self._flash_mode = False
+        if active:
+            self._progress = 0
+            self._recalc_interval()
+            self._timer.start()
+        else:
+            self._timer.stop()
+            self._progress = 0
+        self.update()
+
+    def trigger_once_flash(self) -> None:
+        self._flash_mode = True
+        self._progress = self._MAXIMUM
+        self._timer.setInterval(10)
+        if not self._timer.isActive():
+            self._timer.start()
+        self.update()
+
+    def _recalc_interval(self) -> None:
+        ms = max(10, int(self._cycle_seconds * 1000 / self._MAXIMUM))
+        self._timer.setInterval(ms)
+
+    def _tick(self) -> None:
+        if self._flash_mode:
+            self._progress = max(0, self._progress - 1)
+            self.update()
+            if self._progress <= 0:
+                self._flash_mode = False
+                if not self._active:
+                    self._timer.stop()
+                else:
+                    self._recalc_interval()
+            return
+        self._progress = min(self._MAXIMUM, self._progress + 1)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        ring_w = self._RING_WIDTH
+        margin = ring_w / 2 + 1.0
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+
+        bg_pen = QPen(QColor(self._BACKGROUND_COLOR), ring_w)
+        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawEllipse(rect)
+
+        if self._active or self._flash_mode:
+            fraction = self._progress / self._MAXIMUM
+            accent_pen = QPen(QColor(get_accent_color()), ring_w)
+            accent_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(accent_pen)
+            painter.drawArc(rect, 90 * 16, int(-360 * 16 * fraction))
+
+
+class _LockNumberInput(QWidget):
+    """Compact row: label | spinbox | unit suffix."""
+
+    def __init__(
+        self,
+        label_text: str,
+        default: float | int,
+        unit: str,
+        *,
+        is_int: bool = False,
+        minimum: float = 0.0,
+        maximum: float = 999999.0,
+        decimals: int = 1,
+        callback: callable | None = None,
+        show_unit_label: bool = True,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.label = QLabel(label_text)
+        self.label.setFixedWidth(105)
+        layout.addWidget(self.label)
+
+        if is_int:
+            self.spinbox = QSpinBox()
+            self.spinbox.setRange(int(minimum), int(maximum))
+            self.spinbox.setValue(int(default))
+            self.spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        else:
+            self.spinbox = QDoubleSpinBox()
+            self.spinbox.setRange(minimum, maximum)
+            self.spinbox.setDecimals(decimals)
+            self.spinbox.setValue(float(default))
+            self.spinbox.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.spinbox.setFixedWidth(64)
+        self.spinbox.setAlignment(Qt.AlignmentFlag.AlignRight)
+        if callback:
+            self.spinbox.editingFinished.connect(callback)
+        layout.addWidget(self.spinbox)
+
+        self.unit_label = QLabel(unit)
+        self.unit_label.setFixedWidth(40)
+        self.unit_label.setStyleSheet('color: #999;')
+        layout.addWidget(self.unit_label)
+
+        if not show_unit_label:
+            self.unit_label.hide()
+
+        self.value_label = self.unit_label
+
+    @property
+    def lineedit(self):
+        return self.spinbox.lineEdit()
+
+
 class XYLockPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='XY-Lock', collapsed_by_default=True)
+        super().__init__(manager=manager, title='XY-Lock',
+                         collapsed_by_default=False, collapsible=False)
 
-        # Note
-        note_text = textwrap.dedent(
-            """
-            Periodically moves the bead-boxes to center the bead.
-            """
-        ).strip()
-        note = QLabel(note_text)
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        title_layout = self.groupbox.layout().itemAt(0).widget().layout()
 
-        controls_row = QHBoxLayout()
-        self.layout().addLayout(controls_row)
-
-        # Enabled
-        self.enabled = LabeledCheckbox(
-            label_text='Enabled',
-            callback=self.enabled_callback,
+        info_btn = _LockInfoButton(
+            'XY-Lock periodically recenters the selected bead in the '
+            'camera frame by applying small XY corrections.'
         )
-        controls_row.addWidget(self.enabled)
+        title_layout.addWidget(info_btn)
+        title_layout.addStretch(1)
 
-        # Once
+        self._activity_indicator = _LockActivityIndicator()
+        title_layout.addWidget(self._activity_indicator)
+
+        content = self.layout()
+        content.setContentsMargins(6, 2, 6, 6)
+        content.setSpacing(4)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
+        left_col.addStretch(1)
+
         self.once_button = QPushButton('Once')
         self.once_button.clicked.connect(self.once_callback)
-        controls_row.addWidget(self.once_button)
+        self.once_button.setFixedHeight(22)
+        left_col.addWidget(self.once_button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Interval
+        self.enabled = LabeledCheckbox(
+            label_text='Timer',
+            callback=self.enabled_callback,
+        )
+        left_col.addWidget(self.enabled, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        left_col.addStretch(1)
+        body.addLayout(left_col)
+
+        vline = QFrame()
+        vline.setFrameShape(QFrame.Shape.VLine)
+        vline.setFrameShadow(QFrame.Shadow.Sunken)
+        vline.setFixedWidth(1)
+        body.addWidget(vline)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(4)
+
         default_interval = self.manager.settings['xy-lock default interval']
-        self.interval = LabeledLineEditWithValue(
-            label_text='Interval (sec)',
-            default=f'{default_interval} sec',
-            callback=self.interval_callback,
-            widths=(105, 100, 0),
+        self.interval = _LockNumberInput(
+            label_text='Interval (sec)', default=default_interval, unit='sec',
+            callback=self.interval_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.interval)
+        right_col.addWidget(self.interval)
 
-        # Max
         default_max = self.manager.settings['xy-lock default max']
-        self.max = LabeledLineEditWithValue(
-            label_text='Max (pixels)',
-            default=f'{default_max} pixels',
-            callback=self.max_callback,
-            widths=(105, 100, 0),
+        self.max = _LockNumberInput(
+            label_text='Max correction (px)', default=default_max, unit='px',
+            callback=self.max_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.max)
+        right_col.addWidget(self.max)
 
-        # Averaging Window
-        default_window = self.manager.settings.get('xy-lock default window', '')
-        self.window = LabeledLineEditWithValue(
-            label_text='Averaging Window',
-            default=f'{default_window} frames',
-            callback=self.window_callback,
-            widths=(105, 100, 0),
+        default_window = self.manager.settings.get('xy-lock default window', 10)
+        self.window = _LockNumberInput(
+            label_text='Averaging (frames)', default=default_window, unit='frames',
+            is_int=True, minimum=1, callback=self.window_callback,
+            show_unit_label=False,
         )
-        self.layout().addWidget(self.window)
+        right_col.addWidget(self.window)
+        right_col.addStretch(1)
+        body.addLayout(right_col)
+        body.addStretch(1)
+
+        content.addLayout(body)
+
+        self._activity_indicator.set_cycle_duration(default_interval)
+        self._update_badge()
+
+    def notify_correction(self) -> None:
+        self._activity_indicator.reset()
+
+    def _update_badge(self) -> None:
+        self._activity_indicator.set_active(self.enabled.checkbox.isChecked())
 
     def search_targets(self) -> list[SearchTarget]:
         return [
@@ -3006,81 +3251,54 @@ class XYLockPanel(ControlPanelBase):
 
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
-
         self.set_highlighted(is_enabled)
+        self._update_badge()
 
-        # Send value
         command = SetXYLockOnCommand(value=is_enabled)
         self.manager.send_ipc(command)
 
     def once_callback(self):
         command = ExecuteXYLockCommand()
         self.manager.send_ipc(command)
+        self._activity_indicator.trigger_once_flash()
 
     def interval_callback(self):
-        # Get value
-        value = self.interval.lineedit.text()
-        self.interval.lineedit.setText('')
-
-        # Check value
-        stripped_value = value.strip()
-        try:
-            interval_seconds = float(stripped_value)
-        except ValueError:
-            return
-        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        interval_seconds = self.interval.spinbox.value()
+        if interval_seconds <= 0:
             return
 
-        # Send value
         command = SetXYLockIntervalCommand(value=interval_seconds)
         self.manager.send_ipc(command)
 
     def max_callback(self):
-        # Get value
-        value = self.max.lineedit.text()
-        self.max.lineedit.setText('')
-
-        # Check value
-        try:
-            max_distance = float(value)
-        except ValueError:
-            return
+        max_distance = self.max.spinbox.value()
         if max_distance < 1:
             return
 
-        # Send value
         command = SetXYLockMaxCommand(value=max_distance)
         self.manager.send_ipc(command)
 
     def window_callback(self):
-        # Get value
-        value = self.window.lineedit.text()
-        self.window.lineedit.setText('')
-
-        # Check value
-        try:
-            window_size = int(value)
-        except ValueError:
-            return
+        window_size = self.window.spinbox.value()
         if window_size <= 0:
             return
 
-        # Send value
         command = SetXYLockWindowCommand(value=window_size)
         self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
-        # Set checkbox
         self.enabled.checkbox.blockSignals(True)
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
-
         self.set_highlighted(value)
+        self._update_badge()
 
     def update_interval(self, value: float):
         if value is None:
             value = ''
         self.interval.value_label.setText(f'{value} sec')
+        if isinstance(value, (int, float)):
+            self._activity_indicator.set_cycle_duration(value)
 
     def update_max(self, value: float):
         if value is None:
@@ -3095,74 +3313,207 @@ class XYLockPanel(ControlPanelBase):
 
 class ZLockPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Z-Lock', collapsed_by_default=True)
+        super().__init__(manager=manager, title='Z-Lock',
+                         collapsed_by_default=False, collapsible=False)
 
-        # Note
-        note_text = textwrap.dedent(
-            """
-            When enabled the Z-Lock overrides the "Z motor" target and adjusts the motor
-            target to maintain the chosen bead at a fixed Z value. Adjustments run on a
-            timer using the configured interval.
-            """
-        ).replace('\n', ' ').strip()
-        note = QLabel(note_text)
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        title_layout = self.groupbox.layout().itemAt(0).widget().layout()
 
-        # Enabled
+        info_btn = _LockInfoButton(
+            'Z-Lock maintains the selected bead at a fixed Z position by '
+            'periodically adjusting the Z motor toward a target value.'
+        )
+        title_layout.addWidget(info_btn)
+        title_layout.addStretch(1)
+
+        self._activity_indicator = _LockActivityIndicator()
+        title_layout.addWidget(self._activity_indicator)
+
+        content = self.layout()
+        content.setContentsMargins(6, 2, 6, 6)
+        content.setSpacing(4)
+
+        # Compact warning row
+        self._warning_label = QLabel()
+        self._warning_label.setStyleSheet(
+            'color: #ffce5a; font-size: 10px; padding: 1px 0px;'
+        )
+        self._warning_label.setVisible(False)
+        content.addWidget(self._warning_label)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
+        left_col.addStretch(1)
+
+        self._once_button = QPushButton('Once')
+        self._once_button.setFixedHeight(22)
+        self._once_button.clicked.connect(self._once_callback)
+        left_col.addWidget(self._once_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         self.enabled = LabeledCheckbox(
-            label_text='Enabled',
+            label_text='Timer',
             callback=self.enabled_callback,
         )
-        self.layout().addWidget(self.enabled)
+        left_col.addWidget(self.enabled, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Bead
-        self.bead = LabeledLineEditWithValue(
-            label_text='Bead',
-            default='0',
-            callback=self.bead_callback,
-            widths=(75, 100, 0),
+        left_col.addStretch(1)
+        body.addLayout(left_col)
+
+        vline = QFrame()
+        vline.setFrameShape(QFrame.Shape.VLine)
+        vline.setFrameShadow(QFrame.Shadow.Sunken)
+        vline.setFixedWidth(1)
+        body.addWidget(vline)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(4)
+
+        # Bead row
+        bead_row = QHBoxLayout()
+        bead_row.setContentsMargins(0, 0, 0, 0)
+        bead_row.setSpacing(6)
+        bead_label = QLabel('Bead')
+        bead_label.setFixedWidth(105)
+        bead_row.addWidget(bead_label)
+        self._bead_combo = QComboBox()
+        self._bead_combo.setEditable(True)
+        self._bead_combo.setFixedWidth(64)
+        self._bead_combo.setMinimumContentsLength(1)
+        self._bead_combo.currentTextChanged.connect(self._bead_combo_callback)
+        bead_row.addWidget(self._bead_combo)
+        bead_row.addStretch(1)
+        right_col.addLayout(bead_row)
+
+        self.bead = SimpleNamespace(
+            value_label=self._bead_combo,
+            lineedit=self._bead_combo.lineEdit(),
         )
-        self.layout().addWidget(self.bead)
 
-        # Target
-        self.target = LabeledLineEditWithValue(
-            label_text='Target (nm)',
-            default='Not set',
-            callback=self.target_callback,
-            widths=(75, 100, 0),
+        # Target row
+        target_row = QHBoxLayout()
+        target_row.setContentsMargins(0, 0, 0, 0)
+        target_row.setSpacing(6)
+        target_label = QLabel('Target (nm)')
+        target_label.setFixedWidth(105)
+        target_row.addWidget(target_label)
+        self._target_spinbox = QDoubleSpinBox()
+        self._target_spinbox.setRange(-999999.0, 999999.0)
+        self._target_spinbox.setDecimals(1)
+        self._target_spinbox.setValue(0.0)
+        self._target_spinbox.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self._target_spinbox.setFixedWidth(64)
+        self._target_spinbox.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._target_spinbox.editingFinished.connect(self._target_spinbox_callback)
+        target_row.addWidget(self._target_spinbox)
+
+        self._target_unit_label = QLabel('nm')
+        self._target_unit_label.setStyleSheet('color: #999;')
+
+        self.target = SimpleNamespace(
+            lineedit=self._target_spinbox.lineEdit(),
+            value_label=self._target_unit_label,
         )
-        self.layout().addWidget(self.target)
+        target_row.addStretch(1)
+        right_col.addLayout(target_row)
 
-        # Interval
         default_interval = self.manager.settings['z-lock default interval']
-        self.interval = LabeledLineEditWithValue(
-            label_text='Interval (sec)',
-            default=f'{default_interval} sec',
-            callback=self.interval_callback,
-            widths=(75, 100, 0),
+        self.interval = _LockNumberInput(
+            label_text='Interval (sec)', default=default_interval, unit='sec',
+            callback=self.interval_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.interval)
+        right_col.addWidget(self.interval)
 
-        # Max
         default_max = self.manager.settings['z-lock default max']
-        self.max = LabeledLineEditWithValue(
-            label_text='Max (nm)',
-            default=f'{default_max} nm',
-            callback=self.max_callback,
-            widths=(75, 100, 0),
+        self.max = _LockNumberInput(
+            label_text='Max correction (nm)', default=default_max, unit='nm',
+            callback=self.max_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.max)
+        right_col.addWidget(self.max)
 
-        # Averaging Window
-        default_window = self.manager.settings.get('z-lock default window', '')
-        self.window = LabeledLineEditWithValue(
-            label_text='Averaging Window',
-            default=f'{default_window} frames',
-            callback=self.window_callback,
-            widths=(75, 100, 0),
+        default_window = self.manager.settings.get('z-lock default window', 10)
+        self.window = _LockNumberInput(
+            label_text='Averaging (frames)', default=default_window, unit='frames',
+            is_int=True, minimum=1, callback=self.window_callback,
+            show_unit_label=False,
         )
-        self.layout().addWidget(self.window)
+        right_col.addWidget(self.window)
+        right_col.addStretch(1)
+        body.addLayout(right_col)
+        body.addStretch(1)
+
+        content.addLayout(body)
+
+        self._activity_indicator.set_cycle_duration(default_interval)
+        self._target_is_set = False
+        self._update_badge()
+        self._refresh_bead_combo()
+
+    def _refresh_bead_combo(self) -> None:
+        self._bead_combo.blockSignals(True)
+        current_text = self._bead_combo.currentText()
+        try:
+            bead_rois = self.manager._bead_rois
+        except (AttributeError, TypeError):
+            bead_rois = {}
+        self._bead_combo.clear()
+        for bead_id in sorted(bead_rois.keys()):
+            self._bead_combo.addItem(str(bead_id))
+        if current_text:
+            idx = self._bead_combo.findText(current_text)
+            if idx >= 0:
+                self._bead_combo.setCurrentIndex(idx)
+        self._bead_combo.blockSignals(False)
+
+    def _bead_combo_callback(self, text: str) -> None:
+        try:
+            bead_index = int(text)
+        except ValueError:
+            return
+        if bead_index < 0:
+            return
+
+        command = SetZLockBeadCommand(value=bead_index)
+        self.manager.send_ipc(command)
+
+    def _target_spinbox_callback(self) -> None:
+        target_nm = self._target_spinbox.value()
+        command = SetZLockTargetCommand(value=target_nm)
+        self.manager.send_ipc(command)
+
+    def _once_callback(self) -> None:
+        command = ExecuteZLockCommand()
+        self.manager.send_ipc(command)
+        self._activity_indicator.trigger_once_flash()
+
+    def _update_badge(self) -> None:
+        if not self._has_focus_motor():
+            self._activity_indicator.set_active(False)
+            self._warning_label.setText(
+                'No focus motor hardware registered \u2014 Z-Lock disabled'
+            )
+            self._warning_label.setVisible(True)
+            self._set_controls_enabled(False)
+            return
+
+        self._set_controls_enabled(True)
+        enabled = self.enabled.checkbox.isChecked()
+        self._activity_indicator.set_active(enabled)
+        if not enabled and not self._target_is_set:
+            self._warning_label.setText('Set a target Z before enabling')
+            self._warning_label.setVisible(True)
+        elif enabled and not self._target_is_set:
+            self._warning_label.setText('Target will latch from current bead Z')
+            self._warning_label.setVisible(True)
+        else:
+            self._warning_label.setVisible(False)
 
     def search_targets(self) -> list[SearchTarget]:
         return [
@@ -3176,130 +3527,88 @@ class ZLockPanel(ControlPanelBase):
 
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
-
         self.set_highlighted(is_enabled)
+        self._update_badge()
 
-        # Send value
         command = SetZLockOnCommand(value=is_enabled)
         self.manager.send_ipc(command)
 
-    def bead_callback(self):
-        # Get value
-        value = self.bead.lineedit.text()
-        self.bead.lineedit.setText('')
-
-        # Check value
-        try:
-            bead_index = int(value)
-        except ValueError:
-            return
-        if bead_index < 0:
-            return
-
-        self.update_bead(bead_index)
-
-        # Send value
-        command = SetZLockBeadCommand(value=bead_index)
-        self.manager.send_ipc(command)
-
-    def target_callback(self):
-        # Get value
-        value = self.target.lineedit.text()
-        self.target.lineedit.setText('')
-
-        # Check value
-        try:
-            target_nm = float(value)
-        except ValueError:
-            return
-
-        self.update_target(target_nm)
-
-        # Send value
-        command = SetZLockTargetCommand(value=target_nm)
-        self.manager.send_ipc(command)
-
     def interval_callback(self):
-        # Get value
-        value = self.interval.lineedit.text()
-        self.interval.lineedit.setText('')
-
-        # Check value
-        stripped_value = value.strip()
-        try:
-            interval_seconds = float(stripped_value)
-        except ValueError:
-            return
-        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        interval_seconds = self.interval.spinbox.value()
+        if interval_seconds <= 0:
             return
 
-        self.update_interval(interval_seconds)
-
-        # Send value
         command = SetZLockIntervalCommand(value=interval_seconds)
         self.manager.send_ipc(command)
 
     def max_callback(self):
-        # Get value
-        value = self.max.lineedit.text()
-        self.max.lineedit.setText('')
-
-        # Check value
-        try:
-            max_nm = float(value)
-        except ValueError:
-            return
+        max_nm = self.max.spinbox.value()
         if max_nm <= 1:
             return
 
-        self.update_max(max_nm)
-
-        # Send value
         command = SetZLockMaxCommand(value=max_nm)
         self.manager.send_ipc(command)
 
     def window_callback(self):
-        # Get value
-        value = self.window.lineedit.text()
-        self.window.lineedit.setText('')
-
-        # Check value
-        try:
-            window_size = int(value)
-        except ValueError:
-            return
+        window_size = self.window.spinbox.value()
         if window_size <= 0:
             return
 
-        self.update_window(window_size)
-
-        # Send value
         command = SetZLockWindowCommand(value=window_size)
         self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
-        # Set checkbox
         self.enabled.checkbox.blockSignals(True)
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
-
         self.set_highlighted(value)
+        self._update_badge()
 
     def update_bead(self, value: int):
         if value is None:
             value = ''
-        self.bead.value_label.setText(f'{value}')
+        self.bead.value_label.setCurrentText(str(value))
+
+    def _has_focus_motor(self) -> bool:
+        from magscope.hardware import FocusMotorBase
+        try:
+            hardware_types = self.manager.hardware_types
+        except (AttributeError, TypeError):
+            return False
+        for hardware_type in hardware_types.values():
+            try:
+                if issubclass(hardware_type, FocusMotorBase):
+                    return True
+            except TypeError:
+                continue
+        return False
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        self._bead_combo.setEnabled(enabled)
+        self._target_spinbox.setEnabled(enabled)
+        self.enabled.setEnabled(enabled)
+        self._once_button.setEnabled(enabled)
+        self.interval.setEnabled(enabled)
+        self.max.setEnabled(enabled)
+        self.window.setEnabled(enabled)
 
     def update_target(self, value: float):
         if value is None:
-            self.target.value_label.setText('Not set')
+            self._target_is_set = False
+            self._target_unit_label.setText('Not set')
+            self._update_badge()
             return
-        self.target.value_label.setText(f'{value} nm')
+        self._target_is_set = True
+        self._target_unit_label.setText(f'{value} nm')
+        self._activity_indicator.reset()
+        self._update_badge()
 
     def update_interval(self, value: float):
         if value is None:
             value = ''
         self.interval.value_label.setText(f'{value} sec')
+        if isinstance(value, (int, float)):
+            self._activity_indicator.set_cycle_duration(value)
 
     def update_max(self, value: float):
         if value is None:
