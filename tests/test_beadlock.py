@@ -151,7 +151,7 @@ def test_do_z_lock_averages_recent_z_samples_using_window():
 
     manager.do_z_lock(now=5.0)
 
-    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=480.0)]
+    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=490.0)]
 
 
 def test_do_z_lock_skips_when_no_focus_motor_is_registered():
@@ -184,7 +184,7 @@ def test_do_z_lock_skips_when_latest_bead_z_is_not_available():
     assert manager._sent_commands == []
 
 
-def test_do_z_lock_sends_capped_focus_move_toward_target_and_resets_cutoff():
+def test_do_z_lock_sends_damped_capped_focus_move_toward_target_and_resets_cutoff():
     manager = make_manager(
         tracks=np.asarray([[120.0, 0.0, 0.0, 140.0, 0.0, 0.0, 0.0]], dtype=np.float64)
     )
@@ -196,7 +196,7 @@ def test_do_z_lock_sends_capped_focus_move_toward_target_and_resets_cutoff():
 
     manager.do_z_lock(now=5.0)
 
-    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=475.0)]
+    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=487.5)]
     assert manager._z_lock_global_cutoff == 5.0
 
 
@@ -213,10 +213,10 @@ def test_do_z_lock_uses_only_post_move_samples(monkeypatch):
     set_tracks(manager, [[999.0, 0.0, 0.0, 140.0, 0.0, 0.0, 0.0]])
     manager.do_z_lock(now=1_000.0)
 
-    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=460.0)]
+    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=480.0)]
 
     manager._sent_commands.clear()
-    manager._focus_buffer = FakeFocusBuffer(np.asarray([[2.0, 460.0, 460.0, 1.0]], dtype=np.float64))
+    manager._focus_buffer = FakeFocusBuffer(np.asarray([[2.0, 480.0, 480.0, 1.0]], dtype=np.float64))
     set_tracks(
         manager,
         [
@@ -226,7 +226,7 @@ def test_do_z_lock_uses_only_post_move_samples(monkeypatch):
     )
     manager.do_z_lock(now=1_001.0)
 
-    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=440.0)]
+    assert manager._sent_commands == [MoveFocusMotorAbsoluteCommand(z=470.0)]
 
 
 def test_do_z_lock_skips_while_focus_motor_is_still_settling():

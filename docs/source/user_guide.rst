@@ -261,7 +261,7 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
 * Bead - Which bead ROI will be kept in focus. This should generally be a reference bead.
 * Target - The Z-value that the selected bead will be maintained at.
 * Interval - The frequency with which the difference between the target value and current value will be checked/adjusted.
-* Max - An upper limit you can set. The Z-Lock will not move more than this amount at a given time. If the Z-Look keep over shooting the target try decreasing this value.
+* Max - An upper limit you can set. The Z-Lock caps each correction at this amount, then applies damping so the motor moves half of the capped correction. If the Z-Lock keeps overshooting the target, try decreasing this value.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Z-Lock_Panel_v1.jpg
          :alt: Screenshot of the Z-Lock panel.
