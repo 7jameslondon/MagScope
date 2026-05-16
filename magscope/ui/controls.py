@@ -378,6 +378,30 @@ class HelpPanel(QFrame):
         )
 
 
+class MotorsPlaceholderPanel(ControlPanelBase):
+    """Panel shown when no user hardware managers are configured."""
+
+    HELP_URL = QUrl("https://magscope.readthedocs.io/en/latest/connect_hardware.html")
+
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager=manager, title='Hardware Managers', collapsed_by_default=False)
+
+        description_label = QLabel(
+            "No user hardware managers are registered. MagScope includes a framework "
+            "for adding motors, stages, and other devices to your acquisition workflow."
+        )
+        description_label.setWordWrap(True)
+
+        docs_button = QPushButton("Open hardware connection guide")
+        docs_button.setToolTip("Open the MagScope hardware manager documentation")
+        docs_button.clicked.connect(
+            lambda _checked=False: QDesktopServices.openUrl(self.HELP_URL)
+        )
+
+        self.layout().addWidget(description_label)
+        self.layout().addWidget(docs_button)
+
+
 class MagScopeSettingsPanel(QWidget):
     """Allow importing, exporting, and editing MagScope configuration values."""
 

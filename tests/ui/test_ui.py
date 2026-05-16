@@ -2418,7 +2418,16 @@ def test_workflow_layout_import_merges_overflow_columns():
         [['Run'], ['Analysis'], ['Locking'], [], ['Custom']],
     )
 
-    assert layout == [['Run'], ['Analysis'], ['Locking'], ['Custom']]
+    assert layout == [['Run'], ['Analysis'], ['Locking'], ['Motors']]
+
+
+def test_workflow_layout_import_accepts_motors_column():
+    layout = Controls._normalise_workflow_layout(
+        Controls,
+        [['Run'], ['Motors'], ['Analysis'], ['Locking']],
+    )
+
+    assert layout == [['Run'], ['Motors'], ['Analysis'], ['Locking']]
 
 
 def test_search_suggests_dock_all_windows_without_executing(qtbot):
@@ -3655,6 +3664,56 @@ def test_controls_only_register_allan_panel_when_tweezepy_available(qtbot, monke
     qtbot.addWidget(controls_without_tweezepy)
     assert 'AllanDeviationPanel' not in controls_without_tweezepy.panels
     assert 'BeadSelectionPanel' not in controls_without_tweezepy.panels
+
+
+def test_controls_show_motors_placeholder_only_without_hardware(qtbot, monkeypatch):
+    from magscope.ui import ui as ui_module
+
+    class StubPanel(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    for name in [
+        'AcquisitionPanel',
+        'CameraPanel',
+        'HistogramPanel',
+        'PlotSettingsPanel',
+        'ProfilePanel',
+        'ScriptPanel',
+        'StatusPanel',
+        'XYLockPanel',
+        'ZLockPanel',
+        'AllanDeviationPanel',
+    ]:
+        monkeypatch.setattr(ui_module, name, StubPanel)
+
+    monkeypatch.setattr(ui_module, 'has_tweezepy_support', lambda: False)
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        plot_worker=SimpleNamespace(plots=[]),
+        controls_to_add=[],
+        hardware_types={},
+    )
+
+    controls = Controls(manager)
+    qtbot.addWidget(controls)
+
+    assert 'MotorsPlaceholderPanel' in controls.panels
+    assert isinstance(controls.panels['MotorsPlaceholderPanel'], ControlPanelBase)
+    assert controls.panels['MotorsPlaceholderPanel'].groupbox is not None
+    assert controls._panel_to_tab['MotorsPlaceholderPanel'] == 'Motors'
+
+    manager_with_hardware = SimpleNamespace(
+        settings=MagScopeSettings(),
+        plot_worker=SimpleNamespace(plots=[]),
+        controls_to_add=[],
+        hardware_types={'focus': object},
+    )
+
+    controls_with_hardware = Controls(manager_with_hardware)
+    qtbot.addWidget(controls_with_hardware)
+
+    assert 'MotorsPlaceholderPanel' not in controls_with_hardware.panels
 
 
 def test_refresh_bead_overlay_pushes_cached_overlay_state(ui_manager):

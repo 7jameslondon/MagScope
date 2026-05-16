@@ -86,6 +86,7 @@ from magscope.ui.controls import (
     ControlPanelBase,
     CurrentZLUTDialog,
     HistogramPanel,
+    MotorsPlaceholderPanel,
     PlotSettingsPanel,
     PreferencesDialog,
     ProfilePanel,
@@ -5095,13 +5096,14 @@ class Controls(QWidget):
     WORKFLOW_COLUMNS_SETTINGS_KEY = "controls/workflow_columns"
     MIN_COLUMN_WIDTH = 360
     MAX_COLUMNS = 4
-    WORKFLOW_ORDER = ["Run", "Analysis", "Locking", "Custom"]
+    WORKFLOW_ORDER = ["Run", "Analysis", "Locking", "Motors"]
+    WORKFLOW_TAB_ALIASES = {"Custom": "Motors"}
 
     DEFAULT_LAYOUTS = {
-        1: [["Run", "Analysis", "Locking", "Custom"]],
-        2: [["Run", "Custom"], ["Analysis", "Locking"]],
-        3: [["Run", "Custom"], ["Analysis"], ["Locking"]],
-        4: [["Run"], ["Analysis"], ["Locking"], ["Custom"]],
+        1: [["Run", "Analysis", "Locking", "Motors"]],
+        2: [["Run", "Motors"], ["Analysis", "Locking"]],
+        3: [["Run", "Motors"], ["Analysis"], ["Locking"]],
+        4: [["Run"], ["Analysis"], ["Locking"], ["Motors"]],
     }
 
     def __init__(self, manager: UIManager):
@@ -5181,7 +5183,12 @@ class Controls(QWidget):
             widget = control_factory(self.manager)
             panel_id = widget.__class__.__name__
             self.panels[panel_id] = widget
-            self._panel_to_tab[panel_id] = "Custom"
+            self._panel_to_tab[panel_id] = "Motors"
+
+        if not getattr(self.manager, "hardware_types", {}):
+            self.motors_placeholder_panel = MotorsPlaceholderPanel(self.manager)
+            self.panels["MotorsPlaceholderPanel"] = self.motors_placeholder_panel
+            self._panel_to_tab["MotorsPlaceholderPanel"] = "Motors"
 
     def _create_workflow_pages(self) -> None:
         for tab_id in self.WORKFLOW_ORDER:
@@ -5204,7 +5211,7 @@ class Controls(QWidget):
 
     def _populate_workflow_pages(self) -> None:
         for panel_id, panel in self.panels.items():
-            tab_id = self._panel_to_tab.get(panel_id, "Custom")
+            tab_id = self._panel_to_tab.get(panel_id, "Motors")
             layout = self._tab_content_layouts[tab_id]
             layout.insertWidget(max(0, layout.count() - 1), panel)
 
@@ -5233,7 +5240,7 @@ class Controls(QWidget):
                 continue
             normalized_column: list[str] = []
             for tab_id in column:
-                tab_id = str(tab_id)
+                tab_id = self._canonical_workflow_tab_id(tab_id)
                 if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
                     normalized_column.append(tab_id)
                     used.add(tab_id)
@@ -5264,6 +5271,11 @@ class Controls(QWidget):
                     column.append(str(value))
             columns.append(column)
         return columns
+
+    @classmethod
+    def _canonical_workflow_tab_id(cls, tab_id: Any) -> str:
+        tab_id = str(tab_id)
+        return cls.WORKFLOW_TAB_ALIASES.get(tab_id, tab_id)
 
     def _layout_for_column_count(self, count: int) -> list[list[str]]:
         saved = self._load_saved_layout()
@@ -5452,7 +5464,7 @@ class Controls(QWidget):
             else:
                 column = normalized[-1]
             for raw_tab_id in raw_column:
-                tab_id = str(raw_tab_id)
+                tab_id = self._canonical_workflow_tab_id(raw_tab_id)
                 if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
                     column.append(tab_id)
                     used.add(tab_id)
