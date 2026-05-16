@@ -1776,6 +1776,120 @@ def test_search_reveals_menu_actions_through_top_bar_button(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
+def _create_compact_top_bar_test_window(qtbot, all_menu_actions=False):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setWindowTitle('MagScope')
+    manager._configure_unified_top_bar_window(window)
+    if all_menu_actions:
+        manager._create_view_menu(window)
+        manager._create_tools_menu(window)
+        manager._create_zlut_menu(window)
+        manager._create_preferences_menu_action(window)
+    manager._create_help_menu_action(window)
+    manager._create_search_menu_widget(window)
+    window.show()
+    qtbot.wait(0)
+    manager._update_top_bar_compact_mode()
+    return manager, window
+
+
+def _resize_compact_top_bar(manager, window, qtbot, width):
+    window.resize(width, 300)
+    qtbot.wait(0)
+    manager._update_top_bar_compact_mode()
+
+
+def _compact_reserved_width(manager):
+    return (
+        manager._widget_width_hint(manager._window_icon_label)
+        + manager._widget_width_hint(manager._window_controls)
+        + manager._widget_width_hint(manager._title_bar_safe_area_spacer)
+        + ui_module.TOP_BAR_COMPACT_WIDTH_BUFFER
+    )
+
+
+def _compact_menu_full_width(manager):
+    return sum(button.full_width_hint() for button in manager._top_bar_action_buttons.values())
+
+
+def test_top_bar_compact_mode_hides_title_before_shrinking_search(qtbot):
+    manager, window = _create_compact_top_bar_test_window(qtbot)
+    title_width = manager._window_title_label.sizeHint().width()
+    menu_width = _compact_menu_full_width(manager)
+    search_width = manager._search_inline_total_width(ui_module.MENU_SEARCH_FULL_WIDTH)
+    compact_width = _compact_reserved_width(manager) + title_width + menu_width + search_width - 1
+
+    _resize_compact_top_bar(manager, window, qtbot, compact_width)
+
+    assert not manager._window_title_label.isVisible()
+    assert manager._search_box.isVisible()
+    assert manager._search_box.width() == ui_module.MENU_SEARCH_FULL_WIDTH
+    assert not manager._search_toggle_button.isVisible()
+    assert manager._top_bar_action_buttons['Help'].text() == 'Help'
+
+    clear_ui_manager_singleton()
+
+
+def test_top_bar_compact_mode_shrinks_then_collapses_search(qtbot):
+    manager, window = _create_compact_top_bar_test_window(qtbot)
+    menu_width = _compact_menu_full_width(manager)
+    shrunk_search_width = manager._search_inline_total_width(ui_module.MENU_SEARCH_MIN_WIDTH + 20)
+    compact_width = _compact_reserved_width(manager) + menu_width + shrunk_search_width
+
+    _resize_compact_top_bar(manager, window, qtbot, compact_width)
+
+    assert not manager._window_title_label.isVisible()
+    assert manager._search_box.isVisible()
+    assert ui_module.MENU_SEARCH_MIN_WIDTH <= manager._search_box.width() < (
+        ui_module.MENU_SEARCH_FULL_WIDTH
+    )
+    assert not manager._search_toggle_button.isVisible()
+    assert manager._top_bar_action_buttons['Help'].text() == 'Help'
+
+    collapsed_width = (
+        _compact_reserved_width(manager) + menu_width + manager._search_collapsed_total_width()
+    )
+    _resize_compact_top_bar(manager, window, qtbot, collapsed_width)
+
+    assert not manager._search_box.isVisible()
+    assert manager._search_toggle_button.isVisible()
+    manager._search_box.setText('find beads')
+    qtbot.mouseClick(manager._search_toggle_button, Qt.MouseButton.LeftButton)
+    assert manager._search_popup.isVisible()
+    assert manager._search_popup_box.text() == 'find beads'
+    manager._hide_search_popup()
+
+    clear_ui_manager_singleton()
+
+
+def test_top_bar_compact_mode_turns_menu_buttons_into_icons_last(qtbot):
+    manager, window = _create_compact_top_bar_test_window(qtbot, all_menu_actions=True)
+    menu_width = _compact_menu_full_width(manager)
+    compact_width = (
+        _compact_reserved_width(manager) + menu_width + manager._search_collapsed_total_width() - 1
+    )
+
+    _resize_compact_top_bar(manager, window, qtbot, compact_width)
+
+    help_button = manager._top_bar_action_buttons['Help']
+    layout_button = manager._top_bar_menu_buttons['Layout']
+    zlut_button = manager._top_bar_menu_buttons['Z-LUT']
+    assert not manager._search_box.isVisible()
+    assert manager._search_toggle_button.isVisible()
+    assert help_button.text() == ui_module.TOP_BAR_ACTION_ICONS['Help']
+    assert help_button.action() is manager._help_menu_action
+    assert layout_button.text() == ui_module.TOP_BAR_ACTION_ICONS['Layout']
+    assert layout_button.action().menu() is manager._layout_menu
+    assert zlut_button.text() == 'Z'
+    assert zlut_button.font().family() != manager._material_symbols_font(point_size=13).family()
+    assert help_button.width() == ui_module.MAIN_TOP_BAR_COMPACT_BUTTON_WIDTH
+
+    clear_ui_manager_singleton()
+
+
 def test_title_bar_safe_area_returns_zero_without_qt_safe_margin(monkeypatch):
     monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
     window = SimpleNamespace(windowHandle=lambda: None)

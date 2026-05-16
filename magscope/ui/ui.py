@@ -148,12 +148,24 @@ PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR = '#666666'
 PLOT_PROGRESS_INDICATOR_RING_WIDTH = 2
 MAIN_TOP_BAR_HEIGHT = 34
 MAIN_WINDOW_ICON_SIZE = 18
+MAIN_TOP_BAR_COMPACT_BUTTON_WIDTH = MAIN_TOP_BAR_HEIGHT
 MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH = 144
 MAIN_CAPTION_BUTTON_WIDTH = 46
 MAIN_CAPTION_MINIMIZE_ICON = "minimize"
 MAIN_CAPTION_MAXIMIZE_ICON = "crop_square"
 MAIN_CAPTION_RESTORE_ICON = "filter_none"
 MAIN_CAPTION_CLOSE_ICON = "close"
+MENU_SEARCH_FULL_WIDTH = 300
+MENU_SEARCH_MIN_WIDTH = 120
+MENU_SEARCH_ICON_BUTTON_WIDTH = 30
+TOP_BAR_COMPACT_WIDTH_BUFFER = 8
+TOP_BAR_ACTION_ICONS = {
+    "Layout": "dashboard",
+    "Tools": "construction",
+    "Z-LUT": "Z",
+    "Preferences": "settings",
+    "Help": "help",
+}
 DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
 FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
@@ -327,10 +339,17 @@ class _TopBarActionButton(QToolButton):
     def __init__(self, action: QAction, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._action = action
+        self._full_text = action.text().replace("&", "")
+        self._full_font = QFont(self.font())
+        self._compact_icon_text = TOP_BAR_ACTION_ICONS.get(self._full_text, "more_horiz")
+        self._compact_icon_font: QFont | None = None
+        self._icon_only = False
+        self._full_width_hint = 0
         self.setAutoRaise(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setProperty("mainTopBarButton", True)
+        self.setProperty("topBarCompact", False)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         action.changed.connect(self._sync_from_action)
         menu = action.menu()
@@ -345,11 +364,48 @@ class _TopBarActionButton(QToolButton):
     def action(self) -> QAction:
         return self._action
 
+    def set_compact_icon(self, icon_text: str, icon_font: QFont | None) -> None:
+        self._compact_icon_text = icon_text
+        self._compact_icon_font = QFont(icon_font) if icon_font is not None else None
+        self._apply_display_mode()
+
+    def set_icon_only(self, enabled: bool) -> None:
+        if self._icon_only == enabled:
+            return
+        self._icon_only = enabled
+        self._apply_display_mode()
+
+    def full_width_hint(self) -> int:
+        if self._full_width_hint > 0:
+            return self._full_width_hint
+        return self.sizeHint().width()
+
     def _sync_from_action(self) -> None:
-        self.setText(self._action.text().replace("&", ""))
+        self._full_text = self._action.text().replace("&", "")
+        self._compact_icon_text = TOP_BAR_ACTION_ICONS.get(self._full_text, self._compact_icon_text)
         self.setEnabled(self._action.isEnabled())
         tooltip = self._action.toolTip() or self._action.statusTip()
         self.setToolTip(tooltip)
+        self._apply_display_mode()
+
+    def _apply_display_mode(self) -> None:
+        if self._icon_only:
+            if self._compact_icon_font is not None:
+                self.setFont(self._compact_icon_font)
+            self.setText(self._compact_icon_text)
+            self.setProperty("topBarCompact", True)
+            self.setFixedWidth(MAIN_TOP_BAR_COMPACT_BUTTON_WIDTH)
+        else:
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            self.setFont(self._full_font)
+            self.setText(self._full_text)
+            self.setProperty("topBarCompact", False)
+            self._full_width_hint = max(self._full_width_hint, self.sizeHint().width())
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.updateGeometry()
+        self.update()
 
     def show_action_menu(self, active_action: QAction | None = None) -> bool:
         menu = self._action.menu()
@@ -431,6 +487,31 @@ class _CaptionButtonStateFilter(QObject):
     def _update(self) -> None:
         try:
             _update_maximize_restore_button(self._window, self._maximize_restore_button)
+        except RuntimeError:
+            return
+
+
+class _TopBarCompactModeFilter(QObject):
+    def __init__(self, update_callback: Callable[[], None], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._update_callback = update_callback
+        self._pending_update = False
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self._schedule_update()
+        return super().eventFilter(watched, event)
+
+    def _schedule_update(self) -> None:
+        if self._pending_update:
+            return
+        self._pending_update = True
+        QTimer.singleShot(0, self._run_update)
+
+    def _run_update(self) -> None:
+        self._pending_update = False
+        try:
+            self._update_callback()
         except RuntimeError:
             return
 
@@ -740,6 +821,11 @@ class UIManager(ManagerProcessBase):
         self._zlut_preview_last_poll: float = 0.0
         self._shutdown_complete = False
         self._search_box: QLineEdit | None = None
+        self._search_container: QWidget | None = None
+        self._search_toggle_button: QToolButton | None = None
+        self._search_popup: QWidget | None = None
+        self._search_popup_box: QLineEdit | None = None
+        self._search_popup_escape_shortcut: QShortcut | None = None
         self._search_status_label: QLabel | None = None
         self._search_status_timer: QTimer | None = None
         self._menu_row: QWidget | None = None
@@ -752,6 +838,7 @@ class UIManager(ManagerProcessBase):
         self._maximize_restore_button: QToolButton | None = None
         self._close_button: QToolButton | None = None
         self._caption_button_state_filter: _CaptionButtonStateFilter | None = None
+        self._top_bar_compact_filter: _TopBarCompactModeFilter | None = None
         self._top_bar: _UnifiedTopBar | None = None
         self._help_menu_action: QAction | None = None
         self._window_icon_label: QLabel | None = None
@@ -2280,9 +2367,22 @@ class UIManager(ManagerProcessBase):
                 color: #d0d0d0;
                 padding: 0px 10px;
             }}
+            QToolButton[mainTopBarButton="true"][topBarCompact="true"] {{
+                padding: 0px 6px;
+            }}
             QToolButton[mainTopBarButton="true"]:hover,
             QToolButton[mainTopBarButton="true"]:pressed,
             QToolButton[mainTopBarButton="true"]:checked {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
+            QToolButton[mainTopBarSearchButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px;
+            }}
+            QToolButton[mainTopBarSearchButton="true"]:hover,
+            QToolButton[mainTopBarSearchButton="true"]:pressed {{
                 background-color: rgba(255, 255, 255, 24);
             }}
             QWidget#MainWindowControls {{
@@ -2341,10 +2441,14 @@ class UIManager(ManagerProcessBase):
 
             button = _TopBarActionButton(action, controls)
             button.setObjectName(_top_bar_button_object_name(action.text()))
+            action_text = action.text().replace("&", "")
+            button.set_compact_icon(
+                TOP_BAR_ACTION_ICONS.get(action_text, "more_horiz"),
+                None if action_text == "Z-LUT" else self._material_symbols_font(point_size=13),
+            )
             button.setFixedHeight(target_height)
             controls_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
 
-            action_text = action.text().replace("&", "")
             self._top_bar_action_buttons[action_text] = button
             menu = action.menu()
             if menu is not None:
@@ -2498,33 +2602,41 @@ class UIManager(ManagerProcessBase):
         menu_controls = self._create_top_bar_menu_controls(menu_bar, menu_row, target_height)
         menu_row_layout.addWidget(menu_controls, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        search_container = QWidget(window)
+        search_container = QWidget(menu_row)
         search_container.setObjectName("MenuSearchContainer")
         search_container.setFixedHeight(target_height)
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(10, 4, 0, 4)
         search_layout.setSpacing(0)
 
+        search_toggle_button = QToolButton(search_container)
+        search_toggle_button.setObjectName("MenuSearchToggleButton")
+        search_toggle_button.setText("search")
+        search_toggle_button.setToolTip("Search")
+        search_toggle_button.setFont(self._material_symbols_font(point_size=13))
+        search_toggle_button.setAutoRaise(True)
+        search_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_toggle_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        search_toggle_button.setProperty("mainTopBarSearchButton", True)
+        search_toggle_button.setFixedSize(
+            MENU_SEARCH_ICON_BUTTON_WIDTH,
+            max(24, target_height - 8),
+        )
+        search_toggle_button.hide()
+        search_toggle_button.clicked.connect(lambda _checked=False: self._show_search_popup())
+        search_layout.addWidget(search_toggle_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
         search_box = QLineEdit(search_container)
         search_box.setObjectName("MenuSearchBox")
         search_box.setPlaceholderText("Search for controls ...")
         search_box.setToolTip("Search shows where controls are; it does not run actions.")
         search_box.setClearButtonEnabled(True)
-        search_box.setFixedWidth(300)
+        search_box.setFixedWidth(MENU_SEARCH_FULL_WIDTH)
         search_box.setFixedHeight(max(24, target_height - 8))
         search_layout.addWidget(search_box, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        completion_model = QStringListModel(self._search_completion_labels(""), search_box)
-        completer = QCompleter(completion_model, search_box)
-        completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        search_box.setCompleter(completer)
-
-        search_box.returnPressed.connect(lambda: self._guide_to_search_result(search_box.text()))
-        search_box.textEdited.connect(
-            lambda text: self._update_search_completion_model(completion_model, completer, text)
-        )
-        completer.activated.connect(lambda text: self._guide_to_search_result(str(text)))
+        self._connect_menu_search_box(search_box)
+        search_popup, popup_search_box = self._create_search_popup(window, target_height)
 
         menu_row_layout.addWidget(search_container, 0, Qt.AlignmentFlag.AlignVCenter)
         search_status_label = QLabel(menu_row)
@@ -2561,7 +2673,11 @@ class UIManager(ManagerProcessBase):
         self._window_icon_label = icon_label
         self._window_title_label = title_label
         self._title_bar_safe_area_spacer = title_bar_safe_area_spacer
+        self._search_container = search_container
+        self._search_toggle_button = search_toggle_button
         self._search_box = search_box
+        self._search_popup = search_popup
+        self._search_popup_box = popup_search_box
         self._search_status_label = search_status_label
         self._update_title_bar_safe_area_spacing(window)
         QTimer.singleShot(0, lambda w=window: self._install_title_bar_safe_area_updates(w))
@@ -2571,6 +2687,237 @@ class UIManager(ManagerProcessBase):
         self._search_status_timer.setInterval(3000)
         self._search_status_timer.timeout.connect(lambda: self._set_search_status(""))
         self._install_search_shortcuts(window, search_box)
+        self._top_bar_compact_filter = _TopBarCompactModeFilter(
+            self._update_top_bar_compact_mode,
+            menu_row,
+        )
+        menu_row.installEventFilter(self._top_bar_compact_filter)
+        QTimer.singleShot(0, self._update_top_bar_compact_mode)
+
+    def _connect_menu_search_box(self, search_box: QLineEdit) -> None:
+        completion_model = QStringListModel(self._search_completion_labels(""), search_box)
+        completer = QCompleter(completion_model, search_box)
+        completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        search_box.setCompleter(completer)
+        search_box.returnPressed.connect(
+            lambda box=search_box: self._guide_to_search_result_from_box(box)
+        )
+        search_box.textEdited.connect(
+            lambda text, box=search_box, model=completion_model, completer=completer: (
+                self._handle_search_box_text_edited(box, model, completer, text)
+            )
+        )
+        completer.activated.connect(lambda text: self._guide_to_search_result_from_text(str(text)))
+
+    def _create_search_popup(
+        self,
+        window: QMainWindow,
+        target_height: int,
+    ) -> tuple[QWidget, QLineEdit]:
+        search_popup = QWidget(
+            window,
+            Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
+        )
+        search_popup.setObjectName("MenuSearchPopup")
+        search_popup.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        search_popup.setStyleSheet(
+            f"""
+            QWidget#MenuSearchPopup {{
+                background-color: {APP_BACKGROUND_COLOR};
+                border: 1px solid #3a3a3a;
+            }}
+            """
+        )
+        popup_layout = QHBoxLayout(search_popup)
+        popup_layout.setContentsMargins(8, 8, 8, 8)
+        popup_layout.setSpacing(0)
+
+        popup_search_box = QLineEdit(search_popup)
+        popup_search_box.setObjectName("MenuSearchPopupBox")
+        popup_search_box.setPlaceholderText("Search for controls ...")
+        popup_search_box.setToolTip("Search shows where controls are; it does not run actions.")
+        popup_search_box.setClearButtonEnabled(True)
+        popup_search_box.setFixedWidth(MENU_SEARCH_FULL_WIDTH)
+        popup_search_box.setFixedHeight(max(24, target_height - 8))
+        popup_layout.addWidget(popup_search_box)
+        self._connect_menu_search_box(popup_search_box)
+
+        self._search_popup_escape_shortcut = QShortcut(QKeySequence("Escape"), popup_search_box)
+        self._search_popup_escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self._search_popup_escape_shortcut.activated.connect(self._clear_search_popup_box)
+        return search_popup, popup_search_box
+
+    def _handle_search_box_text_edited(
+        self,
+        search_box: QLineEdit,
+        model: QStringListModel,
+        completer: QCompleter,
+        text: str,
+    ) -> None:
+        self._sync_search_boxes(text, source=search_box)
+        self._update_search_completion_model(model, completer, text)
+
+    def _guide_to_search_result_from_box(self, search_box: QLineEdit) -> None:
+        text = search_box.text()
+        self._sync_search_boxes(text, source=search_box)
+        if self._guide_to_search_result(text):
+            self._hide_search_popup()
+
+    def _guide_to_search_result_from_text(self, text: str) -> None:
+        self._sync_search_boxes(text)
+        if self._guide_to_search_result(text):
+            self._hide_search_popup()
+
+    def _sync_search_boxes(self, text: str, source: QLineEdit | None = None) -> None:
+        for search_box in (self._search_box, self._search_popup_box):
+            if search_box is None or search_box is source:
+                continue
+            try:
+                if search_box.text() != text:
+                    search_box.setText(text)
+            except RuntimeError:
+                continue
+
+    def _show_search_popup(self) -> None:
+        if self._search_popup is None or self._search_popup_box is None:
+            return
+        anchor = self._search_toggle_button or self._search_container
+        if anchor is None:
+            return
+        if self._search_box is not None:
+            self._search_popup_box.setText(self._search_box.text())
+        self._search_popup.adjustSize()
+        self._search_popup.move(anchor.mapToGlobal(QPoint(0, anchor.height())))
+        self._search_popup.show()
+        self._search_popup.raise_()
+        self._search_popup_box.setFocus()
+        self._search_popup_box.selectAll()
+
+    def _hide_search_popup(self) -> None:
+        if self._search_popup is not None and self._search_popup.isVisible():
+            self._search_popup.hide()
+
+    def _clear_search_popup_box(self) -> None:
+        if self._search_popup_box is not None:
+            self._search_popup_box.clear()
+        if self._search_box is not None:
+            self._search_box.clear()
+        self._hide_search_popup()
+        self._set_search_status("")
+
+    def _focus_menu_search(self) -> None:
+        if self._search_box is not None and self._search_box.isVisible():
+            self._focus_search_box(self._search_box)
+            return
+        self._show_search_popup()
+
+    def _search_container_horizontal_margins(self) -> int:
+        if self._search_container is None:
+            return 0
+        layout = self._search_container.layout()
+        if layout is None:
+            return 0
+        margins = layout.contentsMargins()
+        return margins.left() + margins.right()
+
+    def _search_inline_total_width(self, search_box_width: int) -> int:
+        return search_box_width + self._search_container_horizontal_margins()
+
+    def _search_collapsed_total_width(self) -> int:
+        button_width = MENU_SEARCH_ICON_BUTTON_WIDTH
+        if self._search_toggle_button is not None:
+            button_width = (
+                self._search_toggle_button.width()
+                or self._search_toggle_button.sizeHint().width()
+            )
+        return button_width + self._search_container_horizontal_margins()
+
+    @staticmethod
+    def _widget_width_hint(widget: QWidget | None) -> int:
+        if widget is None:
+            return 0
+        return max(
+            0,
+            widget.width(),
+            widget.minimumWidth(),
+            widget.sizeHint().width(),
+            widget.minimumSizeHint().width(),
+        )
+
+    def _set_menu_search_compact_state(self, collapsed: bool, search_box_width: int) -> None:
+        if self._search_container is None or self._search_box is None:
+            return
+        if collapsed:
+            self._search_box.hide()
+            if self._search_toggle_button is not None:
+                self._search_toggle_button.show()
+            self._search_container.setFixedWidth(self._search_collapsed_total_width())
+            return
+
+        self._hide_search_popup()
+        if self._search_toggle_button is not None:
+            self._search_toggle_button.hide()
+        self._search_box.show()
+        clamped_width = max(MENU_SEARCH_MIN_WIDTH, min(MENU_SEARCH_FULL_WIDTH, search_box_width))
+        self._search_box.setFixedWidth(clamped_width)
+        self._search_container.setFixedWidth(self._search_inline_total_width(clamped_width))
+
+    def _set_top_bar_menu_icon_mode(self, icon_only: bool) -> None:
+        for button in self._top_bar_action_buttons.values():
+            button.set_icon_only(icon_only)
+        if self._top_bar_menu_controls is not None:
+            layout = self._top_bar_menu_controls.layout()
+            if layout is not None:
+                layout.invalidate()
+            self._top_bar_menu_controls.updateGeometry()
+
+    def _update_top_bar_compact_mode(self) -> None:
+        if self._menu_row is None or self._search_box is None or self._search_container is None:
+            return
+        row_width = self._menu_row.width()
+        if row_width <= 0:
+            return
+
+        reserved_width = (
+            self._widget_width_hint(self._window_icon_label)
+            + self._widget_width_hint(self._window_controls)
+            + self._widget_width_hint(self._title_bar_safe_area_spacer)
+            + TOP_BAR_COMPACT_WIDTH_BUFFER
+        )
+        available_width = max(0, row_width - reserved_width)
+        title_width = self._window_title_label.sizeHint().width() if self._window_title_label else 0
+        menu_buttons = list(self._top_bar_action_buttons.values())
+        menu_full_width = sum(button.full_width_hint() for button in menu_buttons)
+        search_full_width = self._search_inline_total_width(MENU_SEARCH_FULL_WIDTH)
+        search_min_width = self._search_inline_total_width(MENU_SEARCH_MIN_WIDTH)
+        search_button_width = self._search_collapsed_total_width()
+
+        title_visible = True
+        menu_icon_only = False
+        search_collapsed = False
+        search_box_width = MENU_SEARCH_FULL_WIDTH
+
+        if available_width < title_width + menu_full_width + search_full_width:
+            title_visible = False
+            if available_width >= menu_full_width + search_full_width:
+                search_box_width = MENU_SEARCH_FULL_WIDTH
+            else:
+                remaining_search_width = available_width - menu_full_width
+                if remaining_search_width >= search_min_width:
+                    search_box_width = (
+                        remaining_search_width - self._search_container_horizontal_margins()
+                    )
+                elif available_width >= menu_full_width + search_button_width:
+                    search_collapsed = True
+                else:
+                    menu_icon_only = True
+                    search_collapsed = True
+
+        if self._window_title_label is not None:
+            self._window_title_label.setVisible(title_visible)
+        self._set_top_bar_menu_icon_mode(menu_icon_only)
+        self._set_menu_search_compact_state(search_collapsed, search_box_width)
 
     def _refresh_search_registry(self) -> None:
         registry = SearchRegistry()
@@ -2741,21 +3088,25 @@ class UIManager(ManagerProcessBase):
         if labels and text.strip():
             completer.complete()
 
-    def _guide_to_search_result(self, text: str) -> None:
+    def _guide_to_search_result(self, text: str) -> bool:
         target = self._find_search_target(text)
         if target is None:
             logger.debug("No UI search target matched query %r", text)
             self._set_search_status("")
-            return
+            return False
 
         logger.debug("Guiding to UI search target %s", target.display_label)
         self._guide_to_target(target)
+        return True
 
     def _guide_to_target(self, target: SearchTarget) -> None:
         self._reveal_search_target(target)
         if self._search_box is not None:
             self._search_box.setText(target.label)
             self._search_box.selectAll()
+        if self._search_popup_box is not None:
+            self._search_popup_box.setText(target.label)
+            self._search_popup_box.selectAll()
         status_parts = [f"Showing: {target.display_label}"]
         if target.guide_only:
             status_parts.append("Guide only; no action was run.")
@@ -2887,9 +3238,10 @@ class UIManager(ManagerProcessBase):
             logger.warning("Search target menu bar is not available for %s", target.display_label)
             return
 
-        completer = self._search_box.completer() if self._search_box is not None else None
-        if completer is not None:
-            completer.popup().hide()
+        for search_box in (self._search_box, self._search_popup_box):
+            completer = search_box.completer() if search_box is not None else None
+            if completer is not None:
+                completer.popup().hide()
         menu_button = self._top_bar_menu_buttons.get(target.menu_name)
         if menu_button is not None and menu_button.show_action_menu(action):
             return
@@ -2906,7 +3258,7 @@ class UIManager(ManagerProcessBase):
     def _install_search_shortcuts(self, window: QMainWindow, search_box: QLineEdit) -> None:
         for shortcut_text in ("Ctrl+K", "Ctrl+F"):
             shortcut = QShortcut(QKeySequence(shortcut_text), window)
-            shortcut.activated.connect(lambda box=search_box: self._focus_search_box(box))
+            shortcut.activated.connect(self._focus_menu_search)
             self._search_shortcuts.append(shortcut)
         escape_shortcut = QShortcut(QKeySequence("Escape"), search_box)
         escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
