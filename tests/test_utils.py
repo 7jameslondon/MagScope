@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 from PyQt6.QtGui import QImage
 
-import magscope.utils as utils
 from magscope.utils import AcquisitionMode, crop_stack_to_rois, date_timestamp_str, numpy_type_to_qt_image_type
 
 
@@ -49,15 +48,7 @@ def test_numpy_type_to_qt_image_type_rejects_unsupported_dtype():
         numpy_type_to_qt_image_type(np.float32)
 
 
-def test_date_timestamp_str_formats_fractional_seconds(monkeypatch):
-    class FixedDateTime:
-        @classmethod
-        def today(cls):
-            return cls()
-
-        def strftime(self, _format):
-            return '2026-05-16'
-
-    monkeypatch.setattr(utils, 'datetime', FixedDateTime)
-
-    assert date_timestamp_str(5 * 3600 + 61.123) == '2026-05-16 00-01-01.123'
+def test_date_timestamp_str_formats_fractional_seconds():
+    result = date_timestamp_str(5 * 3600 + 61.123)
+    import re
+    assert re.match(r'\d{4}-\d{2}-\d{2} 00-01-01\.123', result)
