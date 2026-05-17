@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    from magscope.beadlock import BeadLockManager
 
 
 MANAGER_SINGLETON_CLASSES: tuple[type, ...] = ()
@@ -95,7 +100,7 @@ class _StubCameraType:
     nm_per_px = 100.0
 
 
-def make_beadlock_manager() -> "BeadLockManager":
+def make_beadlock_manager() -> BeadLockManager:
     """Return a BeadLockManager wired for isolated testing."""
     from magscope.beadlock import BeadLockManager
     manager = BeadLockManager()
@@ -118,5 +123,5 @@ def make_beadlock_manager() -> "BeadLockManager":
     return manager
 
 
-def set_beadlock_tracks(manager: "BeadLockManager", rows: list[list[float]] | np.ndarray) -> None:
+def set_beadlock_tracks(manager: BeadLockManager, rows: list[list[float]] | np.ndarray) -> None:
     manager.tracks_buffer = FakeTracksBuffer(np.asarray(rows, dtype=np.float64))
