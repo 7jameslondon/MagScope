@@ -518,9 +518,13 @@ class FakeLine:
 class FakeAxisDirection:
     def __init__(self):
         self.inverted = False
+        self.set_major_formatter_calls = []
 
     def set_inverted(self, value: bool) -> None:
         self.inverted = value
+
+    def set_major_formatter(self, formatter) -> None:
+        self.set_major_formatter_calls.append(formatter)
 
 
 class FakeAxes:
@@ -529,6 +533,7 @@ class FakeAxes:
         self.yaxis = FakeAxisDirection()
         self.xlim = None
         self.ylim = None
+        self.set_xlabel_calls = []
 
     def autoscale(self) -> None:
         pass
@@ -544,6 +549,9 @@ class FakeAxes:
 
     def set_ylim(self, ymin=None, ymax=None) -> None:
         self.ylim = (ymin, ymax)
+
+    def set_xlabel(self, label: str) -> None:
+        self.set_xlabel_calls.append(label)
 
 
 class FakeBeadRoiBuffer:
@@ -3302,6 +3310,306 @@ def test_tracks_time_series_plot_skips_reference_plotting_on_alignment_error(mon
 
     assert plot.line.xdata == []
     assert plot.line.ydata == []
+
+
+# ---------------------------------------------------------------------------
+# PlotWorker pure setters
+# ---------------------------------------------------------------------------
+
+def test_plot_worker_add_plot_appends_to_list():
+    class DummyPlot(TimeSeriesPlotBase):
+        def update(self):
+            pass
+
+    worker = PlotWorker()
+    existing_count = len(worker.plots)
+    plot = DummyPlot("Buffer", "Axis")
+    worker.add_plot(plot)
+    assert len(worker.plots) == existing_count + 1
+    assert worker.plots[-1] is plot
+
+
+def test_plot_worker_set_locks():
+    worker = PlotWorker()
+    locks = {"CameraManager": object()}
+    worker.set_locks(locks)
+    assert worker.locks is locks
+
+
+def test_plot_worker_set_limits():
+    worker = PlotWorker()
+    limits = {"X (nm)": (0, 1000), "Time": (0, 60)}
+    worker._set_limits(limits)
+    assert worker.limits == limits
+
+
+def test_plot_worker_set_selected_bead():
+    worker = PlotWorker()
+    worker._set_selected_bead(5)
+    assert worker.selected_bead == 5
+
+
+def test_plot_worker_set_reference_bead():
+    worker = PlotWorker()
+    worker._set_reference_bead(3)
+    assert worker.reference_bead == 3
+
+
+def test_plot_worker_set_reference_bead_none():
+    worker = PlotWorker()
+    worker._set_reference_bead(None)
+    assert worker.reference_bead is None
+
+
+def test_plot_worker_stop():
+    worker = PlotWorker()
+    worker._is_running = True
+    worker._stop()
+    assert worker._is_running is False
+
+
+def test_plot_worker_set_time_mode_absolute():
+    worker = PlotWorker()
+    worker.axes = [FakeAxes()]
+    worker._set_time_mode("absolute")
+    assert worker.time_mode == "absolute"
+
+
+def test_plot_worker_set_time_mode_relative():
+    worker = PlotWorker()
+    worker.axes = [FakeAxes()]
+    worker._set_time_mode("relative")
+    assert worker.time_mode == "relative"
+
+
+def test_plot_worker_set_relative_window():
+    worker = PlotWorker()
+    worker._set_relative_window(60.0)
+    assert worker.relative_window_seconds == 60.0
+
+
+def test_plot_worker_set_relative_window_none():
+    worker = PlotWorker()
+    worker._set_relative_window(None)
+    assert worker.relative_window_seconds is None
+
+
+def test_plot_worker_apply_time_axis_format_absolute():
+    worker = PlotWorker()
+    axes = FakeAxes()
+    worker.axes = [axes]
+    worker.time_mode = "absolute"
+    worker._set_time_mode("absolute")
+    assert worker.time_mode == "absolute"
+
+
+def test_plot_worker_apply_time_axis_format_relative():
+    worker = PlotWorker()
+    axes = FakeAxes()
+    worker.axes = [axes]
+    worker.time_mode = "relative"
+    worker._set_relative_window(30.0)
+    worker._set_time_mode("relative")
+    assert worker.time_mode == "relative"
+
+
+def test_time_series_plot_base_init():
+    class ConcretePlot(TimeSeriesPlotBase):
+        def update(self):
+            pass
+
+    plot = ConcretePlot("TestBuffer", "Value (px)")
+    assert plot.buffer_name == "TestBuffer"
+    assert plot.ylabel == "Value (px)"
+
+
+def test_time_series_plot_base_set_parent():
+    class ConcretePlot(TimeSeriesPlotBase):
+        def update(self):
+            pass
+
+    plot = ConcretePlot("TestBuffer", "Y")
+    parent = SimpleNamespace()
+    plot.set_parent(parent)
+    assert plot.parent is parent
+
+
+def test_time_series_plot_base_set_axes():
+    class ConcretePlot(TimeSeriesPlotBase):
+        def update(self):
+            pass
+
+    plot = ConcretePlot("TestBuffer", "Y")
+    axes = FakeAxes()
+    plot.set_axes(axes)
+    assert plot.axes is axes
+
+
+# ---------------------------------------------------------------------------
+# TracksTimeSeriesPlot.update() untested branches
+# ---------------------------------------------------------------------------
+
+def test_tracks_time_series_plot_update_with_reference_happy_path():
+    plot = TracksTimeSeriesPlot("X")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [1.0, 50.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [2.0, 60.0, 0.0, 0.0, 7.0, 0.0, 0.0],
+                [1.0, 10.0, 0.0, 0.0, 8.0, 0.0, 0.0],
+                [2.0, 15.0, 0.0, 0.0, 8.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=7,
+        reference_bead=8,
+        limits={},
+        time_mode="absolute",
+        relative_window_seconds=300,
+        _tracks_snapshot=None,
+    )
+
+    plot.update()
+
+    np.testing.assert_allclose(plot.line.ydata, np.asarray([40.0, 45.0]))
+
+
+def test_tracks_time_series_plot_update_relative_mode():
+    plot = TracksTimeSeriesPlot("X")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [4.0, 10.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+                [10.0, 20.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+                [12.0, 30.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=9,
+        reference_bead=None,
+        limits={},
+        time_mode="relative",
+        relative_window_seconds=10.0,
+        _tracks_snapshot=None,
+    )
+
+    plot.update()
+
+    assert isinstance(plot.line.xdata, np.ndarray)
+    assert plot.line.xdata.min() >= 2.0
+
+
+def test_tracks_time_series_plot_update_z_axis_negation():
+    plot = TracksTimeSeriesPlot("Z")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [1.0, 0.0, 0.0, 30.0, 7.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 10.0, 8.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=7,
+        reference_bead=8,
+        limits={},
+        time_mode="absolute",
+        relative_window_seconds=300,
+        _tracks_snapshot=None,
+    )
+
+    plot.update()
+
+    # v = v_sel - v_ref = 30 - 10 = 20; Z negation: v *= -1 => -20
+    np.testing.assert_allclose(plot.line.ydata, np.asarray([-20.0]))
+
+
+def test_tracks_time_series_plot_update_nan_and_inf_removal():
+    plot = TracksTimeSeriesPlot("X")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [
+                [1.0, 10.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+                [np.nan, 20.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+                [np.inf, 30.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=9,
+        reference_bead=None,
+        limits={},
+        time_mode="absolute",
+        relative_window_seconds=300,
+        _tracks_snapshot=None,
+    )
+
+    plot.update()
+
+    assert len(plot.line.ydata) == 1
+
+
+def test_tracks_time_series_plot_update_uses_snapshot_when_available():
+    plot = TracksTimeSeriesPlot("X")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    snapshot = np.asarray(
+        [[1.0, 100.0, 0.0, 0.0, 9.0, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=9,
+        reference_bead=None,
+        limits={},
+        time_mode="absolute",
+        relative_window_seconds=300,
+        _tracks_snapshot=snapshot,
+    )
+    # buffer is None — should use snapshot, not crash
+    plot.buffer = None
+
+    plot.update()
+
+    np.testing.assert_allclose(plot.line.ydata, np.asarray([100.0]))
+
+
+def test_tracks_time_series_plot_update_y_axis(qtbot):
+    plot = TracksTimeSeriesPlot("Y")
+    plot.axes = FakeAxes()
+    plot.line = FakeLine()
+    plot.buffer = FakeTracksBuffer(
+        np.asarray(
+            [[1.0, 0.0, 50.0, 0.0, 9.0, 0.0, 0.0]],
+            dtype=np.float64,
+        )
+    )
+    plot.parent = SimpleNamespace(
+        selected_bead=9,
+        reference_bead=None,
+        limits={},
+        time_mode="absolute",
+        relative_window_seconds=300,
+        _tracks_snapshot=None,
+    )
+
+    plot.update()
+
+    assert plot.axis_index == 2
+    np.testing.assert_allclose(plot.line.ydata, np.asarray([50.0]))
 
 
 def test_allan_deviation_panel_refresh_uses_selected_bead_without_reference(qtbot, monkeypatch, fake_allan_canvas):

@@ -119,3 +119,190 @@ def test_overlay_cache_excludes_active_bead_label(qtbot):
 
     viewer._ensure_overlay_cache_pixmap()
     assert viewer._overlay_cache_dirty is False
+
+
+# ---------------------------------------------------------------------------
+# State / logic tests
+# ---------------------------------------------------------------------------
+
+def test_clear_crosshairs_clears_marker_arrays(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.plot([10.0, 20.0], [30.0, 40.0], 5)
+    assert viewer._marker_x.size == 2
+
+    viewer.clear_crosshairs()
+    assert viewer._marker_x.size == 0
+    assert viewer._marker_y.size == 0
+    assert viewer._marker_size == 0
+
+
+def test_clear_image_sets_empty_state(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.clear_image()
+
+    assert viewer._empty is True
+    assert viewer.dragMode() == viewer.DragMode.NoDrag
+    assert viewer._minimap_label.isHidden()
+    assert viewer._minimap_zoom_label.isHidden()
+
+
+def test_zoom_level_returns_current_zoom(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    assert viewer.zoom_level() == 0
+    viewer.zoom(1)
+    assert viewer.zoom_level() == 1
+
+
+def test_zoom_zero_noop(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    zoom_before = viewer._zoom
+    viewer.zoom(0)
+    assert viewer._zoom == zoom_before
+
+
+def test_zoom_out_decreases_zoom(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.zoom(2)
+    assert viewer._zoom >= 2
+    viewer.zoom(-1)
+    assert viewer._zoom < 2
+
+
+def test_zoom_to_zero_resets_view(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.zoom(1)
+    assert viewer._zoom == 1
+    viewer.zoom(-1)
+    assert viewer._zoom == 0
+
+
+def test_set_pixmap_null_leaves_empty_unchanged(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+
+    viewer._empty = True
+    from PyQt6.QtGui import QPixmap
+    viewer.set_pixmap(QPixmap())
+    assert viewer._empty is True
+
+
+def test_reset_view_with_scale_when_has_image(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+
+    viewer.set_image_to_default()
+    viewer._zoom = 5
+    viewer.reset_view(scale=2)
+    assert viewer._zoom == 5  # scale != 1 so zoom is preserved
+
+
+def test_reset_view_no_image(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+
+    viewer.clear_image()
+    viewer.reset_view()
+    assert viewer._empty is True
+
+
+def test_toggle_drag_mode_cycles(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.setDragMode(viewer.DragMode.ScrollHandDrag)
+    viewer.toggle_drag_mode()
+    assert viewer.dragMode() == viewer.DragMode.NoDrag
+
+
+def test_toggle_drag_mode_to_scroll_hand_with_pixmap(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    viewer.setDragMode(viewer.DragMode.NoDrag)
+    viewer.toggle_drag_mode()
+    assert viewer.dragMode() == viewer.DragMode.ScrollHandDrag
+
+
+def test_wheel_event_zoom_in(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    zoom_before = viewer._zoom
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    event = QWheelEvent(
+        QPointF(100.0, 100.0), QPointF(100.0, 100.0),
+        QPoint(0, 0), QPoint(0, 120),
+        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+    viewer.wheelEvent(event)
+    assert viewer._zoom > zoom_before
+
+
+def test_compute_highlight_rect_null_pixmap(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+
+    from PyQt6.QtGui import QPixmap
+    viewer._image.setPixmap(QPixmap())
+    result = viewer._compute_highlight_rect(None, 0, 0)
+    assert result is None

@@ -3,7 +3,15 @@ from __future__ import annotations
 import pytest
 
 from magscope.ipc import CommandRegistry, Delivery
-from magscope.ipc_commands import ShowErrorCommand, SleepCommand, StartScriptCommand
+from magscope.ipc_commands import (
+    Command,
+    ShowErrorCommand,
+    SleepCommand,
+    StartScriptCommand,
+    UpdateScriptStatusCommand,
+    UpdateScriptStepCommand,
+    UpdateWaitingCommand,
+)
 import magscope.scripting as scripting
 from magscope.utils import register_script_command
 
@@ -208,3 +216,363 @@ def test_negative_sleep_reports_error_to_gui():
         and command.text == 'Sleep duration must be non-negative'
         for command in sent_commands
     )
+
+
+# ---------------------------------------------------------------------------
+# start_script edge cases
+# ---------------------------------------------------------------------------
+
+def test_start_script_rejects_when_empty():
+    manager, _sent_commands = make_script_manager()
+
+    manager.start_script()
+
+    assert manager._script_status == scripting.ScriptStatus.EMPTY
+
+
+def test_start_script_rejects_when_in_error_state():
+    manager, _sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.ERROR
+
+    manager.start_script()
+
+    assert manager._script_status == scripting.ScriptStatus.ERROR
+
+
+def test_start_script_rejects_when_already_running():
+    manager, _sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.RUNNING
+
+    manager.start_script()
+
+    assert manager._script_status == scripting.ScriptStatus.RUNNING
+
+
+def test_start_script_handles_empty_script_transitions_to_finished():
+    manager, sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.LOADED
+    manager._script_length = 0
+
+    manager.start_script()
+
+    assert manager._script_status == scripting.ScriptStatus.FINISHED
+    assert any(isinstance(c, UpdateScriptStatusCommand) for c in sent_commands)
+
+
+def test_start_script_resets_index_and_sets_running():
+    manager, sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.LOADED
+    manager._script_length = 3
+    manager._script_index = 99
+
+    manager.start_script()
+
+    assert manager._script_index == 0
+    assert manager._script_status == scripting.ScriptStatus.RUNNING
+    assert any(
+        isinstance(c, UpdateScriptStatusCommand) and c.status == scripting.ScriptStatus.RUNNING
+        for c in sent_commands
+    )
+
+
+# ---------------------------------------------------------------------------
+# pause / resume
+# ---------------------------------------------------------------------------
+
+def test_pause_rejects_when_not_running():
+    manager, _sent_commands = make_script_manager()
+
+    manager.pause_script()
+
+    assert manager._script_status == scripting.ScriptStatus.EMPTY
+
+
+def test_resume_rejects_when_not_paused():
+    manager, _sent_commands = make_script_manager()
+
+    manager.resume_script()
+
+    assert manager._script_status == scripting.ScriptStatus.EMPTY
+
+
+def test_pause_resume_cycle():
+    manager, sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.RUNNING
+
+    manager.pause_script()
+    assert manager._script_status == scripting.ScriptStatus.PAUSED
+
+    manager.resume_script()
+    assert manager._script_status == scripting.ScriptStatus.RUNNING
+
+    status_values = [
+        c.status for c in sent_commands if isinstance(c, UpdateScriptStatusCommand)
+    ]
+    assert status_values == [
+        scripting.ScriptStatus.PAUSED,
+        scripting.ScriptStatus.RUNNING,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# load_script edge cases
+# ---------------------------------------------------------------------------
+
+def test_load_script_handles_exec_exception(tmp_path):
+    manager, sent_commands = make_script_manager()
+    script_path = tmp_path / 'broken.py'
+    script_path.write_text('raise RuntimeError("boom")', encoding='utf-8')
+
+    manager.load_script(str(script_path))
+
+    assert manager._script_status == scripting.ScriptStatus.ERROR
+    assert manager._script == []
+    assert any(
+        isinstance(command, ShowErrorCommand)
+        and 'An error occurred while loading a script.' in command.text
+        for command in sent_commands
+    )
+
+
+def test_load_script_handles_check_script_failure(tmp_path):
+    manager, sent_commands = make_script_manager()
+    manager.script_registry.register_class_methods(scripting.ScriptManager)
+    script_path = tmp_path / 'bad.py'
+    script_path.write_text(
+        'from magscope.ipc_commands import UpdateScriptStatusCommand\n'
+        'from magscope.scripting import Script\n'
+        'script = Script()\n'
+        'script.append(UpdateScriptStatusCommand(status="Running"))\n',
+        encoding='utf-8',
+    )
+
+    manager.load_script(str(script_path))
+
+    assert manager._script_status == scripting.ScriptStatus.ERROR
+    assert manager._script == []
+    assert any(
+        isinstance(command, ShowErrorCommand)
+        and 'Script is invalid' in command.text
+        for command in sent_commands
+    )
+
+
+def test_load_script_rejects_while_running(tmp_path):
+    manager, _sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.RUNNING
+
+    manager.load_script('some_path.py')
+
+    assert manager._script_status == scripting.ScriptStatus.RUNNING
+
+
+def test_load_script_with_empty_path():
+    manager, _sent_commands = make_script_manager()
+    manager._script_status = scripting.ScriptStatus.LOADED
+    manager._script = [scripting.ScriptStep(command=SleepCommand(duration=1.0))]
+    manager._script_length = 1
+
+    manager.load_script('')
+
+    assert manager._script_status == scripting.ScriptStatus.EMPTY
+    assert manager._script == []
+    assert manager._script_length == 0
+    assert manager._script_index == 0
+    assert manager._script_waiting is False
+
+
+# ---------------------------------------------------------------------------
+# _do_sleep
+# ---------------------------------------------------------------------------
+
+def test_do_sleep_elapsed_resets_state(monkeypatch):
+    manager, _sent_commands = make_script_manager()
+    manager._script_sleep_duration = 2.0
+    manager._script_sleep_start = 100.0
+    manager._script_waiting = True
+
+    monkeypatch.setattr(scripting, 'time', lambda: 103.0)
+
+    manager._do_sleep()
+
+    assert manager._script_sleep_duration is None
+    assert manager._script_waiting is False
+
+
+def test_do_sleep_not_elapsed_keeps_waiting(monkeypatch):
+    manager, _sent_commands = make_script_manager()
+    manager._script_sleep_duration = 2.0
+    manager._script_sleep_start = 100.0
+    manager._script_waiting = True
+
+    monkeypatch.setattr(scripting, 'time', lambda: 101.0)
+
+    manager._do_sleep()
+
+    assert manager._script_sleep_duration == 2.0
+    assert manager._script_waiting is True
+
+
+# ---------------------------------------------------------------------------
+# update_waiting
+# ---------------------------------------------------------------------------
+
+def test_update_waiting_clears_waiting_flag():
+    manager, _sent_commands = make_script_manager()
+    manager._script_waiting = True
+
+    manager.update_waiting()
+
+    assert manager._script_waiting is False
+
+
+# ---------------------------------------------------------------------------
+# _handle_script_error
+# ---------------------------------------------------------------------------
+
+def test_handle_script_error_clears_state_and_reports():
+    manager, sent_commands = make_script_manager()
+    manager._script_waiting = True
+    manager._script_sleep_duration = 5.0
+    manager._script_sleep_start = 99.0
+    manager._script_status = scripting.ScriptStatus.RUNNING
+
+    manager._handle_script_error('Something went wrong', details=None)
+
+    assert manager._script_waiting is False
+    assert manager._script_sleep_duration is None
+    assert manager._script_sleep_start == 0
+    assert manager._script_status == scripting.ScriptStatus.ERROR
+    assert any(
+        isinstance(c, ShowErrorCommand)
+        and c.text == 'Something went wrong'
+        and c.details is None
+        for c in sent_commands
+    )
+
+
+def test_handle_script_error_with_details():
+    manager, sent_commands = make_script_manager()
+
+    manager._handle_script_error('Oops', details='Traceback...')
+
+    assert manager._script_status == scripting.ScriptStatus.ERROR
+    assert any(
+        isinstance(c, ShowErrorCommand)
+        and c.text == 'Oops'
+        and c.details == 'Traceback...'
+        for c in sent_commands
+    )
+
+
+# ---------------------------------------------------------------------------
+# _set_script_status
+# ---------------------------------------------------------------------------
+
+def test_set_script_status_sends_update_command():
+    manager, sent_commands = make_script_manager()
+
+    manager._set_script_status(scripting.ScriptStatus.RUNNING)
+
+    assert manager._script_status == scripting.ScriptStatus.RUNNING
+    assert any(
+        isinstance(c, UpdateScriptStatusCommand) and c.status == scripting.ScriptStatus.RUNNING
+        for c in sent_commands
+    )
+
+
+def test_set_script_status_empty_clears_step_update():
+    manager, sent_commands = make_script_manager()
+    manager._script_length = 10
+
+    manager._set_script_status(scripting.ScriptStatus.EMPTY)
+
+    assert any(
+        isinstance(c, UpdateScriptStepCommand) and c.current_step is None
+        for c in sent_commands
+    )
+
+
+def test_set_script_status_error_clears_step_update():
+    manager, sent_commands = make_script_manager()
+
+    manager._set_script_status(scripting.ScriptStatus.ERROR)
+
+    assert any(
+        isinstance(c, UpdateScriptStepCommand) and c.current_step is None
+        for c in sent_commands
+    )
+
+
+def test_set_script_status_running_does_not_clear_step_update():
+    manager, sent_commands = make_script_manager()
+
+    manager._set_script_status(scripting.ScriptStatus.RUNNING)
+
+    assert not any(isinstance(c, UpdateScriptStepCommand) for c in sent_commands)
+
+
+# ---------------------------------------------------------------------------
+# _send_script_step_update
+# ---------------------------------------------------------------------------
+
+def test_send_script_step_update_with_description():
+    manager, sent_commands = make_script_manager()
+    manager._script_length = 5
+
+    manager._send_script_step_update(3, description='Moving stage')
+
+    assert len(sent_commands) == 1
+    cmd = sent_commands[0]
+    assert isinstance(cmd, UpdateScriptStepCommand)
+    assert cmd.current_step == 3
+    assert cmd.total_steps == 5
+    assert cmd.description == 'Moving stage'
+
+
+def test_send_script_step_update_without_description():
+    manager, sent_commands = make_script_manager()
+    manager._script_length = 10
+
+    manager._send_script_step_update(None)
+
+    cmd = sent_commands[0]
+    assert cmd.current_step is None
+    assert cmd.description is None
+
+
+# ---------------------------------------------------------------------------
+# _format_script_step
+# ---------------------------------------------------------------------------
+
+def test_format_script_step_uses_repr():
+    step = scripting.ScriptStep(command=SleepCommand(duration=2.5))
+
+    result = scripting.ScriptManager._format_script_step(step)
+
+    assert '2.5' in result
+
+
+def test_format_script_step_fallback_on_repr_error():
+    class BrokenCommand(Command):
+        def __repr__(self):
+            raise RuntimeError('broken')
+
+    step = scripting.ScriptStep(command=BrokenCommand())
+
+    result = scripting.ScriptManager._format_script_step(step)
+
+    assert result == 'BrokenCommand'
+
+
+# ---------------------------------------------------------------------------
+# ScriptStatus enum
+# ---------------------------------------------------------------------------
+
+def test_script_status_enum_values():
+    assert scripting.ScriptStatus.EMPTY.value == 'Empty'
+    assert scripting.ScriptStatus.LOADED.value == 'Loaded'
+    assert scripting.ScriptStatus.RUNNING.value == 'Running'
+    assert scripting.ScriptStatus.PAUSED.value == 'Paused'
+    assert scripting.ScriptStatus.FINISHED.value == 'Finished'
+    assert scripting.ScriptStatus.ERROR.value == 'Error'
