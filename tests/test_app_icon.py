@@ -92,6 +92,7 @@ class TestSetWindowsAppUserModelId:
         assert len(setter_calls) == 1
         assert setter_calls[0] == "TestApp"
 
+    @pytest.mark.skipif(sys.platform != 'win32', reason='ctypes.windll only available on Windows')
     def test_silently_handles_ctypes_error_on_windows(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(app_icon.ctypes, "windll", None)
