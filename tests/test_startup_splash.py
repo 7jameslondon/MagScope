@@ -97,5 +97,26 @@ def test_load_logo_pixmap_returns_pixmap(qtbot):
 def test_load_logo_pixmap_has_correct_logical_size():
     pixmap = _load_logo_pixmap()
     expected = QSize(*_STARTUP_SPLASH_LOGO_SIZE)
-    assert abs(pixmap.size().width() - expected.width()) <= 3
-    assert abs(pixmap.size().height() - expected.height()) <= 3
+    screen = QApplication.instance().primaryScreen()
+    dpr = screen.devicePixelRatio() if screen else 1.0
+    assert abs(pixmap.size().width() - round(expected.width() * dpr)) <= 3
+    assert abs(pixmap.size().height() - round(expected.height() * dpr)) <= 3
+
+
+def test_load_logo_pixmap_returns_none_when_missing(monkeypatch):
+    import importlib.resources
+
+    class FakeTraversable:
+        def is_file(self):
+            return False
+
+        def joinpath(self, path):
+            return self
+
+    class FakeFiles:
+        def __call__(self, package):
+            return FakeTraversable()
+
+    monkeypatch.setattr(importlib.resources, 'files', FakeFiles())
+    result = _load_logo_pixmap()
+    assert result is None

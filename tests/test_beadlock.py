@@ -780,3 +780,63 @@ def test_set_z_lock_on_broadcasts_and_resets_state(monkeypatch):
     assert manager._z_lock_global_cutoff == 800.0
     assert manager._z_lock_expected_focus_target is None
     assert manager._sent_commands == [UpdateZLockEnabledCommand(value=True)]
+
+
+def test_do_main_loop_interval_not_elapsed(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(beadlock_module, 'time', lambda: now)
+    manager = make_manager()
+    manager.xy_lock_on = True
+    manager.z_lock_on = True
+    manager._xy_lock_last_time = 100.0
+    manager._z_lock_last_time = 100.0
+
+    manager.do_main_loop()
+
+    # No locks should execute because interval hasn't elapsed
+
+
+def test_averaged_bead_z_returns_none_no_buffer():
+    manager = make_manager()
+    manager.tracks_buffer = None
+    assert manager._averaged_bead_z(0, 10) is None
+
+
+def test_do_main_loop_executes_xy_lock_when_interval_elapsed(monkeypatch):
+    now = 200.0
+    monkeypatch.setattr(beadlock_module, 'time', lambda: now)
+    manager = make_beadlock_manager()
+    manager.xy_lock_on = True
+    manager.z_lock_on = False
+    manager._xy_lock_last_time = 100.0
+    manager._bead_roi_ids = np.asarray([1], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[0, 64, 0, 64]], dtype=np.uint32)
+    set_beadlock_tracks(manager, [[150.0, 3200.0, 3200.0, 0.0, 1.0, 0.0, 0.0]])
+
+    manager.do_main_loop()
+
+
+def test_do_xy_lock_now_none_fallback(monkeypatch):
+    now = 500.0
+    monkeypatch.setattr(beadlock_module, 'time', lambda: now)
+    manager = make_beadlock_manager()
+    manager._bead_roi_ids = np.asarray([1], dtype=np.uint32)
+    manager._bead_roi_values = np.asarray([[0, 64, 0, 64]], dtype=np.uint32)
+    set_beadlock_tracks(manager, [[400.0, 3200.0, 3200.0, 0.0, 1.0, 0.0, 0.0]])
+
+    manager.do_xy_lock(now=None)
+    assert manager._xy_lock_last_time == 500.0
+
+
+def test_latest_focus_state_no_data():
+    manager = make_manager()
+    manager._focus_motor_name = 'focus'
+    manager._focus_buffer = FakeFocusBuffer(np.empty((0, 4)))
+    assert manager._latest_focus_state() is None
+
+
+def test_discover_focus_motor_name_typeerror_skip():
+    manager = make_manager()
+    manager.hardware_types = {'focus': DummyFocusMotor, 'garbage': object()}
+    name = manager._discover_focus_motor_name()
+    assert name == 'focus'

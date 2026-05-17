@@ -293,3 +293,49 @@ def test_camera_shutdown_clears_buffer_and_releases_root_device():
     assert microscope_camera.video_buffer is None
     assert device.shutdown_called is True
     assert device.pyro_release_called is True
+
+
+def test_disconnect_suppresses_shutdown_exception(monkeypatch):
+    device = FakeDevice()
+
+    def raising_shutdown():
+        device.shutdown_called = True
+        raise RuntimeError("shutdown failed")
+
+    device.shutdown = raising_shutdown
+    microscope_camera = make_camera(device=device)
+    microscope_camera.connect(FakeVideoBuffer())
+
+    microscope_camera.shutdown()
+
+    assert microscope_camera.is_connected is False
+
+
+def test_release_calls_device_release():
+    device = FakeDevice()
+    device.release_called = False
+
+    def release_func():
+        device.release_called = True
+    device.release = release_func
+
+    microscope_camera = make_camera(device=device)
+    microscope_camera.connect(FakeVideoBuffer())
+    microscope_camera.release()
+    assert device.release_called is True
+
+
+def test_release_all_no_device():
+    device = FakeDevice()
+    microscope_camera = make_camera(device=device)
+    microscope_camera._microscope_device = None
+    microscope_camera.release_all()
+    # Should not crash
+
+
+def test_get_setting_framerate_no_settings_map(monkeypatch):
+    device = FakeDevice()
+    microscope_camera = make_camera(device=device, settings_map={})
+    microscope_camera._fps_estimate = 30.0
+    result = microscope_camera.get_setting('framerate')
+    assert result == '30'

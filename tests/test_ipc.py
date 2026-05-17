@@ -224,3 +224,165 @@ def test_validate_targets_checks_broadcast_handlers_on_all_processes():
         'ReadyProcess': ProcessWithHandlers(),
         'OtherReadyProcess': ProcessWithHandlers(),
     })
+
+
+# ---------------------------------------------------------------------------
+# create_pipes, broadcast_command, drain_pipe_until_quit
+# ---------------------------------------------------------------------------
+
+def test_create_pipes_returns_parent_and_child_ends():
+    from magscope.ipc import create_pipes
+
+    class StubProcess:
+        def __init__(self, name):
+            self.name = name
+
+    processes = {"CameraManager": StubProcess("CameraManager"), "UIManager": StubProcess("UIManager")}
+    parent_ends, child_ends = create_pipes(processes)
+    assert set(parent_ends.keys()) == {"CameraManager", "UIManager"}
+    assert set(child_ends.keys()) == {"CameraManager", "UIManager"}
+
+
+def test_broadcast_command_sends_to_alive_not_quitting():
+    from magscope.ipc import broadcast_command
+
+    class FakeProcess:
+        def __init__(self, alive=True):
+            self._alive = alive
+
+        def is_alive(self):
+            return self._alive
+
+    class FakeEvent:
+        def __init__(self, set_flag=False):
+            self._flag = set_flag
+
+        def is_set(self):
+            return self._flag
+
+    class FakePipe:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, command):
+            self.sent.append(command)
+
+    pipe_live = FakePipe()
+    pipe_dead = FakePipe()
+    pipe_quitting = FakePipe()
+    command = ExampleCommand(value=1)
+
+    broadcast_command(
+        command,
+        pipes={"live": pipe_live, "dead": pipe_dead, "quitting": pipe_quitting},
+        processes={
+            "live": FakeProcess(alive=True),
+            "dead": FakeProcess(alive=False),
+            "quitting": FakeProcess(alive=True),
+        },
+        quitting_events={
+            "live": FakeEvent(),
+            "dead": FakeEvent(),
+            "quitting": FakeEvent(set_flag=True),
+        },
+    )
+    assert len(pipe_live.sent) == 1
+    assert isinstance(pipe_live.sent[0], ExampleCommand)
+    assert pipe_dead.sent == []
+    assert pipe_quitting.sent == []
+
+
+def test_drain_pipe_until_quit_stops_on_event(monkeypatch):
+    from magscope.ipc import drain_pipe_until_quit
+
+    class FakeEvent:
+        def __init__(self):
+            self._set = False
+            self._set_after = 3
+            self._poll_count = 0
+
+        def is_set(self):
+            return self._set
+
+        def set(self):
+            self._set = True
+
+    class FakePipe:
+        def __init__(self):
+            self._data = [ExampleCommand(value=1), OtherCommand()]
+
+        def poll(self):
+            return bool(self._data)
+
+        def recv(self):
+            return self._data.pop(0) if self._data else None
+
+    quitting_event = FakeEvent()
+    pipe = FakePipe()
+
+    monkeypatch.setattr(quitting_event, "is_set", lambda: not bool(pipe._data))
+
+    drain_pipe_until_quit(pipe, quitting_event, poll_interval=None)
+
+
+def test_register_rejects_empty_target():
+    registry = CommandRegistry()
+
+    class TestOwner:
+        def handle(self):
+            pass
+
+    with pytest.raises(ValueError, match="Target cannot be empty"):
+        registry.register(
+            command_type=ExampleCommand,
+            handler="handle",
+            owner=TestOwner,
+            delivery=Delivery.DIRECT,
+            target="",
+        )
+
+
+def test_register_target_key_conflict():
+    registry = CommandRegistry()
+
+    class OwnerA:
+        def handle(self):
+            pass
+
+    class OwnerB:
+        def handle(self):
+            pass
+
+    registry.register(
+        command_type=ExampleCommand,
+        handler="handle",
+        owner=OwnerA,
+        delivery=Delivery.DIRECT,
+        target="ManagerA",
+    )
+    with pytest.raises(CommandConflictError, match="already mapped"):
+        registry.register(
+            command_type=OtherCommand,
+            handler="handle",
+            owner=OwnerB,
+            delivery=Delivery.DIRECT,
+            target="ManagerA",
+        )
+
+
+def test_validate_targets_skips_mag_scope():
+    registry = CommandRegistry()
+
+    class ScopeOwner:
+        def handle_scope(self):
+            pass
+
+    registry.register(
+        command_type=ExampleCommand,
+        handler="handle_scope",
+        owner=ScopeOwner,
+        delivery=Delivery.MAG_SCOPE,
+        target="MagScope",
+    )
+
+    registry.validate_targets({})

@@ -509,3 +509,74 @@ def test_run_auto_bead_search_process_error_handler():
     worker.join(timeout=3.0)
 
     assert not worker.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# roi_is_within_image
+# ---------------------------------------------------------------------------
+
+def test_roi_is_within_image_valid():
+    from magscope.auto_bead_selection import roi_is_within_image
+    assert roi_is_within_image((10, 30, 10, 30), (50, 50)) is True
+
+
+def test_roi_is_within_image_left_out():
+    from magscope.auto_bead_selection import roi_is_within_image
+    assert roi_is_within_image((-5, 20, 0, 20), (50, 50)) is False
+
+
+def test_roi_is_within_image_right_out():
+    from magscope.auto_bead_selection import roi_is_within_image
+    assert roi_is_within_image((40, 55, 0, 20), (50, 50)) is False
+
+
+def test_roi_is_within_image_invalid_order():
+    from magscope.auto_bead_selection import roi_is_within_image
+    assert roi_is_within_image((30, 10, 0, 20), (50, 50)) is False
+
+
+# ---------------------------------------------------------------------------
+# default_candidate_score_threshold additional cases
+# ---------------------------------------------------------------------------
+
+def test_default_score_threshold_single_candidate():
+    from magscope.auto_bead_selection import AutoBeadCandidate, default_candidate_score_threshold
+    candidates = [AutoBeadCandidate(score=5.0, roi=(0, 10, 0, 10))]
+    assert default_candidate_score_threshold(candidates) == 5.0
+
+
+def test_default_score_threshold_few_candidates_percentile():
+    from magscope.auto_bead_selection import AutoBeadCandidate, default_candidate_score_threshold
+    candidates = [
+        AutoBeadCandidate(score=1.0, roi=(0, 10, 0, 10)),
+        AutoBeadCandidate(score=2.0, roi=(0, 10, 0, 10)),
+        AutoBeadCandidate(score=3.0, roi=(0, 10, 0, 10)),
+    ]
+    result = default_candidate_score_threshold(candidates)
+    assert result > 0
+
+
+# ---------------------------------------------------------------------------
+# run_auto_bead_search_process edge cases
+# ---------------------------------------------------------------------------
+
+def test_run_search_process_shutdown_during_drain():
+    import multiprocessing as mp
+    import time
+    from magscope.auto_bead_selection import run_auto_bead_search_process
+
+    request_queue = mp.Queue()
+    result_queue = mp.Queue()
+    active_request_id = mp.Value('i', 0)
+
+    worker = mp.Process(
+        target=run_auto_bead_search_process,
+        args=(request_queue, result_queue, active_request_id),
+    )
+    worker.start()
+    time.sleep(0.1)
+
+    request_queue.put(('shutdown',))
+    time.sleep(0.1)
+
+    worker.join(timeout=2.0)

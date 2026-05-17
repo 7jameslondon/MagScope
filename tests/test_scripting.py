@@ -576,3 +576,50 @@ def test_script_status_enum_values():
     assert scripting.ScriptStatus.PAUSED.value == 'Paused'
     assert scripting.ScriptStatus.FINISHED.value == 'Finished'
     assert scripting.ScriptStatus.ERROR.value == 'Error'
+
+
+def test_script_registry_get_class_name_from_instance():
+    registry = scripting.ScriptRegistry()
+    manager, _ = make_script_manager()
+    name = registry.get_class_name(manager)
+    assert name == 'ScriptManager'
+
+
+def test_execute_script_step_registry_command_mismatch():
+    manager, _sent_commands = make_registered_script_manager()
+    from magscope.ipc_commands import Command
+
+    class FakeRegistry:
+        def __call__(self, cmd_type):
+            return scripting.ScriptCommandRegistration(
+                cls_name='FakeManager',
+                meth_name='fake_handler',
+                command_type=cmd_type,
+                callable=lambda self: None,
+            )
+
+    manager.script_registry = FakeRegistry()
+
+    with pytest.raises(Exception):
+        manager._execute_script_step(scripting.ScriptStep(command=SleepCommand(duration=0.0)))
+
+
+def test_script_registry_call_unregistered_raises():
+    registry = scripting.ScriptRegistry()
+    with pytest.raises(ValueError, match="not registered"):
+        registry(SleepCommand)
+
+
+def test_script_registry_register_same_class_skips():
+    registry = scripting.ScriptRegistry()
+    registry.register_class_methods(scripting.ScriptManager)
+    # Should not raise when registering the same class again
+    registry.register_class_methods(scripting.ScriptManager)
+    # The command should still be found
+    registration = registry(SleepCommand)
+    assert registration.meth_name == 'start_sleep'
+
+
+def test_script_manager_setup_is_noop():
+    manager, _ = make_script_manager()
+    manager.setup()  # Should not raise

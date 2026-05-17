@@ -504,3 +504,112 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
         step_size=None,
         profile_length=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# _extract_zlut_metadata error paths
+# ---------------------------------------------------------------------------
+
+def test_extract_zlut_metadata_rejects_1d_array():
+    from magscope.videoprocessing import VideoProcessorManager
+    with pytest.raises(ValueError, match="2D array"):
+        VideoProcessorManager._extract_zlut_metadata(np.asarray([1.0, 2.0]))
+
+
+def test_extract_zlut_metadata_rejects_insufficient_rows():
+    from magscope.videoprocessing import VideoProcessorManager
+    with pytest.raises(ValueError, match="at least one profile row"):
+        VideoProcessorManager._extract_zlut_metadata(np.asarray([[1.0, 2.0]]))
+
+
+def test_extract_zlut_metadata_rejects_insufficient_columns():
+    from magscope.videoprocessing import VideoProcessorManager
+    with pytest.raises(ValueError, match="at least two z-reference values"):
+        VideoProcessorManager._extract_zlut_metadata(np.asarray([[1.0], [2.0]]))
+
+
+# ---------------------------------------------------------------------------
+# update_tracking_options / set_settings
+# ---------------------------------------------------------------------------
+
+def test_update_tracking_options_deep_copies():
+    from magscope.videoprocessing import VideoProcessorManager
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    original = {"key": "value"}
+    manager.update_tracking_options(original)
+    assert manager._tracking_options == original
+    assert manager._tracking_options is not original
+
+
+def test_set_settings_resets_lookup_z_warning():
+    from magscope.videoprocessing import VideoProcessorManager
+    from magscope.settings import MagScopeSettings
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    manager._lookup_z_warning_reported = True
+    manager.settings = MagScopeSettings({"video processors n": 2})
+    manager.set_settings(MagScopeSettings({"video processors n": 2}))
+    assert manager._lookup_z_warning_reported is False
+
+
+# ---------------------------------------------------------------------------
+# ZLUT sweep arm / disarm
+# ---------------------------------------------------------------------------
+
+def test_arm_zlut_sweep_capture_sets_flags():
+    from magscope.videoprocessing import VideoProcessorManager
+    from magscope.settings import MagScopeSettings
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    manager.settings = MagScopeSettings({"video processors n": 2})
+    manager.arm_zlut_sweep_capture(
+        step_index=0,
+        motor_z_value=50.0,
+        remaining_profiles_per_bead=4,
+        earliest_timestamp=100.0,
+    )
+    assert manager._zlut_capture_step_index == 0
+    assert manager._zlut_capture_motor_z_value == 50.0
+
+
+def test_disarm_zlut_sweep_capture_resets_state():
+    from magscope.videoprocessing import VideoProcessorManager
+    from magscope.settings import MagScopeSettings
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    manager.settings = MagScopeSettings({"video processors n": 2})
+    manager._zlut_capture_step_index = 0
+    manager._zlut_capture_motor_z_value = 50.0
+
+    manager.disarm_zlut_sweep_capture()
+
+    assert manager._zlut_capture_step_index is None
+    assert manager._zlut_capture_motor_z_value is None
+
+
+# ---------------------------------------------------------------------------
+# script_wait_until_acquisition_on / _finish_waiting_when_ready
+# ---------------------------------------------------------------------------
+
+def test_script_wait_until_acquisition_on_sets_flag():
+    from magscope.videoprocessing import VideoProcessorManager
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    manager.script_wait_until_acquisition_on(True)
+    assert manager._waiting_for_acquisition is True
+
+
+def test_finish_waiting_when_ready_sends_ipc():
+    from magscope.videoprocessing import VideoProcessorManager
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    sent = []
+    manager.send_ipc = sent.append
+    manager._waiting_for_acquisition = True
+    manager._acquisition_on = True
+
+    manager._finish_waiting_when_ready()
+
+    assert manager._waiting_for_acquisition is None
+    assert len(sent) == 1

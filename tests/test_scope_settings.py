@@ -362,3 +362,125 @@ def test_preferences_bundle_import_reports_malformed_yaml(tmp_path):
 
     with pytest.raises(ValueError, match='Invalid preferences YAML'):
         import_preferences_bundle(path)
+
+
+def test_tracking_options_from_mapping_rejects_none():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='empty'):
+        tracking_options_from_mapping(None)
+
+
+def test_tracking_options_from_mapping_rejects_non_mapping():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='YAML mapping'):
+        tracking_options_from_mapping("not a mapping")
+
+
+def test_tracking_options_from_mapping_rejects_invalid_background():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='background'):
+        tracking_options_from_mapping({'center_of_mass': {'background': 'invalid'}})
+
+
+def test_build_preferences_bundle_includes_tracking_options():
+    from magscope.settings import build_preferences_bundle, MagScopeSettings, default_tracking_options, PREFERENCES_BUNDLE_VERSION
+    settings = MagScopeSettings()
+    bundle = build_preferences_bundle(
+        magscope_settings=settings,
+        tracking_options=default_tracking_options(),
+    )
+    assert 'tracking' in bundle
+    assert 'magscope' in bundle
+    assert 'version' in bundle
+    assert bundle['version'] == PREFERENCES_BUNDLE_VERSION
+
+
+def test_coerce_tracking_int_value_non_numeric():
+    from magscope.settings import _coerce_tracking_int_value
+    with pytest.raises(ValueError, match="must be an integer"):
+        _coerce_tracking_int_value("abc", name="test", fallback=5)
+
+
+def test_coerce_tracking_float_value_non_numeric():
+    from magscope.settings import _coerce_tracking_float_value
+    with pytest.raises(ValueError, match="must be a number"):
+        _coerce_tracking_float_value("abc", name="test", fallback=1.0)
+
+
+def test_coerce_tracking_float_value_below_minimum():
+    from magscope.settings import _coerce_tracking_float_value
+    with pytest.raises(ValueError, match="must be at least"):
+        _coerce_tracking_float_value(0.1, name="test", fallback=1.0, minimum=1.0)
+
+
+def test_coerce_tracking_bool_value_numeric():
+    from magscope.settings import _coerce_tracking_bool_value
+    assert _coerce_tracking_bool_value(1, fallback=False) is True
+    assert _coerce_tracking_bool_value(0, fallback=True) is False
+    assert _coerce_tracking_bool_value(1.0, fallback=False) is True
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _coerce_tracking_bool_value([], fallback=False)
+
+
+def test_tracking_options_mapping_rejects_non_mapping_center_of_mass():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="center_of_mass"):
+        tracking_options_from_mapping({'center_of_mass': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_auto_conv():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="auto_conv_multiline_sub_pixel"):
+        tracking_options_from_mapping({'auto_conv_multiline_sub_pixel': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_fft():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="fft_profile"):
+        tracking_options_from_mapping({'fft_profile': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_radial():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="radial_profile"):
+        tracking_options_from_mapping({'radial_profile': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_lookup_z():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="lookup_z"):
+        tracking_options_from_mapping({'lookup_z': 'not_a_dict'})
+
+
+def test_load_preferences_bundle_validation_errors():
+    from magscope.settings import load_preferences_bundle_mapping, PREFERENCES_BUNDLE_VERSION
+    with pytest.raises(ValueError, match="empty"):
+        load_preferences_bundle_mapping(None)
+    with pytest.raises(ValueError, match="YAML mapping"):
+        load_preferences_bundle_mapping([1, 2, 3])
+    with pytest.raises(ValueError, match="Unsupported preferences"):
+        load_preferences_bundle_mapping({'version': '0', 'magscope': {}, 'tracking': {}})
+    with pytest.raises(ValueError, match="tracking"): 
+        load_preferences_bundle_mapping({'version': PREFERENCES_BUNDLE_VERSION, 'magscope': {}, 'tracking': 'not_a_dict'})
+
+
+def test_magscope_settings_iter_and_len():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    keys = list(s)
+    assert len(keys) > 0
+    assert len(s) == len(keys)
+
+
+def test_magscope_settings_persistent_copy():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    copy = s.persistent_copy()
+    assert copy['ROI'] == s['ROI']
+
+
+def test_magscope_settings_update_iterable():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    s.update([('ROI', 32)])
+    assert s['ROI'] == 32

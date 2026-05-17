@@ -598,3 +598,188 @@ def test_add_hardware_rejects_multiple_focus_motors(scope_module):
 
     with pytest.raises(ValueError, match='supports only one FocusMotorBase'):
         scope.add_hardware(secondary)
+
+
+# ---------------------------------------------------------------------------
+# Scope lifecycle methods
+# ---------------------------------------------------------------------------
+
+def test_read_command_returns_none_when_pipe_empty(scope_module):
+    scope = make_scope(scope_module)
+    pipe = DummyPipe(messages=[])
+    assert scope._read_command(pipe) is None
+
+
+def test_read_command_returns_none_for_non_command(scope_module):
+    scope = make_scope(scope_module)
+    pipe = DummyPipe(messages=["not_a_command"])
+    assert scope._read_command(pipe) is None
+
+
+def test_read_command_returns_valid_command(scope_module):
+    scope = make_scope(scope_module)
+    command = QuitCommand()
+    pipe = DummyPipe(messages=[command])
+    result = scope._read_command(pipe)
+    assert result is command
+
+
+def test_coerce_settings_from_dict(scope_module):
+    scope = make_scope(scope_module)
+    result = scope._coerce_settings({"ROI": 64})
+    assert result["ROI"] == 64
+
+
+def test_coerce_settings_from_magscope_settings_obj(scope_module):
+    from magscope.settings import MagScopeSettings
+    scope = make_scope(scope_module)
+    settings = MagScopeSettings({"ROI": 32})
+    result = scope._coerce_settings(settings)
+    assert result["ROI"] == 32
+    assert result is not settings  # cloned
+
+
+def test_setup_command_registry_is_idempotent(scope_module):
+    scope = make_scope(scope_module)
+    scope._setup_command_registry()
+    assert scope._command_registry_initialized is True
+    scope._setup_command_registry()
+
+
+def test_reset_camera_health_logging_state(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    class FakeCameraTotalFrames:
+        value = 42
+
+    scope.shared_values = type("StubSV", (), {"camera_total_frames": FakeCameraTotalFrames})()
+    monkeypatch.setattr("time.monotonic", lambda: 100.0)
+
+    scope._reset_camera_health_logging_state()
+    assert scope._last_camera_health_sample_time == 100.0
+    assert scope._last_camera_health_frame_count == 42
+
+
+def test_dispatch_mag_scope_command_calls_handler(scope_module):
+    scope = make_scope(scope_module)
+    calls = []
+
+    @dataclass(frozen=True)
+    class ScopeCommand(Command):
+        value: int
+
+    class FakeSpec:
+        handler = "my_handler"
+
+    scope.my_handler = lambda **kw: calls.append(kw)
+    scope._dispatch_mag_scope_command(ScopeCommand(value=5), FakeSpec)
+    assert calls == [{"value": 5}]
+
+
+def test_dispatch_mag_scope_command_missing_handler_raises(scope_module):
+    scope = make_scope(scope_module)
+
+    @dataclass(frozen=True)
+    class ScopeCommand(Command):
+        value: int
+
+    class FakeSpec:
+        handler = "nonexistent"
+
+    with pytest.raises(RuntimeError, match="No MagScope handler"):
+        scope._dispatch_mag_scope_command(ScopeCommand(value=5), FakeSpec)
+
+
+def test_mark_running_sets_flag(scope_module):
+    scope = make_scope(scope_module)
+    scope._running = False
+    assert scope._mark_running() is True
+    assert scope._running is True
+
+
+def test_mark_running_rejects_if_already_running(scope_module):
+    scope = make_scope(scope_module)
+    scope._running = True
+    assert scope._mark_running() is False
+
+
+def test_ensure_not_terminated_raises_if_terminated(scope_module):
+    scope = make_scope(scope_module)
+    scope._terminated = True
+    with pytest.raises(RuntimeError, match="already been stopped"):
+        scope._ensure_not_terminated()
+
+
+def test_ensure_not_terminated_passes_when_active(scope_module):
+    scope = make_scope(scope_module)
+    scope._terminated = False
+    scope._ensure_not_terminated()
+
+
+def test_set_verbose_logging_toggles_level(scope_module):
+    scope = make_scope(scope_module)
+    scope.set_verbose_logging(True)
+    assert scope._log_level == 20  # INFO
+    scope.set_verbose_logging(False)
+    assert scope._log_level == 30  # WARNING
+
+
+def test_add_control_appends_to_ui_manager_list(scope_module):
+    scope = make_scope(scope_module)
+    scope.ui_manager.controls_to_add = []
+    scope.add_control(str, 0)
+    assert scope.ui_manager.controls_to_add == [(str, 0)]
+
+
+def test_add_timeplot_appends_to_ui_manager_list(scope_module):
+    scope = make_scope(scope_module)
+    scope.ui_manager.plots_to_add = []
+    scope.add_timeplot("fake_plot")
+    assert scope.ui_manager.plots_to_add == ["fake_plot"]
+
+
+def test_stop_broadcasts_quit_and_joins(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    scope._terminated = False
+    scope.pipes = {}
+    scope.processes = {"test": DummyProcess(alive=True)}
+    scope.quitting_events = {"test": DummyEvent()}
+
+    handle_calls = []
+    monkeypatch.setattr(scope, "_handle_broadcast_command", lambda cmd: handle_calls.append(cmd))
+    monkeypatch.setattr(scope, "_join_processes", lambda: None)
+    monkeypatch.setattr(scope, "_mark_terminated", lambda: None)
+
+    scope.stop()
+    assert len(handle_calls) == 1
+    assert isinstance(handle_calls[0], QuitCommand)
+
+
+def test_stop_warns_when_not_running(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = False
+    scope._terminated = False
+    scope.stop()
+
+
+def test_print_ipc_commands_property_setter_guard(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    scope.print_ipc_commands = True
+    assert scope._print_ipc_commands is False  # unchanged because running
+
+    scope._running = False
+    scope.print_ipc_commands = True
+    assert scope._print_ipc_commands is True
+
+
+def test_print_script_commands_property_setter_guard(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    scope.print_script_commands = True
+    assert scope._print_script_commands is False
+
+    scope._running = False
+    scope.print_script_commands = True
+    assert scope._print_script_commands is True

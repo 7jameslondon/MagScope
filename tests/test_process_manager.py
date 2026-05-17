@@ -770,3 +770,104 @@ def test_focus_motor_fetch_skips_write_when_not_moved_and_interval_not_elapsed(m
     rows_before = len(motor._buffer.rows)
     motor.fetch()
     assert len(motor._buffer.rows) == rows_before
+
+
+# ---------------------------------------------------------------------------
+# send_ipc / receive_ipc error paths
+# ---------------------------------------------------------------------------
+
+def test_send_ipc_raises_without_command_registry():
+    from magscope.ipc_commands import SleepCommand
+    proc = DummyProcess()
+    proc._command_registry = None
+    with pytest.raises(RuntimeError, match="cannot send IPC without a command registry"):
+        proc.send_ipc(SleepCommand(duration=1.0))
+
+
+def test_send_ipc_raises_without_magscope_quitting():
+    from magscope.ipc_commands import SleepCommand
+    proc = DummyProcess()
+    proc._command_registry = CommandRegistry()
+    proc._magscope_quitting = None
+    with pytest.raises(RuntimeError, match="has no magscope_quitting"):
+        proc.send_ipc(SleepCommand(duration=1.0))
+
+
+def test_receive_ipc_non_command_warns(monkeypatch):
+    warnings_log = []
+    monkeypatch.setattr(processes, "warn", lambda msg: warnings_log.append(msg))
+
+    class PollingPipe(FakePipe):
+        def poll(self):
+            return bool(getattr(self, "incoming", None))
+
+    proc = DummyProcess()
+    pipe = PollingPipe()
+    pipe.incoming = ["just a string"]
+    proc._pipe = pipe
+    proc._command_registry = CommandRegistry()
+    proc.receive_ipc()
+    assert len(warnings_log) >= 1
+
+
+def test_bead_rois_property_converts_arrays_to_dict():
+    import numpy as np
+    proc = DummyProcess()
+    proc._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    proc._bead_roi_values = np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32)
+    result = proc.bead_rois
+    assert result == {1: (0, 10, 0, 10), 2: (10, 20, 10, 20)}
+
+
+def test_refresh_bead_roi_cache_no_buffer():
+    import numpy as np
+    proc = DummyProcess()
+    proc.bead_roi_buffer = None
+    proc._refresh_bead_roi_cache()
+    assert len(proc._bead_roi_ids) == 0
+    assert len(proc._bead_roi_values) == 0
+
+
+def test_singleton_meta_rejects_second_instance():
+    from magscope.processes import SingletonMeta
+
+    called = 0
+
+    class DoubleCheck(metaclass=SingletonMeta):
+        def __init__(self):
+            nonlocal called
+            called += 1
+
+    first = DoubleCheck()
+    assert called == 1
+    with pytest.raises(TypeError, match="Cannot create another instance"):
+        DoubleCheck()
+    assert called == 1
+    SingletonMeta._instances.clear()
+
+
+def test_quitting_event_property():
+    from multiprocessing import Event
+    proc = DummyProcess()
+    e = Event()
+    proc._quitting = e
+    assert proc.quitting_event is e
+
+
+def test_quit_raises_when_no_magscope_quitting():
+    proc = DummyProcess()
+    proc._magscope_quitting = None
+    proc._pipe = FakePipe()
+    proc._quit_requested = True
+    proc._quitting = FakeEvent()
+    with pytest.raises(RuntimeError, match="has no magscope_quitting"):
+        proc.quit()
+
+
+def test_run_already_running_warns(monkeypatch):
+    warnings_log = []
+    monkeypatch.setattr(processes, "warn", lambda msg: warnings_log.append(msg))
+    proc = DummyProcess()
+    proc._running = True
+    proc.run()
+    assert len(warnings_log) >= 1

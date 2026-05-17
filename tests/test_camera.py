@@ -438,3 +438,92 @@ def test_dummy_camera_noise_fake_image_shape():
     img_bytes = noise._fake_image()
     img = np.frombuffer(img_bytes, dtype=np.uint16).reshape(8, 16)
     assert img.shape == (8, 16)
+
+
+def test_blit_add_no_overlap_returns_early():
+    dst = np.zeros((5, 5), dtype=np.float32)
+    src = np.ones((2, 2), dtype=np.float32)
+    camera.DummyCameraBeads._blit_add(dst, src, 10, 10, w=1.0)
+    assert dst.sum() == 0.0
+
+
+def test_blit_add_fully_out_of_bounds():
+    dst = np.zeros((5, 5), dtype=np.float32)
+    src = np.ones((2, 2), dtype=np.float32)
+    camera.DummyCameraBeads._blit_add(dst, src, -10, -10, w=1.0)
+    assert dst.sum() == 0.0
+
+
+def test_sample_points_relaxation_fallback():
+    rng = np.random.RandomState(123)
+    pts = camera.DummyCameraBeads._sample_points_uniform_minsep(
+        100, 100, 5, 1, 40, rng, max_tries=1, relax=0.8,
+    )
+    assert pts.shape == (5, 2)
+
+
+def test_recompute_fixed_delta_zero_beads(monkeypatch):
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._settings['fixed_n'] = 0
+    bead_camera._recompute_fixed_delta()
+    assert bead_camera._delta_fixed is None
+
+
+def test_reinit_centers_and_fixed_regular_grid(monkeypatch):
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._settings['fixed_n'] = 2
+    bead_camera._settings['fixed_z'] = 10.0
+    bead_camera._reinit_centers_and_fixed()
+    assert bead_camera._delta_fixed is not None
+
+
+def test_init_tether_state():
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._settings['tethered_n'] = 3
+    bead_camera._settings['tethered_z'] = 25.0
+    bead_camera._focus_offset = 0.0
+    bead_camera._init_tether_state()
+    assert bead_camera._xy.shape == (3, 2)
+    np.testing.assert_array_equal(bead_camera._z, np.asarray([25.0, 25.0, 25.0], dtype=np.float32))
+
+
+def test_dummy_camera_beads_get_setting():
+    bead_camera = camera.DummyCameraBeads()
+    result = bead_camera.get_setting('fixed_n')
+    assert isinstance(result, (str, int))
+
+
+def test_dummy_camera_beads_set_setting_fixed_z(monkeypatch):
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._settings['fixed_n'] = 1
+    bead_camera.set_setting('fixed_z', '75.0')
+    assert bead_camera._settings['fixed_z'] == 75.0
+
+
+def test_dummy_camera_beads_set_setting_gain():
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera.set_setting('gain', '2.5')
+    assert bead_camera._settings['gain'] == 2.5
+
+
+def test_dummy_camera_noise_set_setting_exposure_boundary():
+    noise_cam = camera.DummyCameraNoise()
+    noise_cam.set_setting('exposure', '0.01')
+    assert noise_cam.fake_settings['exposure'] == 0.01
+
+
+def test_camera_base_abstract_cannot_instantiate():
+    with pytest.raises(TypeError):
+        camera.CameraBase()

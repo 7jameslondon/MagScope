@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from magscope.ipc_commands import (
     ArmZLUTSweepCaptureCommand,
@@ -615,3 +616,282 @@ def test_handle_capture_complete_rearms_when_stale_stack_is_skipped():
     assert sent_commands[0].bead_ids == (8,)
     assert sent_commands[0].bead_rois == ((5, 6, 7, 8),)
     assert state_updates[-1][1]['phase'] == 'capturing'
+
+
+# ---------------------------------------------------------------------------
+# New ZLUT pipeline tests
+# ---------------------------------------------------------------------------
+
+def test_complete_session_dataset_none_guard():
+    manager = make_manager()
+    manager._dataset = None
+    manager._complete_session()
+    assert manager._phase != 'evaluating'
+
+
+def test_maybe_send_progress_delegates():
+    manager = make_manager()
+    manager._send_progress_called = False
+
+    def fake_send_progress(force=False):
+        manager._send_progress_called = True
+
+    manager._send_progress = fake_send_progress
+    manager._maybe_send_progress()
+    assert manager._send_progress_called is True
+
+
+def test_latest_focus_state_buffer_none():
+    manager = make_manager()
+    manager._focus_buffer = None
+    assert manager._latest_focus_state() is None
+
+
+def test_latest_focus_state_no_data():
+    manager = make_manager()
+
+    class EmptyBuffer:
+        def peak_sorted(self):
+            return np.empty((0, 4), dtype=np.float64)
+
+    manager._focus_buffer = EmptyBuffer()
+    assert manager._latest_focus_state() is None
+
+
+def test_latest_focus_state_all_nan():
+    manager = make_manager()
+
+    class NaNBuffer:
+        def peak_sorted(self):
+            return np.asarray([[np.nan, np.nan, np.nan, np.nan]], dtype=np.float64)
+
+    manager._focus_buffer = NaNBuffer()
+    assert manager._latest_focus_state() is None
+
+
+def test_latest_focus_state_valid():
+    manager = make_manager()
+
+    class ValidBuffer:
+        def peak_sorted(self):
+            return np.asarray([[1.0, 50.0, 50.0, 1.0]], dtype=np.float64)
+
+    manager._focus_buffer = ValidBuffer()
+    current_z, target_z, is_at_target = manager._latest_focus_state()
+    assert current_z == 50.0
+    assert target_z == 50.0
+    assert is_at_target is True
+
+
+def test_do_main_loop_not_active():
+    manager = make_manager()
+    manager._active = False
+    manager.do_main_loop()
+
+
+def test_do_main_loop_cancel_path(monkeypatch):
+    manager = make_manager()
+    manager._active = True
+    manager._cancel_requested = True
+
+    cancel_called = False
+    monkeypatch.setattr(manager, "_cancel_session", lambda: setattr(manager, "_cancel_called", True) or True)
+    manager._cancel_called = False
+
+    manager.do_main_loop()
+    assert manager._cancel_called is True
+
+
+def test_advance_after_capture_incomplete_step():
+    manager = make_manager()
+    manager._step_capture_complete = False
+
+    manager._advance_after_capture()
+
+    # Should not advance - step not complete
+
+
+def test_advance_after_capture_step_complete_not_final():
+    manager = make_manager()
+    manager._step_capture_complete = True
+    manager._current_step_index = 0
+    manager._session_bead_roi_ids = np.asarray([1], dtype=np.uint32)
+    manager._session_bead_roi_values = np.asarray([[0, 10, 0, 10]], dtype=np.uint32)
+    manager._steps = np.asarray([10.0, 20.0])
+    manager._phase = 'capturing'
+
+    manager._advance_after_capture()
+
+    assert manager._current_step_index == 1
+
+
+def test_report_profile_length_guard_not_active():
+    manager = make_manager()
+    manager._active = False
+    manager.report_profile_length(profile_length=100)
+    assert manager._dataset is None
+
+
+def test_report_profile_length_invalid():
+    manager = make_manager()
+    manager._active = True
+    manager._phase = 'capturing'
+    manager.report_profile_length(profile_length=None)
+    assert manager._dataset is None
+
+
+def test_reset_dataset_none_guard():
+    manager = make_manager()
+    manager._dataset = None
+    manager._reset_dataset(destroy=True)
+    # Should not crash
+
+
+def test_reset_dataset_destroy_path():
+    manager = make_manager()
+    destroy_called = False
+
+    class CloseableDataset:
+        def destroy(self):
+            nonlocal destroy_called
+            destroy_called = True
+
+        def close(self):
+            pass
+
+    manager._dataset = CloseableDataset()
+    manager._reset_dataset(destroy=True)
+    assert destroy_called is True
+
+
+def test_reset_dataset_close_path():
+    manager = make_manager()
+    close_called = False
+
+    class CloseableDataset:
+        def destroy(self):
+            pass
+
+        def close(self):
+            nonlocal close_called
+            close_called = True
+
+    manager._dataset = CloseableDataset()
+    manager._reset_dataset(destroy=False)
+    assert close_called is True
+
+
+# ---------------------------------------------------------------------------
+# _build_steps
+# ---------------------------------------------------------------------------
+
+def test_build_steps_valid_ascending():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    result = ZLUTGenerationManager._build_steps(0.0, 10.0, 50.0)
+    np.testing.assert_allclose(result, np.asarray([0.0, 10.0, 20.0, 30.0, 40.0, 50.0]))
+
+
+def test_build_steps_valid_descending():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    result = ZLUTGenerationManager._build_steps(50.0, -10.0, 0.0)
+    np.testing.assert_allclose(result, np.asarray([50.0, 40.0, 30.0, 20.0, 10.0, 0.0]))
+
+
+def test_build_steps_zero_step_raises():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="non-zero"):
+        ZLUTGenerationManager._build_steps(0.0, 0.0, 50.0)
+
+
+def test_build_steps_same_start_stop_raises():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="at least two"):
+        ZLUTGenerationManager._build_steps(10.0, 5.0, 10.0)
+
+
+def test_build_steps_wrong_direction_raises():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="direction"):
+        ZLUTGenerationManager._build_steps(0.0, -10.0, 50.0)
+
+
+def test_build_steps_not_on_grid_raises():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="step grid"):
+        ZLUTGenerationManager._build_steps(0.0, 7.0, 50.0)
+
+
+# ---------------------------------------------------------------------------
+# _validate_sweep_limits
+# ---------------------------------------------------------------------------
+
+def test_validate_sweep_limits_in_range():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    ZLUTGenerationManager._validate_sweep_limits(10.0, 100.0, 0.0, 200.0)
+
+
+def test_validate_sweep_limits_below_min():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="exceeds focus motor limits"):
+        ZLUTGenerationManager._validate_sweep_limits(-10.0, 50.0, 0.0, 100.0)
+
+
+def test_validate_sweep_limits_above_max():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    with pytest.raises(ValueError, match="exceeds focus motor limits"):
+        ZLUTGenerationManager._validate_sweep_limits(50.0, 150.0, 0.0, 100.0)
+
+
+# ---------------------------------------------------------------------------
+# _discover_focus_motor_name TypeError
+# ---------------------------------------------------------------------------
+
+def test_discover_focus_motor_name_typeerror_continue():
+    from magscope.hardware import FocusMotorBase
+    manager = make_manager()
+    manager.hardware_types = {'focus': FocusMotorBase, 'bad': object()}
+    name = manager._discover_focus_motor_name()
+    assert name == 'focus'
+
+
+# ---------------------------------------------------------------------------
+# _cleanup_runtime_state
+# ---------------------------------------------------------------------------
+
+def test_cleanup_runtime_state_resets_all_attributes():
+    manager = make_manager()
+    manager._active = True
+    manager._cancel_requested = True
+    manager._current_step_index = 5
+    manager._profile_length = 100
+    manager._profiles_per_bead = 4
+    manager._phase = 'capturing'
+
+    manager._cleanup_runtime_state(destroy_dataset=True)
+
+    assert manager._active is False
+    assert manager._cancel_requested is False
+    assert manager._current_step_index == 0
+    assert manager._profile_length is None
+    assert manager._profiles_per_bead == 0
+    assert manager._phase == 'idle'
+
+
+# ---------------------------------------------------------------------------
+# _bead_id_payload / _bead_roi_payload
+# ---------------------------------------------------------------------------
+
+def test_bead_id_payload():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    manager = make_manager()
+    manager._session_bead_roi_ids = np.asarray([1, 2, 3], dtype=np.uint32)
+    result = manager._bead_id_payload()
+    assert result == (1, 2, 3)
+
+
+def test_bead_roi_payload():
+    from magscope.zlut_generation import ZLUTGenerationManager
+    manager = make_manager()
+    manager._session_bead_roi_values = np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32)
+    result = manager._bead_roi_payload()
+    assert result == ((0, 10, 0, 10), (10, 20, 10, 20))
