@@ -284,3 +284,157 @@ def test_dummy_camera_beads_rejects_invalid_setting_ranges(name, value, message)
 
     with pytest.raises(ValueError, match=message):
         bead_camera.set_setting(name, value)
+
+
+# ---------------------------------------------------------------------------
+# DummyCameraBeads static/class-methods
+# ---------------------------------------------------------------------------
+
+def test_ou_step_deterministic_with_seeded_rng():
+    rng = np.random.RandomState(42)
+    x = camera.DummyCameraBeads._ou_step(0.0, 0.01, 1.0, 0.1, 0.0, rng)
+    assert isinstance(x, float)
+
+
+def test_ou_step_converges_toward_mu():
+    rng = np.random.RandomState(0)
+    x = 10.0
+    for _ in range(5000):
+        x = camera.DummyCameraBeads._ou_step(x, 0.01, 1.0, 0.0, 0.0, rng)
+    assert abs(x) < 1e-6
+
+
+def test_ou_step_seed_reproducibility():
+    rng_a = np.random.RandomState(123)
+    rng_b = np.random.RandomState(123)
+    a = camera.DummyCameraBeads._ou_step(1.0, 0.01, 1.0, 0.5, 0.0, rng_a)
+    b = camera.DummyCameraBeads._ou_step(1.0, 0.01, 1.0, 0.5, 0.0, rng_b)
+    assert a == b
+
+
+def test_blit_add_full_overlap():
+    dst = np.zeros((10, 10), dtype=np.float32)
+    src = np.ones((4, 4), dtype=np.float32)
+    camera.DummyCameraBeads._blit_add(dst, src, 3, 3, w=1.0)
+    assert dst[3, 3] == 1.0
+    assert dst[0, 0] == 0.0
+
+
+def test_blit_add_partial_out_of_bounds_clipped():
+    dst = np.zeros((5, 5), dtype=np.float32)
+    src = np.full((4, 4), 2.0, dtype=np.float32)
+    camera.DummyCameraBeads._blit_add(dst, src, 3, 3, w=1.0)
+    assert dst[3, 3] == 2.0
+    assert dst[4, 4] == 2.0
+
+
+def test_blit_add_weight_factor():
+    dst = np.zeros((6, 6), dtype=np.float32)
+    src = np.ones((4, 4), dtype=np.float32)
+    camera.DummyCameraBeads._blit_add(dst, src, 1, 1, w=0.5)
+    assert dst[1, 1] == 0.5
+
+
+def test_accumulate_bilinear_integer_position():
+    dst = np.zeros((6, 6), dtype=np.float32)
+    src = np.ones((2, 2), dtype=np.float32)
+    camera.DummyCameraBeads._accumulate_bilinear(dst, src, 3.0, 3.0)
+    assert dst.sum() == pytest.approx(4.0)
+
+
+def test_accumulate_bilinear_fractional_position():
+    dst = np.zeros((6, 6), dtype=np.float32)
+    src = np.ones((2, 2), dtype=np.float32)
+    camera.DummyCameraBeads._accumulate_bilinear(dst, src, 3.3, 3.7)
+    assert dst.sum() == pytest.approx(4.0)
+
+
+def test_border_median_uniform_image():
+    img = np.full((10, 10), 5.0, dtype=np.float32)
+    result = camera.DummyCameraBeads._border_median(img)
+    assert result == 5.0
+
+
+def test_border_median_known_border():
+    img = np.zeros((10, 10), dtype=np.float32)
+    img[0, :] = 1.0
+    img[-1, :] = 2.0
+    img[:, 0] = 3.0
+    img[:, -1] = 4.0
+    result = camera.DummyCameraBeads._border_median(img)
+    assert 1.0 <= result <= 4.0
+
+
+def test_tukey_taper_edges_are_zero():
+    win = camera.DummyCameraBeads._tukey_taper(20, 30, pad=4)
+    assert win[0, 0] == 0.0
+    assert win[-1, -1] == 0.0
+
+
+def test_tukey_taper_center_near_one():
+    win = camera.DummyCameraBeads._tukey_taper(100, 100, pad=4)
+    assert win[50, 50] == pytest.approx(1.0, abs=0.01)
+
+
+def test_tukey_taper_shape_matches_input():
+    win = camera.DummyCameraBeads._tukey_taper(15, 25, pad=4)
+    assert win.shape == (15, 25)
+
+
+def test_delta_for_crop_flat_input_near_zero():
+    img = np.full((20, 20), 10.0, dtype=np.float32)
+    crop = img[5:15, 5:15]
+    result = camera.DummyCameraBeads._delta_for_crop(crop, pad=4)
+    assert np.max(np.abs(result)) < 1e-4
+
+
+def test_sample_points_uniform_minsep_empty():
+    rng = np.random.RandomState(0)
+    pts = camera.DummyCameraBeads._sample_points_uniform_minsep(
+        100, 100, 0, 5, 10, rng,
+    )
+    assert pts.shape == (0, 2)
+
+
+def test_sample_points_uniform_minsep_deterministic():
+    rng = np.random.RandomState(42)
+    pts = camera.DummyCameraBeads._sample_points_uniform_minsep(
+        200, 200, 3, 10, 20, rng,
+    )
+    assert pts.shape == (3, 2)
+    assert np.all(pts >= 10) and np.all(pts[:, 0] <= 190) and np.all(pts[:, 1] <= 190)
+
+
+def test_sample_points_uniform_minsep_margin_too_large():
+    rng = np.random.RandomState(0)
+    with pytest.raises(ValueError, match="Margin too large"):
+        camera.DummyCameraBeads._sample_points_uniform_minsep(
+            20, 20, 1, 15, 1, rng,
+        )
+
+
+def test_set_focus_offset_shifts_z(monkeypatch):
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._settings['tethered_n'] = 2
+    bead_camera._settings['tethered_z'] = 50.0
+    bead_camera._init_tether_state()
+
+    bead_camera.set_focus_offset(25.0)
+    assert bead_camera._focus_offset == 25.0
+    np.testing.assert_array_equal(bead_camera._z, np.asarray([75.0, 75.0], dtype=np.float32))
+
+
+def test_dummy_camera_noise_fake_image_shape():
+    noise = camera.DummyCameraNoise()
+    noise.fake_settings['gain'] = 0.0
+    noise.fake_settings['exposure'] = 1.0
+    noise.dtype = np.uint16
+    noise.width = 16
+    noise.height = 8
+    img_bytes = noise._fake_image()
+    img = np.frombuffer(img_bytes, dtype=np.uint16).reshape(8, 16)
+    assert img.shape == (8, 16)

@@ -306,3 +306,163 @@ def test_compute_highlight_rect_null_pixmap(qtbot):
     viewer._image.setPixmap(QPixmap())
     result = viewer._compute_highlight_rect(None, 0, 0)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Mouse event tests
+# ---------------------------------------------------------------------------
+
+def test_mouse_press_records_position_and_time(qtbot, monkeypatch):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    monkeypatch.setattr(viewer, '_mouse_start_time', 0.0)
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(50.0, 30.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mousePressEvent(event)
+    assert viewer._mouse_start_pos == QPoint(50, 30)
+
+
+def test_mouse_move_emits_coordinates(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    signals_received = []
+    viewer.coordinatesChanged.connect(lambda p: signals_received.append(p))
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        QPointF(100.0, 80.0),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mouseMoveEvent(event)
+
+
+def test_leave_event_emits_null_point(qtbot):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+
+    signals_received = []
+    viewer.coordinatesChanged.connect(lambda p: signals_received.append(p))
+    from PyQt6.QtCore import QEvent
+    event = QEvent(QEvent.Type.Leave)
+    viewer.leaveEvent(event)
+    assert len(signals_received) >= 1
+
+
+def test_fast_left_click_emits_both_signals(qtbot, monkeypatch):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    monkeypatch.setattr(viewer, '_mouse_start_time', 100.0)
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(50.0, 40.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        QPointF(50.0, 40.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mousePressEvent(press)
+    monkeypatch.setattr(viewer, '_mouse_start_time', 0.0)
+    viewer.mouseReleaseEvent(release)
+
+
+def test_slow_click_not_detected(qtbot, monkeypatch):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    clicked_received = []
+    viewer.clicked.connect(lambda p: clicked_received.append(p))
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(50.0, 40.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        QPointF(50.0, 40.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mousePressEvent(press)
+    monkeypatch.setattr(viewer, '_mouse_start_time', 0.0)
+    from time import time as real_time
+    monkeypatch.setattr(viewer, '_mouse_start_time', real_time())
+    viewer.mouseReleaseEvent(release)
+
+
+def test_move_exceeding_threshold_not_detected(qtbot, monkeypatch):
+    viewer = VideoViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(320, 240)
+    viewer.show()
+    qtbot.wait(1)
+    viewer.reset_view()
+
+    clicked_received = []
+    viewer.clicked.connect(lambda p: clicked_received.append(p))
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(50.0, 40.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease,
+        QPointF(100.0, 100.0),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mousePressEvent(press)
+    monkeypatch.setattr(viewer, '_mouse_start_time', 0.0)
+    viewer.mouseReleaseEvent(release)

@@ -15,6 +15,7 @@ from PyQt6.QtGui import QIntValidator, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from magscope.ui.widgets import (
+    BeadGraphic,
     CollapsibleGroupBox,
     FlashLabel,
     LabeledCheckbox,
@@ -232,3 +233,79 @@ def test_collapsible_groupbox_set_highlight_border(qtbot):
     assert "red" in box.styleSheet()
     box.set_highlight_border(None)
     assert "red" not in box.styleSheet()
+
+
+# ---------------------------------------------------------------------------
+# BeadGraphic classmethods (pure logic, no Qt needed for most)
+# ---------------------------------------------------------------------------
+
+def test_bead_graphic_roi_from_center_exact():
+    result = BeadGraphic.roi_from_center(0.0, 0.0, 10.0)
+    assert result == (-5, 5, -5, 5)
+
+
+def test_bead_graphic_roi_from_center_offset():
+    result = BeadGraphic.roi_from_center(100.0, 200.0, 64.0)
+    assert result == (68, 132, 168, 232)
+
+
+def test_bead_graphic_label_scene_position():
+    from PyQt6.QtCore import QPointF
+    result = BeadGraphic.label_scene_position_for_roi((50, 114, 60, 124))
+    assert result == QPointF(60, 61)
+
+
+def test_bead_graphic_clamp_roi_within_scene():
+    from PyQt6.QtCore import QRectF
+    roi = (0, 64, 0, 64)
+    scene = QRectF(0, 0, 512, 256)
+    result = BeadGraphic.clamp_roi_to_scene(roi, scene)
+    assert result == (0, 64, 0, 64)
+
+
+def test_bead_graphic_clamp_roi_left_overflow():
+    from PyQt6.QtCore import QRectF
+    roi = (-20, 44, 0, 64)
+    scene = QRectF(0, 0, 512, 256)
+    result = BeadGraphic.clamp_roi_to_scene(roi, scene)
+    assert result == (0, 64, 0, 64)
+
+
+def test_bead_graphic_clamp_roi_right_overflow():
+    from PyQt6.QtCore import QRectF
+    roi = (500, 564, 0, 64)
+    scene = QRectF(0, 0, 512, 256)
+    result = BeadGraphic.clamp_roi_to_scene(roi, scene)
+    assert result == (448, 512, 0, 64)
+
+
+def test_bead_graphic_clamp_roi_null_scene_unchanged():
+    from PyQt6.QtCore import QRectF
+    roi = (-5, 59, -5, 59)
+    scene = QRectF()
+    result = BeadGraphic.clamp_roi_to_scene(roi, scene)
+    assert result == (-5, 59, -5, 59)
+
+
+def test_bead_graphic_clamp_roi_scene_too_small_unchanged():
+    from PyQt6.QtCore import QRectF
+    roi = (0, 100, 0, 100)
+    scene = QRectF(0, 0, 50, 50)
+    result = BeadGraphic.clamp_roi_to_scene(roi, scene)
+    assert result == (0, 100, 0, 100)
+
+
+def test_bead_graphic_move_roi_positive():
+    from PyQt6.QtCore import QRectF
+    roi = (0, 64, 0, 64)
+    scene = QRectF(0, 0, 512, 256)
+    result = BeadGraphic.move_roi(roi, 10, 20, scene)
+    assert result == (10, 74, 20, 84)
+
+
+def test_bead_graphic_move_roi_clamped_at_boundary():
+    from PyQt6.QtCore import QRectF
+    roi = (440, 504, 0, 64)
+    scene = QRectF(0, 0, 512, 256)
+    result = BeadGraphic.move_roi(roi, 20, 0, scene)
+    assert result == (448, 512, 0, 64)

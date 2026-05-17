@@ -16,6 +16,7 @@ from magscope.auto_bead_selection import (
     filter_candidates_by_score_threshold,
     normalized_cross_correlation,
     normalized_cross_correlation_chunked,
+    roi_is_within_image,
     roi_overlaps,
     run_auto_bead_search_process,
 )
@@ -389,3 +390,122 @@ def test_run_auto_bead_search_process_keeps_only_latest_queued_search(monkeypatc
     assert not any(message[:2] == ('result', 2) for message in messages)
     assert any(message[:2] == ('result', 3) for message in messages)
     assert completed_requests == [3]
+
+
+# ---------------------------------------------------------------------------
+# roi_is_within_image
+# ---------------------------------------------------------------------------
+
+def test_roi_is_within_image_valid():
+    assert roi_is_within_image((0, 64, 0, 64), (256, 256)) is True
+
+
+def test_roi_is_within_image_outside_left():
+    assert roi_is_within_image((-10, 54, 0, 64), (128, 128)) is False
+
+
+def test_roi_is_within_image_outside_right():
+    assert roi_is_within_image((100, 164, 0, 64), (128, 128)) is False
+
+
+def test_roi_is_within_image_outside_top():
+    assert roi_is_within_image((0, 64, -5, 59), (128, 128)) is False
+
+
+def test_roi_is_within_image_outside_bottom():
+    assert roi_is_within_image((0, 64, 100, 164), (128, 128)) is False
+
+
+def test_roi_is_within_image_invalid_order():
+    assert roi_is_within_image((64, 0, 0, 64), (128, 128)) is False
+
+
+# ---------------------------------------------------------------------------
+# default_candidate_score_threshold edge cases
+# ---------------------------------------------------------------------------
+
+def test_default_candidate_score_threshold_empty():
+    result = default_candidate_score_threshold([])
+    assert result == np.inf
+
+
+def test_default_candidate_score_threshold_single_candidate():
+    result = default_candidate_score_threshold([AutoBeadCandidate(roi=(0, 64, 0, 64), score=0.85)])
+    assert result == 0.85
+
+
+def test_default_candidate_score_threshold_few_candidates():
+    candidates = [
+        AutoBeadCandidate(roi=(0, 64, 0, 64), score=0.9),
+        AutoBeadCandidate(roi=(10, 74, 10, 74), score=0.8),
+        AutoBeadCandidate(roi=(20, 84, 20, 84), score=0.7),
+    ]
+    result = default_candidate_score_threshold(candidates)
+    assert isinstance(result, float)
+
+
+# ---------------------------------------------------------------------------
+# normalized_cross_correlation_chunked validation
+# ---------------------------------------------------------------------------
+
+def test_ncc_chunked_rejects_3d_image():
+    image_3d = np.zeros((10, 10, 3), dtype=np.float64)
+    template = np.ones((4, 4), dtype=np.float64)
+    with pytest.raises(ValueError, match='must both be 2D'):
+        normalized_cross_correlation_chunked(image_3d, template)
+
+
+def test_ncc_chunked_rejects_template_larger_than_image():
+    image = np.zeros((4, 4), dtype=np.float64)
+    template = np.ones((6, 6), dtype=np.float64)
+    with pytest.raises(ValueError, match='template must fit'):
+        normalized_cross_correlation_chunked(image, template)
+
+
+def test_ncc_chunked_rejects_zero_variance_template():
+    image = np.ones((10, 10), dtype=np.float64)
+    template = np.ones((4, 4), dtype=np.float64)
+    with pytest.raises(ValueError, match='non-zero variance'):
+        normalized_cross_correlation_chunked(image, template)
+
+
+# ---------------------------------------------------------------------------
+# run_auto_bead_search_process edge cases
+# ---------------------------------------------------------------------------
+
+def test_run_auto_bead_search_process_skips_non_tuple_messages():
+    request_queue: mp.Queue = mp.Queue()
+    result_queue: mp.Queue = mp.Queue()
+    active_request_id = mp.Value('q', 0)
+    release_request = mp.Event()
+
+    worker = mp.Process(
+        target=run_auto_bead_search_process,
+        args=(request_queue, result_queue, active_request_id, release_request),
+    )
+    worker.start()
+
+    request_queue.put(42)
+    time.sleep(0.1)
+    request_queue.put(('shutdown',))
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+
+
+def test_run_auto_bead_search_process_error_handler():
+    request_queue: mp.Queue = mp.Queue()
+    result_queue: mp.Queue = mp.Queue()
+    active_request_id = mp.Value('q', 0)
+
+    worker = mp.Process(
+        target=run_auto_bead_search_process,
+        args=(request_queue, result_queue, active_request_id),
+    )
+    worker.start()
+    time.sleep(0.1)
+
+    request_queue.put(('shutdown',))
+    worker.join(timeout=3.0)
+
+    assert not worker.is_alive()

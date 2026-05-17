@@ -1,9 +1,9 @@
 from importlib import resources
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import QApplication, QLabel, QProgressBar
 
-from magscope.startup_splash import _STARTUP_SPLASH_LOGO_SIZE, _build_startup_splash_window
+from magscope.startup_splash import _STARTUP_SPLASH_LOGO_SIZE, _build_startup_splash_window, _load_logo_pixmap
 
 
 def test_startup_splash_logo_is_packaged():
@@ -57,3 +57,45 @@ def test_startup_splash_uses_fixed_logical_logo_size(qtbot):
     )
     assert window.width() == target_size.width() + 30
     assert window.height() == target_size.height() + progress_bar.height() + 30
+
+
+def test_build_splash_window_is_frameless(qtbot):
+    window = _build_startup_splash_window()
+    qtbot.addWidget(window)
+
+    flags = window.windowFlags()
+    assert flags & Qt.WindowType.FramelessWindowHint
+    assert flags & Qt.WindowType.WindowStaysOnTopHint
+
+
+def test_build_splash_window_content_margins(qtbot):
+    window = _build_startup_splash_window()
+    qtbot.addWidget(window)
+
+    inner_widget = window.findChild(QLabel, "startupSplashLogo")
+    assert inner_widget is not None
+    parent_layout = inner_widget.parentWidget().layout()
+    if parent_layout:
+        margins = parent_layout.contentsMargins()
+        assert margins.left() >= 0
+
+
+def test_build_splash_window_white_background(qtbot):
+    window = _build_startup_splash_window()
+    qtbot.addWidget(window)
+
+    stylesheet = window.styleSheet()
+    assert 'white' in stylesheet or 'background' in stylesheet
+
+
+def test_load_logo_pixmap_returns_pixmap(qtbot):
+    pixmap = _load_logo_pixmap()
+    assert pixmap is not None
+    assert not pixmap.isNull()
+
+
+def test_load_logo_pixmap_has_correct_logical_size():
+    pixmap = _load_logo_pixmap()
+    expected = QSize(*_STARTUP_SPLASH_LOGO_SIZE)
+    assert abs(pixmap.size().width() - expected.width()) <= 3
+    assert abs(pixmap.size().height() - expected.height()) <= 3

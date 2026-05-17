@@ -17,11 +17,15 @@ from PyQt6.QtWidgets import QWidget
 
 from magscope.scripting import ScriptStatus
 from magscope.ui.controls import (
+    AcquisitionPanel,
+    BeadSelectionPanel,
     CameraPanel,
     HelpPanel,
-    StatusPanel,
     ScriptPanel,
+    StatusPanel,
     ZLUTPanel,
+    _LockActivityIndicator,
+    _LockNumberInput,
     _LockStatusBadge,
 )
 
@@ -272,3 +276,210 @@ def test_zlut_panel_format_number_none():
 
 def test_zlut_panel_format_number_zero_int():
     assert ZLUTPanel._format_number(0, suffix=" nm") == "0 nm"
+
+
+# ---------------------------------------------------------------------------
+# _LockActivityIndicator
+# ---------------------------------------------------------------------------
+
+def test_lock_activity_indicator_tick_increments_progress(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator._active = True
+    indicator._recalc_interval()
+    indicator._progress = 0
+    indicator._tick()
+    assert indicator._progress > 0
+
+
+def test_lock_activity_indicator_reset_zeros_progress_when_active(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator._active = True
+    indicator._progress = 50
+    indicator.reset()
+    assert indicator._progress == 0
+
+
+def test_lock_activity_indicator_reset_noop_when_inactive(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator._active = False
+    indicator._progress = 50
+    indicator.reset()
+    assert indicator._progress == 50
+
+
+def test_lock_activity_indicator_set_active_starts_timer(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator.set_active(True)
+    assert indicator._active is True
+    assert indicator._progress == 0
+    assert indicator._timer.isActive()
+
+
+def test_lock_activity_indicator_set_active_stops_timer(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator.set_active(True)
+    indicator.set_active(False)
+    assert indicator._active is False
+    assert not indicator._timer.isActive()
+    assert indicator._progress == 0
+
+
+def test_lock_activity_indicator_trigger_once_flash(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator.trigger_once_flash()
+    assert indicator._flash_mode is True
+    assert indicator._progress == indicator._MAXIMUM
+
+
+def test_lock_activity_indicator_set_cycle_duration(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator.set_cycle_duration(5.0)
+    assert indicator._cycle_seconds == 5.0
+
+
+def test_lock_activity_indicator_set_cycle_duration_clamps_min(qtbot):
+    indicator = _LockActivityIndicator()
+    qtbot.addWidget(indicator)
+    indicator.set_cycle_duration(0.0)
+    assert indicator._cycle_seconds == 0.1
+
+
+# ---------------------------------------------------------------------------
+# _LockNumberInput
+# ---------------------------------------------------------------------------
+
+def test_lock_number_input_int_creates_spinbox(qtbot):
+    widget = _LockNumberInput(
+        "Count", default=10, unit="beads", is_int=True, minimum=0, maximum=100,
+    )
+    qtbot.addWidget(widget)
+    from PyQt6.QtWidgets import QSpinBox
+    assert isinstance(widget.spinbox, QSpinBox)
+
+
+def test_lock_number_input_float_creates_double_spinbox(qtbot):
+    widget = _LockNumberInput(
+        "Gain", default=0.5, unit="", is_int=False, minimum=0.0, maximum=1.0, decimals=2,
+    )
+    qtbot.addWidget(widget)
+    from PyQt6.QtWidgets import QDoubleSpinBox
+    assert isinstance(widget.spinbox, QDoubleSpinBox)
+
+
+def test_lock_number_input_hides_unit_label(qtbot):
+    widget = _LockNumberInput(
+        "Count", default=0, unit="beads", is_int=True, minimum=0, maximum=100,
+        show_unit_label=False,
+    )
+    qtbot.addWidget(widget)
+    assert widget.unit_label.isHidden()
+
+
+def test_lock_number_input_min_max_propagated(qtbot):
+    widget = _LockNumberInput(
+        "Value", default=10, unit="", is_int=True, minimum=5, maximum=50,
+    )
+    qtbot.addWidget(widget)
+    assert widget.spinbox.minimum() == 5
+    assert widget.spinbox.maximum() == 50
+
+
+def test_lock_number_input_lineedit_property(qtbot):
+    widget = _LockNumberInput(
+        "Value", default=10, unit="", is_int=True, minimum=0, maximum=100,
+    )
+    qtbot.addWidget(widget)
+    lineedit = widget.lineedit
+    from PyQt6.QtWidgets import QLineEdit
+    assert isinstance(lineedit, QLineEdit)
+
+
+# ---------------------------------------------------------------------------
+# Panel search_targets and simple methods
+# ---------------------------------------------------------------------------
+
+def test_acquisition_panel_search_targets(qtbot):
+    from magscope.ui.search import PanelControlTarget
+    manager = SimpleNamespace(
+        _acquisition_on=False,
+        _acquisition_mode='Track',
+        _acquisition_dir_on=False,
+        _acquisition_dir='',
+        settings={'acquisition dir default': ''},
+        camera_type=SimpleNamespace(settings=[]),
+        send_ipc=lambda c: None,
+    )
+    panel = AcquisitionPanel(manager=manager)
+    qtbot.addWidget(panel)
+    targets = panel.search_targets()
+    assert isinstance(targets, list)
+    assert len(targets) > 0
+
+
+def test_bead_selection_panel_search_targets(qtbot):
+    from magscope.ui.search import PanelControlTarget
+    manager = SimpleNamespace(
+        settings={'ROI': 64},
+        bead_next_id=SimpleNamespace(value=1),
+        reset_bead_ids=lambda: None,
+        clear_beads=lambda: None,
+        send_ipc=lambda c: None,
+    )
+    panel = BeadSelectionPanel(manager=manager)
+    qtbot.addWidget(panel)
+    targets = panel.search_targets()
+    assert isinstance(targets, list)
+    assert len(targets) > 0
+
+
+def test_bead_selection_panel_update_next_bead_id_label(qtbot):
+    manager = SimpleNamespace(
+        settings={'ROI': 64},
+        bead_next_id=SimpleNamespace(value=1),
+        reset_bead_ids=lambda: None,
+        clear_beads=lambda: None,
+        send_ipc=lambda c: None,
+    )
+    panel = BeadSelectionPanel(manager=manager)
+    qtbot.addWidget(panel)
+    panel.update_next_bead_id_label(5)
+    assert "5" in panel.next_bead_id_label.text()
+
+
+def test_acquisition_panel_set_acquisition_dir_text_none(qtbot):
+    manager = SimpleNamespace(
+        _acquisition_on=False,
+        _acquisition_mode='Track',
+        _acquisition_dir_on=False,
+        _acquisition_dir='',
+        settings={'acquisition dir default': ''},
+        camera_type=SimpleNamespace(settings=[]),
+        send_ipc=lambda c: None,
+    )
+    panel = AcquisitionPanel(manager=manager)
+    qtbot.addWidget(panel)
+    panel.set_acquisition_dir_text(None)
+    assert panel.acquisition_dir_textedit.text() == AcquisitionPanel.NO_DIRECTORY_SELECTED_TEXT
+
+
+def test_acquisition_panel_set_acquisition_dir_text_path(qtbot):
+    manager = SimpleNamespace(
+        _acquisition_on=False,
+        _acquisition_mode='Track',
+        _acquisition_dir_on=False,
+        _acquisition_dir='',
+        settings={'acquisition dir default': ''},
+        camera_type=SimpleNamespace(settings=[]),
+        send_ipc=lambda c: None,
+    )
+    panel = AcquisitionPanel(manager=manager)
+    qtbot.addWidget(panel)
+    panel.set_acquisition_dir_text("/some/path")
+    assert "/some/path" in panel.acquisition_dir_textedit.text()
