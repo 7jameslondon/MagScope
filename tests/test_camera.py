@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 from types import SimpleNamespace
 
 import numpy as np
@@ -48,14 +49,17 @@ class ConcreteCamera(camera.CameraBase):
 class FakeManagedCamera:
     settings = ['framerate', 'gain']
 
-    def __init__(self, *, fail_on_set=False):
+    def __init__(self, *, fail_on_set=False, set_exception=None):
         self.values = {'framerate': '30', 'gain': '1'}
         self.fail_on_set = fail_on_set
+        self.set_exception = set_exception
         self.is_connected = False
         self.shared_values = None
         self.connected_buffer = None
         self.reset_called = False
         self.set_calls = []
+        self.fetch_calls = 0
+        self.release_calls = 0
 
     def reset_health_counters(self):
         self.reset_called = True
@@ -65,10 +69,10 @@ class FakeManagedCamera:
         self.is_connected = True
 
     def fetch(self):
-        pass
+        self.fetch_calls += 1
 
     def release(self):
-        pass
+        self.release_calls += 1
 
     def __getitem__(self, name):
         return self.values[name]
@@ -76,8 +80,52 @@ class FakeManagedCamera:
     def __setitem__(self, name, value):
         self.set_calls.append((name, value))
         if self.fail_on_set:
-            raise RuntimeError('rejected')
+            raise self.set_exception or RuntimeError('rejected')
         self.values[name] = value
+
+
+class FakeVideoBuffer:
+    def __init__(self, *, unread_stacks=0, n_images=2, n_total_stacks=5, raise_underflow=False):
+        self.unread_stacks = unread_stacks
+        self.n_images = n_images
+        self.n_total_images = n_images * n_total_stacks
+        self.stack_shape = (4, 4, n_images)
+        self.raise_underflow = raise_underflow
+        self.read_calls = 0
+
+    def get_level(self):
+        return (self.unread_stacks * self.n_images) / self.n_total_images
+
+    def get_unread_stack_count(self):
+        return self.unread_stacks
+
+    def read_stack_no_return(self):
+        self.read_calls += 1
+        if self.raise_underflow or self.unread_stacks <= 0:
+            raise camera.BufferUnderflow
+        self.unread_stacks -= 1
+
+
+class FakeWriteVideoBuffer:
+    def __init__(self):
+        self.writes = []
+
+    def write_image_and_timestamp(self, image, timestamp):
+        self.writes.append((image, timestamp))
+
+
+class TrackingLock:
+    def __init__(self):
+        self.enter_count = 0
+        self.exit_count = 0
+
+    def __enter__(self):
+        self.enter_count += 1
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.exit_count += 1
+        return False
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +139,8 @@ def clear_camera_manager_singleton():
 
 def fake_shared_values():
     return SimpleNamespace(
+        video_process_reserved_stacks=FakeValue(0),
+        video_process_completed_stacks=FakeValue(0),
         camera_total_frames=FakeValue(9),
         camera_consecutive_timeouts=FakeValue(4),
         camera_queue_full_events=FakeValue(3),
@@ -99,8 +149,14 @@ def fake_shared_values():
 
 
 def test_camera_base_rejects_invalid_dtype_bits_and_missing_framerate():
+    class IncompleteCamera(ConcreteCamera):
+        width = None
+
     class BadDtypeCamera(ConcreteCamera):
         dtype = np.float32
+
+    class BadBitsTypeCamera(ConcreteCamera):
+        bits = 8.0
 
     class BadBitsCamera(ConcreteCamera):
         bits = 16
@@ -108,8 +164,12 @@ def test_camera_base_rejects_invalid_dtype_bits_and_missing_framerate():
     class MissingFramerateCamera(ConcreteCamera):
         settings = ['gain']
 
+    with pytest.raises(NotImplementedError):
+        IncompleteCamera()
     with pytest.raises(ValueError, match='Invalid dtype'):
         BadDtypeCamera()
+    with pytest.raises(ValueError, match='Invalid bits'):
+        BadBitsTypeCamera()
     with pytest.raises(ValueError, match='Invalid bits'):
         BadBitsCamera()
     with pytest.raises(ValueError, match="'framerate' setting"):
@@ -154,6 +214,52 @@ def test_camera_base_health_counter_methods_allow_missing_shared_values():
     test_camera.report_frame_received(1.0)
 
 
+def test_camera_base_connect_sets_video_buffer_and_abstract_noops_are_callable():
+    test_camera = ConcreteCamera()
+    video_buffer = object()
+
+    test_camera.connect(video_buffer)
+    camera.CameraBase.fetch(test_camera)
+    camera.CameraBase.release(test_camera)
+
+    assert test_camera.video_buffer is video_buffer
+    assert test_camera.is_connected is True
+
+
+def test_camera_base_release_all_drains_camera_buffer_queue():
+    test_camera = ConcreteCamera()
+    test_camera.camera_buffers = queue.Queue()
+    test_camera.camera_buffers.put(object())
+    test_camera.camera_buffers.put(object())
+    release_calls = []
+
+    def release_one():
+        release_calls.append(test_camera.camera_buffers.get())
+
+    test_camera.release = release_one
+
+    test_camera.release_all()
+
+    assert len(release_calls) == 2
+    assert test_camera.camera_buffers.qsize() == 0
+
+
+def test_camera_base_del_suppresses_release_errors():
+    test_camera = ConcreteCamera()
+    test_camera.is_connected = True
+    test_camera.video_buffer = object()
+
+    def fail_release_all():
+        raise RuntimeError('release failed')
+
+    test_camera.release_all = fail_release_all
+
+    test_camera.__del__()
+
+    assert test_camera.video_buffer is None
+    test_camera.is_connected = False
+
+
 def test_camera_manager_setup_connects_camera_and_broadcasts_initial_settings():
     manager = camera.CameraManager()
     fake_camera = FakeManagedCamera()
@@ -176,6 +282,137 @@ def test_camera_manager_setup_connects_camera_and_broadcasts_initial_settings():
     ]
 
 
+def test_camera_manager_setup_warns_when_shared_values_missing():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+    manager.video_buffer = object()
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+
+    with pytest.warns(UserWarning, match='CameraManager has no shared_values'):
+        manager.setup()
+
+    assert manager.camera.is_connected is False
+    assert sent_commands == []
+
+
+def test_camera_manager_do_main_loop_releases_purges_and_fetches():
+    manager = camera.CameraManager()
+    fake_camera = FakeManagedCamera()
+    fake_camera.is_connected = True
+    sent_commands = []
+    calls = []
+
+    manager.camera = fake_camera
+    manager.video_buffer = SimpleNamespace(get_level=lambda: 0.95, n_total_images=10)
+    manager._acquisition_on = False
+    manager.send_ipc = sent_commands.append
+    manager._release_completed_pool_buffers = lambda: calls.append('completed')
+    manager._release_unattached_buffers = lambda: calls.append('unattached')
+    manager._purge_buffers = lambda: calls.append('purge') or 1
+
+    manager.do_main_loop()
+
+    assert calls == ['completed', 'unattached', 'purge']
+    assert fake_camera.fetch_calls == 1
+    assert len(sent_commands) == 1
+    assert sent_commands[0].__class__.__name__ == 'UpdateVideoBufferPurgeCommand'
+
+
+def test_camera_manager_release_unattached_buffers_releases_each_frame():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+    manager.shared_values = fake_shared_values()
+    manager.video_buffer = FakeVideoBuffer(unread_stacks=2, n_images=3)
+
+    manager._release_unattached_buffers()
+
+    assert manager.video_buffer.read_calls == 2
+    assert manager.camera.release_calls == 6
+    assert manager.video_buffer.unread_stacks == 0
+
+
+def test_camera_manager_purge_buffers_until_capacity_available():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+    manager.shared_values = fake_shared_values()
+    manager.video_buffer = FakeVideoBuffer(unread_stacks=4, n_images=2, n_total_stacks=5)
+
+    purged_stacks = manager._purge_buffers()
+
+    assert purged_stacks == 3
+    assert manager.video_buffer.read_calls == 3
+    assert manager.camera.release_calls == 6
+    assert manager.video_buffer.get_level() <= 0.3
+
+
+def test_camera_manager_release_completed_pool_buffers_releases_new_delta_only():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+    manager.shared_values = fake_shared_values()
+    manager.shared_values.video_process_completed_stacks.value = 5
+    manager.video_buffer = SimpleNamespace(stack_shape=(4, 4, 3))
+    manager._released_completed_stacks = 2
+
+    manager._release_completed_pool_buffers()
+
+    assert manager.camera.release_calls == 9
+    assert manager._released_completed_stacks == 5
+
+
+def test_camera_manager_take_unreserved_stack_respects_reservations_and_underflow():
+    manager = camera.CameraManager()
+    manager.shared_values = fake_shared_values()
+    manager.video_buffer = FakeVideoBuffer(unread_stacks=1)
+    manager.shared_values.video_process_reserved_stacks.value = 1
+
+    assert manager._take_unreserved_stack() is False
+    assert manager.video_buffer.read_calls == 0
+
+    manager.shared_values.video_process_reserved_stacks.value = 0
+    manager.video_buffer = FakeVideoBuffer(unread_stacks=1, raise_underflow=True)
+
+    assert manager._take_unreserved_stack() is False
+    assert manager.video_buffer.read_calls == 1
+
+
+def test_camera_manager_stack_coordination_lock_uses_named_lock_when_available():
+    manager = camera.CameraManager()
+    lock = TrackingLock()
+    manager.locks = {'VideoProcessingReservation': lock}
+
+    with manager._stack_coordination_lock() as returned_lock:
+        assert returned_lock is lock
+
+    assert lock.enter_count == 1
+    assert lock.exit_count == 1
+
+    manager.locks = None
+    with manager._stack_coordination_lock() as returned_lock:
+        assert returned_lock is None
+
+
+def test_camera_manager_buffer_helpers_noop_without_available_work():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+    manager.shared_values = fake_shared_values()
+    manager.video_buffer = None
+
+    manager._release_unattached_buffers()
+    manager._release_completed_pool_buffers()
+
+    assert manager._purge_buffers() == 0
+    assert manager._take_unreserved_stack() is False
+
+    manager.video_buffer = FakeVideoBuffer(unread_stacks=0)
+    assert manager._purge_buffers() == 0
+
+    manager.video_buffer = SimpleNamespace(stack_shape=(4, 4, 2))
+    manager.shared_values.video_process_completed_stacks.value = 0
+    manager._release_completed_pool_buffers()
+    assert manager.camera.release_calls == 0
+
+
 def test_camera_manager_set_camera_setting_warns_and_rebroadcasts_on_error():
     manager = camera.CameraManager()
     fake_camera = FakeManagedCamera(fail_on_set=True)
@@ -192,6 +429,184 @@ def test_camera_manager_set_camera_setting_warns_and_rebroadcasts_on_error():
         UpdateCameraSettingCommand(name='framerate', value='30'),
         UpdateCameraSettingCommand(name='gain', value='1'),
     ]
+
+
+def test_camera_manager_set_camera_setting_uses_repr_for_empty_error_message():
+    manager = camera.CameraManager()
+    fake_camera = FakeManagedCamera(fail_on_set=True, set_exception=RuntimeError())
+    sent_commands = []
+    manager.camera = fake_camera
+    manager.send_ipc = sent_commands.append
+
+    with pytest.warns(UserWarning, match=r'Could not set camera setting gain to 5: RuntimeError\(\)'):
+        manager.set_camera_setting('gain', '5')
+
+    assert sent_commands == [
+        UpdateCameraSettingCommand(name='framerate', value='30'),
+        UpdateCameraSettingCommand(name='gain', value='1'),
+    ]
+
+
+def test_camera_manager_set_simulated_focus_ignores_non_bead_camera():
+    manager = camera.CameraManager()
+    manager.camera = FakeManagedCamera()
+
+    manager.set_simulated_focus(10.0)
+
+
+def test_camera_manager_set_simulated_focus_updates_bead_camera(monkeypatch):
+    manager = camera.CameraManager()
+    bead_camera = camera.DummyCameraBeads()
+    calls = []
+    manager.camera = bead_camera
+    monkeypatch.setattr(bead_camera, 'set_focus_offset', calls.append)
+
+    manager.set_simulated_focus(12.5)
+
+    assert calls == [12.5]
+
+
+def test_camera_manager_set_simulated_focus_warns_on_error(monkeypatch):
+    manager = camera.CameraManager()
+    bead_camera = camera.DummyCameraBeads()
+    manager.camera = bead_camera
+
+    def fail_focus(offset):
+        raise ValueError('bad focus')
+
+    monkeypatch.setattr(bead_camera, 'set_focus_offset', fail_focus)
+
+    with pytest.warns(UserWarning, match='Could not update simulated focus to 12.5: bad focus'):
+        manager.set_simulated_focus(12.5)
+
+
+def test_dummy_camera_noise_connect_fetch_and_release(monkeypatch):
+    noise_camera = camera.DummyCameraNoise()
+    noise_camera.width = 2
+    noise_camera.height = 2
+    noise_camera.fake_settings['framerate'] = 10.0
+    noise_camera.fake_settings['exposure'] = 1.0
+    noise_camera.fake_settings['gain'] = 0.0
+    video_buffer = FakeWriteVideoBuffer()
+
+    noise_camera.connect(video_buffer)
+
+    assert noise_camera.is_connected is True
+    assert noise_camera.video_buffer is video_buffer
+
+    noise_camera.last_time = 1.0
+    monkeypatch.setattr(camera, 'time', lambda: 1.05)
+    noise_camera.fetch()
+    assert video_buffer.writes == []
+
+    noise_camera.last_time = 0.0
+    noise_camera.est_fps_time = 0.0
+    monkeypatch.setattr(camera, 'time', lambda: 1.25)
+    noise_camera.fetch()
+    image_bytes, timestamp = video_buffer.writes[0]
+
+    assert timestamp == 1.25
+    assert len(image_bytes) == 4
+    assert noise_camera.est_fps_time == 1.25
+    assert noise_camera.est_fps_count == 0
+    noise_camera.release()
+
+
+def test_dummy_camera_noise_get_setting_rounds_values():
+    noise_camera = camera.DummyCameraNoise()
+    noise_camera.est_fps = 12.6
+    noise_camera.fake_settings['exposure'] = 300.6
+    noise_camera.fake_settings['gain'] = 2.0
+
+    assert noise_camera.get_setting('framerate') == '13'
+    assert noise_camera.get_setting('exposure') == '301'
+    assert noise_camera.get_setting('gain') == '2'
+
+
+def test_dummy_camera_fast_noise_connect_fetch_and_release(monkeypatch):
+    fast_camera = camera.DummyCameraFastNoise()
+    fast_camera.width = 2
+    fast_camera.height = 2
+    fast_camera.fake_images_n = 2
+    fast_camera.fake_settings['framerate'] = 10.0
+    fast_camera.fake_settings['exposure'] = 1.0
+    fast_camera.fake_settings['gain'] = 0.0
+    video_buffer = FakeWriteVideoBuffer()
+
+    def fake_rand(height, width, n_images):
+        return np.linspace(0.1, 0.8, height * width * n_images).reshape(height, width, n_images)
+
+    monkeypatch.setattr(camera.np.random, 'rand', fake_rand)
+    fast_camera.connect(video_buffer)
+
+    assert fast_camera.is_connected is True
+    assert fast_camera.video_buffer is video_buffer
+    assert fast_camera.fake_images is not None
+
+    fast_camera.last_time = 0.0
+    fast_camera.est_fps_time = 0.0
+    monkeypatch.setattr(camera, 'time', lambda: 1.25)
+    fast_camera.fetch()
+    image_bytes, timestamp = video_buffer.writes[0]
+
+    assert timestamp == 1.25
+    assert len(image_bytes) == 4
+    assert fast_camera.est_fps_time == 1.25
+    assert fast_camera.est_fps_count == 0
+    fast_camera.release()
+
+
+def test_dummy_camera_fast_noise_fetch_returns_before_frame_interval(monkeypatch):
+    fast_camera = camera.DummyCameraFastNoise()
+    fast_camera.fake_settings['framerate'] = 10.0
+    fast_camera.video_buffer = FakeWriteVideoBuffer()
+    fast_camera.last_time = 1.0
+    monkeypatch.setattr(camera, 'time', lambda: 1.05)
+
+    fast_camera.fetch()
+
+    assert fast_camera.video_buffer.writes == []
+
+
+def test_dummy_camera_fast_noise_get_setting_rounds_values():
+    fast_camera = camera.DummyCameraFastNoise()
+    fast_camera.est_fps = 19.7
+    fast_camera.fake_settings['exposure'] = 123.4
+    fast_camera.fake_settings['gain'] = 4.0
+
+    assert fast_camera.get_setting('framerate') == '20'
+    assert fast_camera.get_setting('exposure') == '123'
+    assert fast_camera.get_setting('gain') == '4'
+
+
+@pytest.mark.parametrize(
+    ('name', 'value'),
+    [
+        ('framerate', '0'),
+        ('framerate', '10001'),
+        ('exposure', '-1'),
+        ('exposure', '10000001'),
+        ('gain', '-1'),
+        ('gain', '11'),
+    ],
+)
+def test_dummy_camera_fast_noise_rejects_invalid_setting_ranges(name, value):
+    fast_camera = camera.DummyCameraFastNoise()
+
+    with pytest.raises(ValueError):
+        fast_camera.set_setting(name, value)
+
+
+def test_dummy_camera_fast_noise_accepts_valid_setting_values():
+    fast_camera = camera.DummyCameraFastNoise()
+
+    fast_camera.set_setting('framerate', '120.5')
+    fast_camera.set_setting('exposure', '300')
+    fast_camera.set_setting('gain', '2')
+
+    assert fast_camera.fake_settings['framerate'] == 120.5
+    assert fast_camera.fake_settings['exposure'] == 300.0
+    assert fast_camera.fake_settings['gain'] == 2
 
 
 @pytest.mark.parametrize(
@@ -249,6 +664,55 @@ def test_dummy_camera_fast_noise_cycles_cached_frame_bytes(monkeypatch):
     assert fast_camera.fake_image_index == 1
 
 
+def test_dummy_camera_beads_connect_fetch_and_release(monkeypatch):
+    current_time = [0.0]
+
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        image = np.linspace(0.2, 0.8, size_px * size_px, dtype=np.float32).reshape(size_px, size_px)
+        return image[:, :, None]
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    monkeypatch.setattr(camera, 'time', lambda: current_time[0])
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera.width = 12
+    bead_camera.height = 10
+    bead_camera._bead_size_px = 4
+    bead_camera._edge_margin_px = 2.0
+    bead_camera._min_sep_px = 1.0
+    bead_camera._settings.update({
+        'fixed_n': 1,
+        'tethered_n': 1,
+        'framerate': 2.0,
+        'gain': 1000.0,
+        'seed': 7,
+    })
+    bead_camera.shared_values = fake_shared_values()
+    video_buffer = FakeWriteVideoBuffer()
+
+    bead_camera.connect(video_buffer)
+
+    assert bead_camera.is_connected is True
+    assert bead_camera.video_buffer is video_buffer
+    assert bead_camera._centers_fixed.shape == (1, 2)
+    assert bead_camera._centers_teth.shape == (1, 2)
+    assert bead_camera._z.shape == (1,)
+
+    current_time[0] = 0.25
+    bead_camera.fetch()
+    assert video_buffer.writes == []
+
+    current_time[0] = 1.0
+    bead_camera.fetch()
+    image_bytes, timestamp = video_buffer.writes[0]
+    image = np.frombuffer(image_bytes, dtype=np.uint8).reshape(bead_camera.height, bead_camera.width)
+
+    assert timestamp == 1.0
+    assert image.shape == (10, 12)
+    assert bead_camera.last_time == 1.0
+    assert bead_camera.shared_values.camera_total_frames.value == 10
+    bead_camera.release()
+
+
 def test_dummy_camera_beads_seed_setting_reinitializes_state_deterministically(monkeypatch):
     def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
         return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
@@ -284,6 +748,42 @@ def test_dummy_camera_beads_rejects_invalid_setting_ranges(name, value, message)
 
     with pytest.raises(ValueError, match=message):
         bead_camera.set_setting(name, value)
+
+
+def test_dummy_camera_beads_accepts_framerate_counts_and_unknown_setting(monkeypatch):
+    def fake_simulate_beads(xyz, *, nm_per_px, size_px, radius_nm):
+        return np.full((size_px, size_px, 1), 0.5, dtype=np.float32)
+
+    monkeypatch.setattr(camera, 'simulate_beads', fake_simulate_beads)
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera._min_sep_px = 1.0
+
+    bead_camera.set_setting('framerate', '60')
+    bead_camera.set_setting('fixed_n', '1')
+    bead_camera.set_setting('tethered_n', '2')
+
+    assert bead_camera._settings['framerate'] == 60.0
+    assert bead_camera._settings['fixed_n'] == 1
+    assert bead_camera._settings['tethered_n'] == 2
+    assert bead_camera._centers_fixed.shape == (1, 2)
+    assert bead_camera._xy.shape == (2, 2)
+    with pytest.raises(KeyError, match='Unknown setting missing'):
+        bead_camera.set_setting('missing', '1')
+
+
+def test_dummy_camera_beads_declared_but_unhandled_setting_raises_keyerror():
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera.settings = [*bead_camera.settings, 'declared_only']
+
+    with pytest.raises(KeyError, match='Unknown setting declared_only'):
+        bead_camera.set_setting('declared_only', '1')
+
+
+def test_dummy_camera_beads_get_setting_rounds_estimated_framerate():
+    bead_camera = camera.DummyCameraBeads()
+    bead_camera.est_fps = 29.6
+
+    assert bead_camera.get_setting('framerate') == '30'
 
 
 # ---------------------------------------------------------------------------

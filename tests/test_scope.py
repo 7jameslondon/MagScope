@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import importlib
+import logging
 from pathlib import Path
 import sys
 import types
@@ -8,7 +9,7 @@ import numpy as np
 import pytest
 
 from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
-from magscope.ipc_commands import Command, QuitCommand, StartupReadyCommand
+from magscope.ipc_commands import Command, QuitCommand, SetSettingsCommand, StartupReadyCommand
 
 
 class DummyEvent:
@@ -45,6 +46,11 @@ class DummyProcess:
         return self._alive
 
 
+class ValueBox:
+    def __init__(self, value):
+        self.value = value
+
+
 def load_scope_with_stubs(monkeypatch):
     repo_root = Path(__file__).resolve().parents[1]
 
@@ -54,11 +60,15 @@ def load_scope_with_stubs(monkeypatch):
 
     class StubLogger:
         def __init__(self):
+            self.debug_calls = []
             self.info_calls = []
             self.warning_calls = []
 
         def isEnabledFor(self, _level):
             return True
+
+        def debug(self, *args, **kwargs):
+            self.debug_calls.append((args, kwargs))
 
         def info(self, *args, **kwargs):
             self.info_calls.append((args, kwargs))
@@ -783,3 +793,682 @@ def test_print_script_commands_property_setter_guard(scope_module, monkeypatch):
     scope._running = False
     scope.print_script_commands = True
     assert scope._print_script_commands is True
+
+
+def test_print_command_property_getters(scope_module):
+    scope = make_scope(scope_module)
+
+    scope._print_ipc_commands = True
+    scope._print_script_commands = True
+
+    assert scope.print_ipc_commands is True
+    assert scope.print_script_commands is True
+
+
+def test_settings_property_getter_returns_current_settings(scope_module):
+    scope = make_scope(scope_module)
+
+    assert scope.settings is scope._settings
+
+
+def test_settings_setter_saves_without_broadcast_when_not_running(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = False
+    saved = []
+    broadcasted = []
+
+    monkeypatch.setattr(
+        scope_module.MagScopeSettings,
+        "save_to_qsettings",
+        lambda settings: saved.append(settings),
+    )
+    monkeypatch.setattr(scope, "_handle_broadcast_command", broadcasted.append)
+
+    scope.settings = {"ROI": 64}
+
+    assert scope.settings["ROI"] == 64
+    assert saved == [scope.settings]
+    assert broadcasted == []
+
+
+def test_settings_setter_broadcasts_when_running(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    broadcasted = []
+
+    monkeypatch.setattr(scope_module.MagScopeSettings, "save_to_qsettings", lambda _settings: None)
+    monkeypatch.setattr(scope, "_handle_broadcast_command", broadcasted.append)
+
+    scope.settings = {"ROI": 80}
+
+    assert len(broadcasted) == 1
+    assert isinstance(broadcasted[0], SetSettingsCommand)
+    assert broadcasted[0].settings["ROI"] == 80
+
+
+def test_update_settings_broadcasts_set_settings_command(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    broadcasted = []
+
+    monkeypatch.setattr(scope_module.MagScopeSettings, "save_to_qsettings", lambda _settings: None)
+    monkeypatch.setattr(scope, "_handle_broadcast_command", broadcasted.append)
+
+    scope.update_settings({"ROI": 96})
+
+    assert len(broadcasted) == 1
+    assert isinstance(broadcasted[0], SetSettingsCommand)
+    assert broadcasted[0].settings["ROI"] == 96
+
+
+def test_handle_broadcast_set_settings_command_updates_local_settings(scope_module):
+    scope = make_scope(scope_module)
+
+    class SettingsOwner:
+        def set_settings(self, settings) -> None:
+            pass
+
+    scope.command_registry.register(
+        command_type=SetSettingsCommand,
+        handler="set_settings",
+        owner=SettingsOwner,
+        delivery=Delivery.BROADCAST,
+        target="ManagerProcessBase",
+    )
+    settings = scope_module.MagScopeSettings({"ROI": 64})
+
+    should_break = scope._handle_broadcast_command(SetSettingsCommand(settings=settings))
+
+    assert should_break is False
+    assert scope.settings["ROI"] == 64
+    assert scope.settings is not settings
+
+
+def test_route_command_unknown_pipe_warns(scope_module):
+    scope = make_scope(scope_module)
+
+    @dataclass(frozen=True)
+    class DirectCommand(Command):
+        pass
+
+    class Owner:
+        def handle_direct(self) -> None:
+            pass
+
+    scope.command_registry.register(
+        command_type=DirectCommand,
+        handler="handle_direct",
+        owner=Owner,
+        delivery=Delivery.DIRECT,
+        target="missing",
+    )
+
+    with pytest.warns(UserWarning, match="Unknown pipe missing"):
+        routed = scope._route_command(DirectCommand())
+
+    assert routed is False
+
+
+def test_process_command_delegates_to_route_command(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    command = QuitCommand()
+    routed = []
+
+    monkeypatch.setattr(scope, "_route_command", lambda command: routed.append(command) or True)
+
+    assert scope._process_command(command) is True
+    assert routed == [command]
+
+
+def test_receive_ipc_idles_when_no_command(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.pipes = {"worker": DummyPipe(messages=[])}
+    health_checks = []
+    idle_sleeps = []
+
+    monkeypatch.setattr(scope, "_check_startup_splash_timeout", lambda: None)
+    monkeypatch.setattr(scope, "_log_camera_health_if_due", lambda: health_checks.append(True))
+    monkeypatch.setattr(scope, "_sleep_when_idle", lambda: idle_sleeps.append(True))
+
+    scope.receive_ipc()
+
+    assert health_checks == [True]
+    assert idle_sleeps == [True]
+
+
+def test_receive_ipc_breaks_after_processed_command_requests_stop(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    first_command = QuitCommand()
+    second_command = QuitCommand()
+    scope.pipes = {
+        "first": DummyPipe(messages=[first_command]),
+        "second": DummyPipe(messages=[second_command]),
+    }
+    processed = []
+
+    monkeypatch.setattr(scope, "_check_startup_splash_timeout", lambda: None)
+    monkeypatch.setattr(scope, "_log_camera_health_if_due", lambda: None)
+    monkeypatch.setattr(scope, "_process_command", lambda command: processed.append(command) or True)
+
+    scope.receive_ipc()
+
+    assert processed == [first_command]
+
+
+def test_start_startup_splash_launches_process(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    close_event = DummyEvent()
+    created_processes = []
+
+    def run_startup_splash(_close_event):
+        pass
+
+    splash_module = types.ModuleType("magscope.startup_splash")
+    splash_module.run_startup_splash = run_startup_splash
+    monkeypatch.setitem(sys.modules, "magscope.startup_splash", splash_module)
+
+    class FakeProcess:
+        def __init__(self, *, target, args, name):
+            self.target = target
+            self.args = args
+            self.name = name
+            self.started = False
+            created_processes.append(self)
+
+        def start(self):
+            self.started = True
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(scope_module, "Event", lambda: close_event)
+    monkeypatch.setattr(scope_module, "Process", FakeProcess)
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 100.0)
+    scope._startup_splash_timeout_seconds = 12.5
+
+    scope._start_startup_splash()
+
+    assert len(created_processes) == 1
+    assert created_processes[0].target is run_startup_splash
+    assert created_processes[0].args == (close_event,)
+    assert created_processes[0].name == "MagScopeStartupSplash"
+    assert created_processes[0].started is True
+    assert scope._startup_splash_deadline == 112.5
+    assert scope._startup_splash_close_event is close_event
+    assert scope._startup_splash_process is created_processes[0]
+    assert scope._startup_splash_waiting_for_ui_ready is True
+
+
+def test_start_startup_splash_skips_when_existing_process_alive(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    splash_module = types.ModuleType("magscope.startup_splash")
+    splash_module.run_startup_splash = lambda _close_event: None
+    monkeypatch.setitem(sys.modules, "magscope.startup_splash", splash_module)
+
+    class AliveProcess:
+        def is_alive(self):
+            return True
+
+    existing_process = AliveProcess()
+    scope._startup_splash_process = existing_process
+    monkeypatch.setattr(
+        scope_module,
+        "Process",
+        lambda *args, **kwargs: pytest.fail("startup splash process should not be recreated"),
+    )
+
+    scope._start_startup_splash()
+
+    assert scope._startup_splash_process is existing_process
+
+
+def test_stop_startup_splash_terminates_after_join_timeout(scope_module):
+    scope = make_scope(scope_module)
+    close_event = DummyEvent()
+
+    class SlowProcess:
+        def __init__(self):
+            self.alive = True
+            self.join_timeouts = []
+            self.terminated = False
+
+        def join(self, timeout=None):
+            self.join_timeouts.append(timeout)
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            self.terminated = True
+            self.alive = False
+
+    process = SlowProcess()
+    scope._startup_splash_close_event = close_event
+    scope._startup_splash_process = process
+    scope._startup_splash_deadline = 123.0
+    scope._startup_splash_waiting_for_ui_ready = True
+
+    scope._stop_startup_splash()
+
+    assert close_event.is_set()
+    assert process.terminated is True
+    assert process.join_timeouts == [5, 1]
+    assert scope._startup_splash_deadline is None
+    assert scope._startup_splash_close_event is None
+    assert scope._startup_splash_process is None
+    assert scope._startup_splash_waiting_for_ui_ready is False
+
+
+def test_dismiss_startup_splash_noop_when_not_pending(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._startup_splash_waiting_for_ui_ready = False
+
+    monkeypatch.setattr(
+        scope,
+        "_stop_startup_splash",
+        lambda: pytest.fail("splash should not be stopped when it is not pending"),
+    )
+
+    scope._dismiss_startup_splash_if_pending()
+
+
+def test_check_startup_splash_timeout_waits_before_deadline(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    dismissed = []
+    scope._startup_splash_waiting_for_ui_ready = True
+    scope._startup_splash_deadline = 20.0
+
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(scope, "_dismiss_startup_splash_if_pending", lambda: dismissed.append(True))
+
+    scope._check_startup_splash_timeout()
+
+    assert dismissed == []
+    assert scope._startup_splash_deadline == 20.0
+
+
+def test_log_camera_health_skips_when_logger_disabled(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.video_buffer = object()
+    seen_levels = []
+
+    monkeypatch.setattr(scope_module.logger, "isEnabledFor", lambda level: seen_levels.append(level) or False)
+    monkeypatch.setattr(
+        scope,
+        "_reset_camera_health_logging_state",
+        lambda: pytest.fail("camera health state should not reset when logging is disabled"),
+    )
+
+    scope._log_camera_health_if_due()
+
+    assert seen_levels == [logging.INFO]
+
+
+def test_log_camera_health_resets_when_state_uninitialized(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.video_buffer = object()
+    resets = []
+
+    monkeypatch.setattr(scope_module.logger, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(scope, "_reset_camera_health_logging_state", lambda: resets.append(True))
+
+    scope._next_camera_health_log_deadline = None
+    scope._last_camera_health_sample_time = None
+
+    scope._log_camera_health_if_due()
+
+    assert resets == [True]
+
+
+def test_log_camera_health_skips_before_deadline(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.video_buffer = object()
+    scope._next_camera_health_log_deadline = 20.0
+    scope._last_camera_health_sample_time = 10.0
+    scope_module.logger.info_calls.clear()
+
+    monkeypatch.setattr(scope_module.logger, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 15.0)
+
+    scope._log_camera_health_if_due()
+
+    assert scope_module.logger.info_calls == []
+
+
+def test_log_camera_health_logs_summary_since_last_frame(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.shared_values = types.SimpleNamespace(
+        camera_total_frames=ValueBox(70),
+        camera_last_frame_timestamp=ValueBox(990.0),
+        camera_consecutive_timeouts=ValueBox(3),
+        camera_queue_full_events=ValueBox(4),
+    )
+    scope.video_buffer = types.SimpleNamespace(get_level=lambda: 0.25)
+    scope._last_camera_health_sample_time = 100.0
+    scope._last_camera_health_frame_count = 10
+    scope._next_camera_health_log_deadline = 150.0
+    scope._camera_health_log_interval_seconds = 60.0
+    scope_module.logger.info_calls.clear()
+
+    monkeypatch.setattr(scope_module.logger, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 160.0)
+    monkeypatch.setattr(scope_module.time, "time", lambda: 1000.0)
+
+    scope._log_camera_health_if_due()
+
+    args, kwargs = scope_module.logger.info_calls[-1]
+    assert args[0].startswith("Camera health")
+    assert args[1] == pytest.approx(1.0)
+    assert args[2] == 70
+    assert args[3] == "10.00s since last frame"
+    assert args[4] == 3
+    assert args[5] == 4
+    assert args[6] == pytest.approx(25.0)
+    assert kwargs == {}
+    assert scope._last_camera_health_sample_time == 160.0
+    assert scope._last_camera_health_frame_count == 70
+    assert scope._next_camera_health_log_deadline == 220.0
+
+
+def test_log_camera_health_logs_when_no_frames_received(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.shared_values = types.SimpleNamespace(
+        camera_total_frames=ValueBox(0),
+        camera_last_frame_timestamp=ValueBox(0.0),
+        camera_consecutive_timeouts=ValueBox(0),
+        camera_queue_full_events=ValueBox(0),
+    )
+    scope.video_buffer = types.SimpleNamespace(get_level=lambda: 0.0)
+    scope._last_camera_health_sample_time = 10.0
+    scope._last_camera_health_frame_count = 0
+    scope._next_camera_health_log_deadline = 20.0
+    scope_module.logger.info_calls.clear()
+
+    monkeypatch.setattr(scope_module.logger, "isEnabledFor", lambda _level: True)
+    monkeypatch.setattr(scope_module.time, "monotonic", lambda: 20.0)
+
+    scope._log_camera_health_if_due()
+
+    args, _kwargs = scope_module.logger.info_calls[-1]
+    assert args[3] == "no frames received yet"
+
+
+def test_drain_child_pipes_after_quit_drains_alive_non_quitting_processes(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    live_pipe = DummyPipe()
+    dead_pipe = DummyPipe()
+    quitting_pipe = DummyPipe()
+    live_event = DummyEvent()
+    dead_event = DummyEvent()
+    quitting_event = DummyEvent(set_flag=True)
+    drained = []
+
+    scope.pipes = {"live": live_pipe, "dead": dead_pipe, "quitting": quitting_pipe}
+    scope.processes = {
+        "live": DummyProcess(alive=True),
+        "dead": DummyProcess(alive=False),
+        "quitting": DummyProcess(alive=True),
+    }
+    scope.quitting_events = {
+        "live": live_event,
+        "dead": dead_event,
+        "quitting": quitting_event,
+    }
+    monkeypatch.setattr(
+        scope_module,
+        "drain_pipe_until_quit",
+        lambda pipe, event: drained.append((pipe, event)),
+    )
+
+    scope._drain_child_pipes_after_quit()
+
+    assert drained == [(live_pipe, live_event)]
+
+
+def test_add_hardware_registers_plain_hardware(scope_module):
+    scope = make_scope(scope_module)
+    hardware = scope_module.HardwareManagerBase()
+    hardware.name = "PlainHardware"
+
+    scope.add_hardware(hardware)
+
+    assert scope._hardware == {"PlainHardware": hardware}
+    assert QuitCommand in scope.command_registry.handlers_for_target("PlainHardware")
+
+
+def test_create_shared_buffers_creates_hardware_buffers(scope_module):
+    scope = make_scope(scope_module)
+    hardware = scope_module.HardwareManagerBase()
+    hardware.name = "DemoHardware"
+    hardware.buffer_shape = (2, 3)
+    scope._hardware = {hardware.name: hardware}
+
+    scope._setup_locks()
+    scope._create_shared_buffers()
+
+    hardware_buffer = scope._hardware_buffers["DemoHardware"]
+    assert hardware_buffer.kwargs["name"] == "DemoHardware"
+    assert hardware_buffer.kwargs["shape"] == (2, 3)
+
+
+def test_setup_pipes_stores_parent_ends(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    parent_ends = {"worker": DummyPipe()}
+    child_ends = {"worker": DummyPipe()}
+
+    monkeypatch.setattr(scope_module, "create_pipes", lambda processes: (parent_ends, child_ends))
+    scope.processes = {"worker": object()}
+
+    assert scope._setup_pipes() is child_ends
+    assert scope.pipes is parent_ends
+
+
+def test_setup_shared_resources_runs_configuration_then_buffer_creation(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    calls = []
+
+    monkeypatch.setattr(scope, "_configure_processes_with_shared_resources", lambda: calls.append("configure"))
+    monkeypatch.setattr(scope, "_create_shared_buffers", lambda: calls.append("buffers"))
+
+    scope._setup_shared_resources()
+
+    assert calls == ["configure", "buffers"]
+
+
+def test_configure_processes_assigns_shared_resources(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    hardware = scope_module.HardwareManagerBase()
+    hardware.name = "DemoHardware"
+    scope._hardware = {hardware.name: hardware}
+    child_pipe = DummyPipe()
+
+    class RecordingProcess:
+        name = "worker"
+
+        def __init__(self):
+            self._quitting = DummyEvent()
+            self.kwargs = None
+
+        @property
+        def quitting_event(self):
+            return self._quitting
+
+        def configure_shared_resources(self, **kwargs):
+            self.kwargs = kwargs
+            self._quitting = kwargs["quitting_event"]
+
+    process = RecordingProcess()
+    scope.processes = {process.name: process}
+    monkeypatch.setattr(scope, "_setup_pipes", lambda: {process.name: child_pipe})
+    monkeypatch.setattr(scope, "_setup_locks", lambda: scope.locks.update({"VideoBuffer": object()}))
+
+    scope._configure_processes_with_shared_resources()
+
+    kwargs = process.kwargs
+
+    assert kwargs["camera_type"] is type(scope.camera_manager.camera)
+    assert kwargs["hardware_types"] == {"DemoHardware": type(hardware)}
+    assert kwargs["quitting_event"] is scope._quitting
+    assert kwargs["settings"] is not scope.settings
+    assert kwargs["settings"]["ROI"] == scope.settings["ROI"]
+    assert kwargs["shared_values"] is scope.shared_values
+    assert kwargs["locks"] is scope.locks
+    assert kwargs["pipe_end"] is child_pipe
+    assert kwargs["command_registry"] is scope.command_registry
+    assert scope.quitting_events == {process.name: scope._quitting}
+
+
+def test_register_script_methods_registers_base_and_processes(scope_module):
+    scope = make_scope(scope_module)
+    scope.processes = {
+        "CameraManager": scope.camera_manager,
+        "UIManager": scope.ui_manager,
+    }
+    scope.script_manager.script_registry.registered.clear()
+
+    scope._register_script_methods()
+
+    assert scope.script_manager.script_registry.registered == [
+        scope_module.ManagerProcessBase,
+        scope.camera_manager,
+        scope.ui_manager,
+    ]
+
+
+def test_print_registered_commands_outputs_registered_handlers(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    scope.print_registered_commands()
+
+    output = capsys.readouterr().out
+    assert "MagScope:" in output
+    assert "StartupReadyCommand -> MAG_SCOPE to MagScope via startup_ready" in output
+    assert "QuitCommand -> BROADCAST to BROADCAST via quit" in output
+
+
+def test_print_registered_script_commands_outputs_registered_methods(scope_module, capsys):
+    scope = make_scope(scope_module)
+
+    @dataclass(frozen=True)
+    class ExampleScriptCommand(Command):
+        pass
+
+    scope.script_manager.script_registry._methods = {
+        ExampleScriptCommand: types.SimpleNamespace(cls_name="Worker", meth_name="run"),
+    }
+
+    scope.print_registered_script_commands()
+
+    output = capsys.readouterr().out
+    assert "Script commands:" in output
+    assert "ExampleScriptCommand -> Worker.run" in output
+
+
+def test_initialize_shared_state_runs_setup_steps(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    calls = []
+
+    monkeypatch.setattr(scope_module, "freeze_support", lambda: calls.append("freeze"))
+    monkeypatch.setattr(scope, "_setup_command_registry", lambda: calls.append("registry"))
+    monkeypatch.setattr(scope, "_setup_shared_resources", lambda: calls.append("resources"))
+    monkeypatch.setattr(scope, "_register_script_methods", lambda: calls.append("scripts"))
+
+    scope._initialize_shared_state()
+
+    assert calls == ["freeze", "registry", "resources", "scripts"]
+
+
+def test_start_managers_starts_each_process(scope_module):
+    scope = make_scope(scope_module)
+    scope.processes = {
+        "CameraManager": scope.camera_manager,
+        "UIManager": scope.ui_manager,
+    }
+
+    scope._start_managers()
+
+    assert scope.camera_manager.start_called is True
+    assert scope.ui_manager.start_called is True
+
+
+def test_main_ipc_loop_resets_health_and_receives_until_stopped(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope._running = True
+    calls = []
+
+    monkeypatch.setattr(scope, "_reset_camera_health_logging_state", lambda: calls.append("reset"))
+
+    def receive_once():
+        calls.append("receive")
+        scope._running = False
+
+    monkeypatch.setattr(scope, "receive_ipc", receive_once)
+
+    scope._main_ipc_loop()
+    assert calls == ["reset", "receive"]
+
+
+def test_join_processes_joins_each_process_and_logs(scope_module):
+    scope = make_scope(scope_module)
+    scope.processes = {
+        "CameraManager": scope.camera_manager,
+        "UIManager": scope.ui_manager,
+    }
+    scope_module.logger.info_calls.clear()
+
+    scope._join_processes()
+    assert scope.camera_manager.join_called is True
+    assert scope.ui_manager.join_called is True
+    assert (("%s ended.", "CameraManager"), {}) in scope_module.logger.info_calls
+    assert (("%s ended.", "UIManager"), {}) in scope_module.logger.info_calls
+
+
+def test_start_returns_in_child_process(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+
+    monkeypatch.setattr(scope_module, "freeze_support", lambda: None)
+    monkeypatch.setattr(scope_module, "current_process", lambda: types.SimpleNamespace(name="SpawnProcess-1"))
+    monkeypatch.setattr(
+        scope,
+        "_ensure_not_terminated",
+        lambda: pytest.fail("child-process guard should return before startup checks"),
+    )
+
+    scope.start()
+
+    assert scope._running is False
+
+
+def test_start_returns_when_mark_running_rejects_start(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    calls = []
+
+    monkeypatch.setattr(scope_module, "freeze_support", lambda: calls.append("freeze"))
+    monkeypatch.setattr(scope, "_ensure_not_terminated", lambda: calls.append("ensure"))
+    monkeypatch.setattr(scope, "_apply_logging_preferences", lambda: calls.append("logging"))
+    monkeypatch.setattr(scope, "_mark_running", lambda: calls.append("mark") or False)
+    monkeypatch.setattr(
+        scope,
+        "_start_startup_splash",
+        lambda: pytest.fail("startup should stop before splash launch"),
+    )
+
+    scope.start()
+
+    assert calls == ["freeze", "ensure", "logging", "mark"]
+
+
+def test_start_prints_script_commands_in_print_only_mode(scope_module, monkeypatch):
+    scope = make_scope(scope_module)
+    scope.print_script_commands = True
+    calls = []
+
+    monkeypatch.setattr(scope, "_start_startup_splash", lambda: calls.append("start_splash"))
+    monkeypatch.setattr(scope, "_stop_startup_splash", lambda: calls.append("stop_splash"))
+    monkeypatch.setattr(scope, "_collect_processes", lambda: calls.append("collect"))
+    monkeypatch.setattr(scope, "print_registered_script_commands", lambda: calls.append("print_scripts"))
+
+    scope.start()
+
+    assert calls == ["collect", "print_scripts"]
+    assert scope._running is False
