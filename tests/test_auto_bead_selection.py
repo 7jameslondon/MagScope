@@ -474,21 +474,20 @@ def test_ncc_chunked_rejects_zero_variance_template():
 # ---------------------------------------------------------------------------
 
 def test_run_auto_bead_search_process_skips_non_tuple_messages():
-    request_queue: mp.Queue = mp.Queue()
-    result_queue: mp.Queue = mp.Queue()
+    request_queue: queue.Queue = queue.Queue()
+    result_queue: queue.Queue = queue.Queue()
     active_request_id = mp.Value('q', 0)
-    release_request = mp.Event()
 
-    worker = mp.Process(
+    worker = threading.Thread(
         target=run_auto_bead_search_process,
-        args=(request_queue, result_queue, active_request_id, release_request),
+        args=(request_queue, result_queue, active_request_id),
+        daemon=True,
     )
     worker.start()
 
     request_queue.put(42)
-    time.sleep(0.1)
     request_queue.put(('shutdown',))
-    worker.join(timeout=2.0)
+    worker.join(timeout=1.0)
 
     assert not worker.is_alive()
 
