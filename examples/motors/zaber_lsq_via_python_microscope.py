@@ -1021,7 +1021,6 @@ def get_default_zaber_stage(controller: ZaberDaisyChain) -> Any:
 
 if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
-    scope.ui_manager.n_windows = 1
 
     scope.add_hardware(
         ZaberLsqMicroscopeMotor(

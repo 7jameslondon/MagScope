@@ -3,6 +3,7 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from time import time
 
 import numpy as np
 import pytest
@@ -98,6 +99,7 @@ from magscope.ipc_commands import (
     QuitCommand,
     ReportFocusMotorLimitsCommand,
     SetAcquisitionOnCommand,
+    SetSimulatedFocusCommand,
 )
 
 
@@ -549,3 +551,323 @@ def test_hardware_manager_does_not_save_when_disabled(monkeypatch, tmp_path):
     motor.do_main_loop()
 
     assert not (tmp_path / f"{motor.name}.txt").exists()
+
+
+def test_hardware_manager_quit_calls_disconnect():
+    class DisconnectTrackingMotor(DummyFocusMotor):
+        def __init__(self):
+            super().__init__()
+            self.disconnect_called = False
+
+        def disconnect(self):
+            self.disconnect_called = True
+            super().disconnect()
+
+    motor = DisconnectTrackingMotor()
+    motor.connect()
+    assert motor._is_connected is True
+
+    sent_commands = []
+    motor.send_ipc = sent_commands.append
+    motor.quit()
+
+    assert motor.disconnect_called is True
+    assert motor._is_connected is False
+
+
+def test_hardware_manager_save_skips_empty_buffer(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = True
+    motor.setup()
+
+    motor._buffer.read = lambda: np.empty((0, 0), dtype=float)
+    motor._save_pending_data_if_enabled()
+
+    assert not (tmp_path / f"{motor.name}.txt").exists()
+
+
+def test_hardware_manager_save_skips_all_nan_rows(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = True
+    motor.setup()
+
+    motor._buffer.read()
+
+    nan_row = np.array([[np.nan, np.nan, np.nan, np.nan]], dtype=float)
+    motor._buffer.write(nan_row)
+    motor._save_pending_data_if_enabled()
+
+    assert not (tmp_path / f"{motor.name}.txt").exists()
+
+
+def test_hardware_manager_save_header_appears_only_on_new_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = True
+    motor.setup()
+
+    motor._save_pending_data_if_enabled()
+
+    save_path = tmp_path / f"{motor.name}.txt"
+    raw = save_path.read_text(encoding="utf-8")
+    assert raw.startswith("# timestamp value_1 value_2 value_3")
+
+    motor._save_pending_data_if_enabled()
+    raw_after = save_path.read_text(encoding="utf-8")
+    count = raw_after.count("# timestamp value_1 value_2 value_3")
+    assert count == 1
+
+
+def test_hardware_manager_save_filepath_raises_without_acquisition_dir():
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor._acquisition_dir = None
+
+    with pytest.raises(RuntimeError, match="has no acquisition directory configured"):
+        motor._hardware_save_filepath()
+
+    motor._acquisition_dir = ""
+    with pytest.raises(RuntimeError, match="has no acquisition directory configured"):
+        motor._hardware_save_filepath()
+
+
+def test_hardware_manager_save_header_single_column():
+    motor = DummyFocusMotor()
+
+    original_shape = motor.buffer_shape
+    motor.buffer_shape = (1000, 1)
+    header = motor._hardware_save_header()
+    assert header == "timestamp"
+
+    motor.buffer_shape = (1000, 3)
+    header = motor._hardware_save_header()
+    assert header == "timestamp value_1 value_2"
+
+    motor.buffer_shape = original_shape
+
+
+def test_hardware_manager_save_does_not_write_when_acquisition_dir_off(monkeypatch, tmp_path):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor._acquisition_dir = str(tmp_path)
+    motor._acquisition_dir_on = False
+    motor.setup()
+
+    motor.do_main_loop()
+
+    save_path = tmp_path / f"{motor.name}.txt"
+    assert not save_path.exists()
+
+
+def test_focus_motor_fetch_returns_early_when_disconnected(monkeypatch):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor.setup()
+    motor.disconnect()
+
+    original_pos = motor.position
+    motor.fetch()
+    assert motor.position == original_pos
+
+
+def test_focus_motor_is_at_target_with_explicit_tolerance():
+    motor = DummyFocusMotor()
+    motor.position = 5.0
+    motor.moving = False
+
+    motor._target_z = 5.0
+    assert motor.is_at_target() is True
+    assert motor.is_at_target(tolerance=1.0) is True
+
+    motor.position = 5.02
+    assert motor.is_at_target(tolerance=1.0) is True
+    assert motor.is_at_target(tolerance=0.001) is False
+
+    motor.position = 25.0
+    assert motor.is_at_target() is False
+    assert motor.is_at_target(tolerance=100.0) is True
+
+
+def test_focus_motor_is_at_target_returns_false_when_moving():
+    motor = DummyFocusMotor()
+    motor.position = 5.0
+    motor.moving = True
+    motor._target_z = 5.0
+
+    assert motor.is_at_target() is False
+
+
+def test_focus_motor_write_state_raises_without_buffer():
+    motor = DummyFocusMotor()
+    motor._buffer = None
+
+    with pytest.raises(RuntimeError, match="has no hardware buffer"):
+        motor._write_state(0.0, 0.0)
+
+
+def test_focus_motor_update_simulated_camera_focus_sends_command(monkeypatch):
+    sent_commands = []
+
+    class StubDummyCameraBeads:
+        pass
+
+    camera_module_stub = types.ModuleType("magscope.camera")
+    camera_module_stub.DummyCameraBeads = StubDummyCameraBeads
+    sys.modules["magscope.camera"] = camera_module_stub
+
+    motor = DummyFocusMotor()
+    motor.camera_type = StubDummyCameraBeads
+    motor.send_ipc = sent_commands.append
+
+    hardware.FocusMotorBase._update_simulated_camera_focus(motor, 3.0, force=True)
+
+    assert len(sent_commands) == 1
+    assert sent_commands[0].offset == 3.0
+
+    hardware.FocusMotorBase._update_simulated_camera_focus(motor, 3.0, force=False)
+
+    assert len(sent_commands) == 1
+
+    hardware.FocusMotorBase._update_simulated_camera_focus(motor, 5.0, force=False)
+
+    assert len(sent_commands) == 2
+    assert sent_commands[1].offset == 5.0
+
+    del sys.modules["magscope.camera"]
+
+
+def test_focus_motor_fetch_skips_write_when_not_moved_and_interval_not_elapsed(monkeypatch):
+    monkeypatch.setattr(hardware, "MatrixBuffer", FakeHardwareBuffer)
+
+    motor = DummyFocusMotor()
+    motor.locks = {motor.name: object()}
+    motor.camera_type = None
+    motor.setup()
+
+    motor.position = 1.5
+    motor._last_written = time() + 9999
+
+    rows_before = len(motor._buffer.rows)
+    motor.fetch()
+    assert len(motor._buffer.rows) == rows_before
+
+
+# ---------------------------------------------------------------------------
+# send_ipc / receive_ipc error paths
+# ---------------------------------------------------------------------------
+
+def test_send_ipc_raises_without_command_registry():
+    from magscope.ipc_commands import SleepCommand
+    proc = DummyProcess()
+    proc._command_registry = None
+    with pytest.raises(RuntimeError, match="cannot send IPC without a command registry"):
+        proc.send_ipc(SleepCommand(duration=1.0))
+
+
+def test_send_ipc_raises_without_magscope_quitting():
+    from magscope.ipc_commands import SleepCommand
+    proc = DummyProcess()
+    proc._command_registry = CommandRegistry()
+    proc._magscope_quitting = None
+    with pytest.raises(RuntimeError, match="has no magscope_quitting"):
+        proc.send_ipc(SleepCommand(duration=1.0))
+
+
+def test_receive_ipc_non_command_warns(monkeypatch):
+    warnings_log = []
+    monkeypatch.setattr(processes, "warn", lambda msg: warnings_log.append(msg))
+
+    class PollingPipe(FakePipe):
+        def poll(self):
+            return bool(getattr(self, "incoming", None))
+
+    proc = DummyProcess()
+    pipe = PollingPipe()
+    pipe.incoming = ["just a string"]
+    proc._pipe = pipe
+    proc._command_registry = CommandRegistry()
+    proc.receive_ipc()
+    assert len(warnings_log) >= 1
+
+
+def test_bead_rois_property_converts_arrays_to_dict():
+    import numpy as np
+    proc = DummyProcess()
+    proc._bead_roi_ids = np.asarray([1, 2], dtype=np.uint32)
+    proc._bead_roi_values = np.asarray([[0, 10, 0, 10], [10, 20, 10, 20]], dtype=np.uint32)
+    result = proc.bead_rois
+    assert result == {1: (0, 10, 0, 10), 2: (10, 20, 10, 20)}
+
+
+def test_refresh_bead_roi_cache_no_buffer():
+    import numpy as np
+    proc = DummyProcess()
+    proc.bead_roi_buffer = None
+    proc._refresh_bead_roi_cache()
+    assert len(proc._bead_roi_ids) == 0
+    assert len(proc._bead_roi_values) == 0
+
+
+def test_singleton_meta_rejects_second_instance():
+    from magscope.processes import SingletonMeta
+
+    called = 0
+
+    class DoubleCheck(metaclass=SingletonMeta):
+        def __init__(self):
+            nonlocal called
+            called += 1
+
+    first = DoubleCheck()
+    assert called == 1
+    with pytest.raises(TypeError, match="Cannot create another instance"):
+        DoubleCheck()
+    assert called == 1
+    SingletonMeta._instances.clear()
+
+
+def test_quitting_event_property():
+    from multiprocessing import Event
+    proc = DummyProcess()
+    e = Event()
+    proc._quitting = e
+    assert proc.quitting_event is e
+
+
+def test_quit_raises_when_no_magscope_quitting():
+    proc = DummyProcess()
+    proc._magscope_quitting = None
+    proc._pipe = FakePipe()
+    proc._quit_requested = True
+    proc._quitting = FakeEvent()
+    with pytest.raises(RuntimeError, match="has no magscope_quitting"):
+        proc.quit()
+
+
+def test_run_already_running_warns(monkeypatch):
+    warnings_log = []
+    monkeypatch.setattr(processes, "warn", lambda msg: warnings_log.append(msg))
+    proc = DummyProcess()
+    proc._running = True
+    proc.run()
+    assert len(warnings_log) >= 1

@@ -38,7 +38,7 @@ cpu = []
 cu12 = ["cupy-cuda12x>=14.0"]
 cu13 = ["cupy-cuda13x>=14.0"]
 python-microscope = ["microscope"]
-test = ["pytest", "pytest-qt"]
+test = ["pytest", "pytest-cov", "pytest-qt"]
 docs = [
     "sphinx>=7",
     "furo",
@@ -62,6 +62,21 @@ exclude = ["tests*", "docs*", "examples*", "assets*"]
 
 [tool.setuptools.package-data]
 "magscope" = [
+    "assets/app_icon_taskbar.svg",
+    "assets/app_icon_window.svg",
     "assets/logo.png",
+    "assets/MaterialSymbolsRounded.ttf",
     "simulation_zlut.txt"
+]
+
+[tool.coverage.run]
+branch = true
+source = ["magscope"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
 ]

@@ -1,31 +1,78 @@
 from collections import OrderedDict
-from math import floor, ceil
+import ctypes
+from ctypes import wintypes
+from importlib import resources
+import json
+from math import ceil, floor
 import os
 import sys
 from time import time
 import traceback
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 from warnings import warn
 
 import numpy as np
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSettings, Qt, QThread, QTimer
-from PyQt6.QtGui import QGuiApplication, QImage, QPixmap
+from PyQt6.QtCore import (
+    QByteArray,
+    QEvent,
+    QObject,
+    QMimeData,
+    QPoint,
+    QRect,
+    QRectF,
+    QSettings,
+    QStringListModel,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+)
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QDrag,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QApplication,
+    QCompleter,
+    QDockWidget,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QLayout,
     QMainWindow,
+    QMenu,
+    QMenuBar,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
+    QTabBar,
+    QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from magscope._logging import get_logger
+from magscope.app_icon import (
+    apply_windows_native_window_icon,
+    load_app_icon,
+    set_windows_app_user_model_id,
+)
 from magscope.auto_bead_selection import copy_latest_image, roi_overlaps
 from magscope.datatypes import DatasetNotReadyError, VideoBuffer, ZLUTSweepDataset
 from magscope.ipc import Delivery, register_ipc_command
@@ -37,19 +84,19 @@ from magscope.ui.controls import (
     BeadSelectionPanel,
     CameraPanel,
     ControlPanelBase,
+    CurrentZLUTDialog,
     HistogramPanel,
-    HelpPanel,
-    MagScopeSettingsPanel,
+    MotorsPlaceholderPanel,
     PlotSettingsPanel,
+    PreferencesDialog,
     ProfilePanel,
-    ResetPanel,
     ScriptPanel,
     StatusPanel,
+    MagScopeSettingsPanel,
     TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationDialog,
-    ZLUTGenerationPanel,
-    ZLUTPanel,
+    ZLUTGenerationSetupDialog,
     ZLockPanel,
     has_tweezepy_support,
 )
@@ -60,14 +107,506 @@ from magscope.ui.panel_layout import (
     ReorderableColumn,
 )
 from magscope.ui.plots import PlotWorker, TimeSeriesPlotBase
+from magscope.ui.search import (
+    MenuActionTarget,
+    PanelControlTarget,
+    PreferencesSettingTarget,
+    PreferencesWidgetTarget,
+    SearchHighlighter,
+    SearchRegistry,
+    SearchTarget,
+    normalize_search_text,
+)
+from magscope.ui.theme import (
+    APP_BACKGROUND_COLOR,
+    PANEL_BACKGROUND_COLOR,
+    get_accent_color,
+    set_accent_color,
+)
 from magscope.ui.video_viewer import VideoViewer
-from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, GripSplitter, ResizableLabel
+from magscope.ui.widgets import BeadGraphic, CollapsibleGroupBox, ResizableLabel
 from magscope.processes import ManagerProcessBase
 from magscope.scripting import ScriptStatus, register_script_command
-from magscope.settings import MagScopeSettings
+from magscope.settings import (
+    GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    MagScopeSettings,
+    tracking_options_from_qsettings,
+)
 from magscope.utils import AcquisitionMode, numpy_type_to_qt_image_type
 
 logger = get_logger("ui.ui")
+
+
+VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS = 500
+VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY = "viewerDockSeparatorHoverReady"
+PLOT_PROGRESS_MAXIMUM = 1000
+PLOT_PROGRESS_TIMER_INTERVAL_MS = 33
+PLOT_PROGRESS_DEFAULT_INTERVAL_SECONDS = 1.0
+PLOT_PROGRESS_MIN_INTERVAL_SECONDS = 0.1
+PLOT_PROGRESS_INDICATOR_SIZE = 14
+PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR = '#666666'
+PLOT_PROGRESS_INDICATOR_RING_WIDTH = 2
+MAIN_TOP_BAR_HEIGHT = 34
+MAIN_WINDOW_ICON_SIZE = 18
+MAIN_TOP_BAR_COMPACT_BUTTON_WIDTH = MAIN_TOP_BAR_HEIGHT
+MAIN_TITLE_BAR_CAPTION_BUTTONS_FALLBACK_WIDTH = 144
+MAIN_CAPTION_BUTTON_WIDTH = 46
+MAIN_CAPTION_MINIMIZE_ICON = "minimize"
+MAIN_CAPTION_MAXIMIZE_ICON = "crop_square"
+MAIN_CAPTION_RESTORE_ICON = "filter_none"
+MAIN_CAPTION_CLOSE_ICON = "close"
+MENU_SEARCH_FULL_WIDTH = 300
+MENU_SEARCH_MIN_WIDTH = 120
+MENU_SEARCH_ICON_BUTTON_WIDTH = 30
+TOP_BAR_COMPACT_WIDTH_BUFFER = 8
+TOP_BAR_ACTION_ICONS = {
+    "Layout": "dashboard",
+    "Tools": "construction",
+    "Z-LUT": "Z",
+    "Preferences": "settings",
+    "Help": "help",
+}
+DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
+FULLSCREENISH_GEOMETRY_TOLERANCE = 12
+STARTUP_READY_FALLBACK_DELAY_MS = 1000
+
+
+def _default_restored_window_geometry(
+    window: QWidget,
+    available_geometry: QRect | None = None,
+) -> QRect:
+    if available_geometry is None:
+        screen = window.screen() or QGuiApplication.primaryScreen()
+        available_geometry = screen.availableGeometry() if screen is not None else QRect(0, 0, 1200, 800)
+
+    minimum_width = max(1, window.minimumWidth())
+    minimum_height = max(1, window.minimumHeight())
+    width = min(
+        available_geometry.width(),
+        max(minimum_width, round(available_geometry.width() * DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION)),
+    )
+    height = min(
+        available_geometry.height(),
+        max(minimum_height, round(available_geometry.height() * DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION)),
+    )
+    return QRect(
+        available_geometry.x() + (available_geometry.width() - width) // 2,
+        available_geometry.y() + (available_geometry.height() - height) // 2,
+        width,
+        height,
+    )
+
+
+def _is_fullscreenish_geometry(geometry: QRect, available_geometry: QRect) -> bool:
+    tolerance = FULLSCREENISH_GEOMETRY_TOLERANCE
+    return (
+        geometry.width() >= available_geometry.width() - tolerance
+        and geometry.height() >= available_geometry.height() - tolerance
+        and geometry.left() <= available_geometry.left() + tolerance
+        and geometry.top() <= available_geometry.top() + tolerance
+        and geometry.right() >= available_geometry.right() - tolerance
+        and geometry.bottom() >= available_geometry.bottom() - tolerance
+    )
+
+
+def _restore_default_geometry_if_fullscreenish(window: QWidget) -> None:
+    screen = window.screen() or QGuiApplication.primaryScreen()
+    if screen is None:
+        return
+
+    available_geometry = screen.availableGeometry()
+    if _is_fullscreenish_geometry(window.geometry(), available_geometry):
+        window.setGeometry(_default_restored_window_geometry(window, available_geometry))
+
+
+class _UnifiedTopBar(QWidget):
+    def __init__(self, window: QMainWindow, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._window = window
+        self._drag_start_global_pos: QPoint | None = None
+        self._drag_start_window_pos: QPoint | None = None
+        self._system_move_started = False
+
+    def toggle_maximized(self) -> None:
+        if self._window.isMaximized():
+            self._window.showNormal()
+            _restore_default_geometry_if_fullscreenish(self._window)
+        else:
+            self._window.showMaximized()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_global_pos = event.globalPosition().toPoint()
+            self._drag_start_window_pos = self._window.frameGeometry().topLeft()
+            self._system_move_started = False
+            window_handle = self._window.windowHandle()
+            if window_handle is not None and window_handle.startSystemMove():
+                self._system_move_started = True
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._system_move_started:
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                event.accept()
+                return
+            self._system_move_started = False
+        if (
+            self._drag_start_global_pos is None
+            or self._drag_start_window_pos is None
+            or not (event.buttons() & Qt.MouseButton.LeftButton)
+            or self._window.isMaximized()
+        ):
+            super().mouseMoveEvent(event)
+            return
+
+        self._window.move(
+            self._drag_start_window_pos
+            + event.globalPosition().toPoint()
+            - self._drag_start_global_pos
+        )
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        self._drag_start_global_pos = None
+        self._drag_start_window_pos = None
+        self._system_move_started = False
+        super().mouseReleaseEvent(event)
+
+
+class _UnifiedTopMenuBar(QMenuBar):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hovered_action: QAction | None = None
+        self.setMouseTracking(True)
+
+    def _set_hovered_action(self, action: QAction | None) -> None:
+        if action is self._hovered_action:
+            return
+        self._hovered_action = action
+        self.update()
+
+    def _action_at_full_height(self, pos: QPoint) -> QAction | None:
+        if pos.y() < 0 or pos.y() > self.height():
+            return None
+        for action in self.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+            rect = self.actionGeometry(action)
+            if rect.isValid() and rect.left() <= pos.x() <= rect.right():
+                return action
+        return None
+
+    def _full_height_action_rect(self, action: QAction) -> Any:
+        rect = self.actionGeometry(action)
+        rect.setTop(0)
+        rect.setHeight(self.height())
+        return rect
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_hovered_action(self._action_at_full_height(event.position().toPoint()))
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        self._set_hovered_action(None)
+        super().leaveEvent(event)
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        action = self._hovered_action or self.activeAction()
+        if action is not None and action.isEnabled() and action in self.actions():
+            rect = self._full_height_action_rect(action)
+            if rect.isValid():
+                painter = QPainter(self)
+                painter.fillRect(rect, QColor(255, 255, 255, 24))
+
+        super().paintEvent(event)
+
+
+def _top_bar_button_object_name(text: str) -> str:
+    suffix = "".join(character for character in text if character.isalnum())
+    return f"MainTopBarButton{suffix or 'Action'}"
+
+
+class _TopBarActionButton(QToolButton):
+    def __init__(self, action: QAction, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._action = action
+        self._full_text = action.text().replace("&", "")
+        self._full_font = QFont(self.font())
+        self._compact_icon_text = TOP_BAR_ACTION_ICONS.get(self._full_text, "more_horiz")
+        self._compact_icon_font: QFont | None = None
+        self._icon_only = False
+        self._full_width_hint = 0
+        self.setAutoRaise(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setProperty("mainTopBarButton", True)
+        self.setProperty("topBarCompact", False)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        action.changed.connect(self._sync_from_action)
+        menu = action.menu()
+        if menu is not None:
+            menu.aboutToShow.connect(lambda b=self: b.setDown(True))
+            menu.aboutToHide.connect(lambda b=self: b.setDown(False))
+            self.clicked.connect(lambda _checked=False, b=self: b.show_action_menu())
+        else:
+            self.clicked.connect(lambda _checked=False, a=action: a.trigger())
+        self._sync_from_action()
+
+    def action(self) -> QAction:
+        return self._action
+
+    def set_compact_icon(self, icon_text: str, icon_font: QFont | None) -> None:
+        self._compact_icon_text = icon_text
+        self._compact_icon_font = QFont(icon_font) if icon_font is not None else None
+        self._apply_display_mode()
+
+    def set_icon_only(self, enabled: bool) -> None:
+        if self._icon_only == enabled:
+            return
+        self._icon_only = enabled
+        self._apply_display_mode()
+
+    def full_width_hint(self) -> int:
+        if self._full_width_hint > 0:
+            return self._full_width_hint
+        return self.sizeHint().width()
+
+    def _sync_from_action(self) -> None:
+        self._full_text = self._action.text().replace("&", "")
+        self._compact_icon_text = TOP_BAR_ACTION_ICONS.get(self._full_text, self._compact_icon_text)
+        self.setEnabled(self._action.isEnabled())
+        tooltip = self._action.toolTip() or self._action.statusTip()
+        self.setToolTip(tooltip)
+        self._apply_display_mode()
+
+    def _apply_display_mode(self) -> None:
+        if self._icon_only:
+            if self._compact_icon_font is not None:
+                self.setFont(self._compact_icon_font)
+            self.setText(self._compact_icon_text)
+            self.setProperty("topBarCompact", True)
+            self.setFixedWidth(MAIN_TOP_BAR_COMPACT_BUTTON_WIDTH)
+        else:
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            self.setFont(self._full_font)
+            self.setText(self._full_text)
+            self.setProperty("topBarCompact", False)
+            self._full_width_hint = max(self._full_width_hint, self.sizeHint().width())
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.updateGeometry()
+        self.update()
+
+    def show_action_menu(self, active_action: QAction | None = None) -> bool:
+        menu = self._action.menu()
+        if menu is None:
+            return False
+        if active_action is not None:
+            menu.setActiveAction(active_action)
+        QTimer.singleShot(0, lambda b=self, m=menu: b._popup_menu(m))
+        return True
+
+    def _popup_menu(self, menu: QMenu) -> None:
+        self.setDown(True)
+        menu.popup(self.mapToGlobal(QPoint(0, self.height())))
+
+
+def _update_maximize_restore_button(window: QWidget, button: QToolButton) -> None:
+    if window.isMaximized():
+        button.setText(MAIN_CAPTION_RESTORE_ICON)
+        button.setToolTip("Restore")
+    else:
+        button.setText(MAIN_CAPTION_MAXIMIZE_ICON)
+        button.setToolTip("Maximize")
+
+
+def _inject_snap_styles(window: QWidget) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+    except RuntimeError:
+        return
+    if hwnd == 0:
+        return
+    try:
+        gwl_style = -16
+        ws_maximizebox = 0x00010000
+        ws_minimizebox = 0x00020000
+        swp_nomove = 0x0002
+        swp_nosize = 0x0001
+        swp_nozorder = 0x0004
+        swp_noactivate = 0x0010
+        swp_framechanged = 0x0020
+
+        user32 = ctypes.windll.user32
+        GetWindowLongPtrW = user32.GetWindowLongPtrW
+        GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        SetWindowLongPtrW = user32.SetWindowLongPtrW
+        SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        SetWindowLongPtrW.restype = ctypes.c_ssize_t
+
+        style = GetWindowLongPtrW(wintypes.HWND(hwnd), gwl_style)
+        SetWindowLongPtrW(
+            wintypes.HWND(hwnd),
+            gwl_style,
+            style | ws_maximizebox | ws_minimizebox,
+        )
+        user32.SetWindowPos(
+            wintypes.HWND(hwnd),
+            None,
+            0, 0, 0, 0,
+            swp_nomove | swp_nosize | swp_nozorder | swp_noactivate | swp_framechanged,
+        )
+    except Exception:
+        return
+
+
+class _CaptionButtonStateFilter(QObject):
+    def __init__(self, window: QWidget, maximize_restore_button: QToolButton) -> None:
+        super().__init__(window)
+        self._window = window
+        self._maximize_restore_button = maximize_restore_button
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if watched is self._window and event.type() == QEvent.Type.WindowStateChange:
+            QTimer.singleShot(0, self._update)
+        return super().eventFilter(watched, event)
+
+    def _update(self) -> None:
+        try:
+            _update_maximize_restore_button(self._window, self._maximize_restore_button)
+        except RuntimeError:
+            return
+
+
+class _TopBarCompactModeFilter(QObject):
+    def __init__(self, update_callback: Callable[[], None], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._update_callback = update_callback
+        self._pending_update = False
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self._schedule_update()
+        return super().eventFilter(watched, event)
+
+    def _schedule_update(self) -> None:
+        if self._pending_update:
+            return
+        self._pending_update = True
+        QTimer.singleShot(0, self._run_update)
+
+    def _run_update(self) -> None:
+        self._pending_update = False
+        try:
+            self._update_callback()
+        except RuntimeError:
+            return
+
+
+_WM_NCHITTEST = 0x0084
+_HTCLIENT = 1
+_HTCAPTION = 2
+_HTLEFT = 10
+_HTRIGHT = 11
+_HTTOP = 12
+_HTTOPLEFT = 13
+_HTTOPRIGHT = 14
+_HTBOTTOM = 15
+_HTBOTTOMLEFT = 16
+_HTBOTTOMRIGHT = 17
+_BORDER_WIDTH = 6
+
+
+class _WinMSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", wintypes.POINT),
+    ]
+
+
+def _set_widget_background(widget: QWidget, color_name: str) -> None:
+    palette = widget.palette()
+    color = QColor(color_name)
+    palette.setColor(QPalette.ColorRole.Window, color)
+    palette.setColor(QPalette.ColorRole.Base, color)
+    widget.setPalette(palette)
+    widget.setAutoFillBackground(True)
+
+
+class LivePlotProgressIndicator(QWidget):
+    """Small circular progress indicator for live plot refreshes."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._minimum = 0
+        self._maximum = PLOT_PROGRESS_MAXIMUM
+        self._value = 0
+        self.setObjectName("LivePlotsProgressIndicator")
+        self.setFixedSize(PLOT_PROGRESS_INDICATOR_SIZE, PLOT_PROGRESS_INDICATOR_SIZE)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def minimum(self) -> int:
+        return self._minimum
+
+    def maximum(self) -> int:
+        return self._maximum
+
+    def value(self) -> int:
+        return self._value
+
+    def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt-style API
+        self._minimum = int(minimum)
+        self._maximum = max(self._minimum + 1, int(maximum))
+        self.setValue(self._value)
+
+    def setValue(self, value: int) -> None:  # noqa: N802 - Qt-style API
+        clamped = max(self._minimum, min(self._maximum, int(value)))
+        if clamped == self._value:
+            return
+        self._value = clamped
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # type: ignore[override]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        ring_width = PLOT_PROGRESS_INDICATOR_RING_WIDTH
+        margin = ring_width / 2 + 1.0
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+
+        background_pen = QPen(QColor(PLOT_PROGRESS_INDICATOR_BACKGROUND_COLOR), ring_width)
+        background_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(background_pen)
+        painter.drawEllipse(rect)
+
+        fraction = (self._value - self._minimum) / (self._maximum - self._minimum)
+        if fraction <= 0:
+            return
+
+        progress_pen = QPen(QColor(get_accent_color()), ring_width)
+        progress_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(progress_pen)
+        painter.drawArc(rect, 90 * 16, int(-360 * 16 * min(1.0, fraction)))
 
 
 class _StartupReadyWindow(QMainWindow):
@@ -75,16 +614,76 @@ class _StartupReadyWindow(QMainWindow):
         super().__init__()
         self._on_ready = on_ready
         self._startup_ready_scheduled = False
+        self._startup_ready_fallback_scheduled = False
         self._startup_shown = False
 
     def event(self, event):
         event_type = event.type()
         if event_type == QEvent.Type.Show:
             self._startup_shown = True
+            self._schedule_startup_ready_fallback()
             self._maybe_schedule_startup_ready(after_paint=False)
         elif event_type == QEvent.Type.Paint:
             self._maybe_schedule_startup_ready(after_paint=True)
         return super().event(event)
+
+    def nativeEvent(self, eventType, message):
+        if sys.platform != "win32":
+            return False, 0
+        if eventType != QByteArray(b"windows_generic_MSG"):
+            return False, 0
+
+        msg = ctypes.cast(int(message), ctypes.POINTER(_WinMSG)).contents
+        if msg.message == _WM_NCHITTEST:
+            user32 = ctypes.windll.user32
+
+            pt_x = ctypes.c_short(msg.lParam & 0xFFFF).value
+            pt_y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+
+            rect = wintypes.RECT()
+            user32.GetWindowRect(msg.hwnd, ctypes.byref(rect))
+
+            on_left = pt_x <= rect.left + _BORDER_WIDTH
+            on_right = pt_x >= rect.right - _BORDER_WIDTH
+            on_top = pt_y <= rect.top + _BORDER_WIDTH
+            on_bottom = pt_y >= rect.bottom - _BORDER_WIDTH
+
+            if on_top and on_left:
+                return True, _HTTOPLEFT
+            if on_top and on_right:
+                return True, _HTTOPRIGHT
+            if on_bottom and on_left:
+                return True, _HTBOTTOMLEFT
+            if on_bottom and on_right:
+                return True, _HTBOTTOMRIGHT
+            if on_top:
+                return True, _HTTOP
+            if on_left:
+                return True, _HTLEFT
+            if on_right:
+                return True, _HTRIGHT
+            if on_bottom:
+                return True, _HTBOTTOM
+
+            return True, _HTCLIENT
+
+        return False, 0
+
+    def _schedule_startup_ready_fallback(self) -> None:
+        if self._startup_ready_fallback_scheduled:
+            return
+
+        self._startup_ready_fallback_scheduled = True
+        QTimer.singleShot(
+            STARTUP_READY_FALLBACK_DELAY_MS,
+            self._run_startup_ready_fallback,
+        )
+
+    def _run_startup_ready_fallback(self) -> None:
+        try:
+            self._maybe_schedule_startup_ready(after_paint=True)
+        except RuntimeError:
+            return
 
     def _maybe_schedule_startup_ready(self, *, after_paint: bool) -> None:
         if self._startup_ready_scheduled or not self._startup_shown or not self.isVisible():
@@ -100,7 +699,53 @@ class _StartupReadyWindow(QMainWindow):
         QTimer.singleShot(0, self._on_ready)
 
 
+class _DockSeparatorHoverDelayFilter(QObject):
+    def __init__(self, window: QMainWindow):
+        super().__init__(window)
+        self._window = window
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(VIEWER_DOCK_SEPARATOR_HOVER_DELAY_MS)
+        self._timer.timeout.connect(lambda: self._set_hover_ready(True))
+        self._set_hover_ready(False)
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if watched is self._window:
+            event_type = event.type()
+            if event_type in (QEvent.Type.MouseMove, QEvent.Type.HoverMove):
+                self._set_hover_ready(False)
+                self._timer.start()
+            elif event_type in (
+                QEvent.Type.Leave,
+                QEvent.Type.HoverLeave,
+                QEvent.Type.Hide,
+                QEvent.Type.WindowDeactivate,
+            ):
+                self._timer.stop()
+                self._set_hover_ready(False)
+        return super().eventFilter(watched, event)
+
+    def _set_hover_ready(self, ready: bool) -> None:
+        if self._window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) == ready:
+            return
+
+        self._window.setProperty(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY, ready)
+        self._window.style().unpolish(self._window)
+        self._window.style().polish(self._window)
+        self._window.update()
+
+
 class UIManager(ManagerProcessBase):
+    _material_symbols_font_family: str | None = None
+    VIEWER_LAYOUT_STATE_VERSION = 1
+    VIEWER_GEOMETRY_SETTINGS_KEY = "viewer/main_window_geometry"
+    VIEWER_DOCK_STATE_SETTINGS_KEY = "viewer/dock_state"
+    _ZLUT_TRACKING_ACQUISITION_MODES = {
+        AcquisitionMode.TRACK,
+        AcquisitionMode.TRACK_AND_VIDEO_ROIS,
+        AcquisitionMode.TRACK_AND_VIDEO_FULL,
+    }
+
     def __init__(self):
         super().__init__()
         self._active_bead_graphic: BeadGraphic | None = None
@@ -116,14 +761,32 @@ class UIManager(ManagerProcessBase):
         self.central_layouts: list[QLayout] = []
         self.controls: Controls | None = None
         self.controls_to_add = []
+        self.camera_dock: QDockWidget | None = None
+        self.camera_dock_title_bar: QWidget | None = None
+        self.camera_dock_header: QWidget | None = None
+        self.bead_toolbar: QWidget | None = None
+        self.bead_instructions_button: QPushButton | None = None
+        self.bead_roi_size_label: QLabel | None = None
+        self.bead_total_count_label: QLabel | None = None
+        self.bead_next_id_label: QLabel | None = None
+        self.bead_reassign_ids_button: QPushButton | None = None
+        self.bead_remove_all_button: QPushButton | None = None
         self._display_rate_counter: int = 0
         self._display_rate_last_time: float = time()
         self._display_rate_last_rate: float = 0
-        self._n_windows: int | None = None
         self.plot_worker: PlotWorker
         self.plot_thread: QThread
         self.plots_widget: QLabel
+        self.plots_dock: QDockWidget | None = None
+        self.plots_dock_title_bar: QWidget | None = None
+        self.plots_dock_header: QWidget | None = None
         self.plots_to_add: list[TimeSeriesPlotBase] = []
+        self.plots_progress_indicator: LivePlotProgressIndicator | None = None
+        self._plot_progress_timer: QTimer | None = None
+        self._plot_progress_started_at: float | None = None
+        self._plot_progress_last_image_time: float | None = None
+        self._plot_progress_interval_seconds = PLOT_PROGRESS_DEFAULT_INTERVAL_SECONDS
+        self._preferences_dialog: PreferencesDialog | None = None
         self.qt_app: QApplication | None = None
         self.selected_bead = 0
         self.reference_bead: int | None = None
@@ -140,6 +803,15 @@ class UIManager(ManagerProcessBase):
         self._auto_bead_selection_dialog: AutoBeadSelectionDialog | None = None
         self._startup_ready_sent = False
         self._zlut_generation_dialog: ZLUTGenerationDialog | None = None
+        self._zlut_generation_setup_dialog: ZLUTGenerationSetupDialog | None = None
+        self._current_zlut_dialog: CurrentZLUTDialog | None = None
+        self._current_zlut_filepath: str | None = None
+        self._current_zlut_metadata: dict[str, float | int | None] = {
+            'z_min': None,
+            'z_max': None,
+            'step_size': None,
+            'profile_length': None,
+        }
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -149,6 +821,191 @@ class UIManager(ManagerProcessBase):
         self._zlut_evaluation_selected_bead_id: int | None = None
         self._zlut_preview_last_poll: float = 0.0
         self._shutdown_complete = False
+        self._search_box: QLineEdit | None = None
+        self._search_container: QWidget | None = None
+        self._search_toggle_button: QToolButton | None = None
+        self._search_popup: QWidget | None = None
+        self._search_popup_box: QLineEdit | None = None
+        self._search_popup_escape_shortcut: QShortcut | None = None
+        self._search_status_label: QLabel | None = None
+        self._search_status_timer: QTimer | None = None
+        self._menu_row: QWidget | None = None
+        self._menu_bar: QMenuBar | None = None
+        self._top_bar_menu_controls: QWidget | None = None
+        self._top_bar_menu_buttons: dict[str, _TopBarActionButton] = {}
+        self._top_bar_action_buttons: dict[str, _TopBarActionButton] = {}
+        self._window_controls: QWidget | None = None
+        self._minimize_button: QToolButton | None = None
+        self._maximize_restore_button: QToolButton | None = None
+        self._close_button: QToolButton | None = None
+        self._caption_button_state_filter: _CaptionButtonStateFilter | None = None
+        self._top_bar_compact_filter: _TopBarCompactModeFilter | None = None
+        self._top_bar: _UnifiedTopBar | None = None
+        self._help_menu_action: QAction | None = None
+        self._window_icon_label: QLabel | None = None
+        self._window_title_label: QLabel | None = None
+        self._title_bar_safe_area_spacer: QWidget | None = None
+        self._title_bar_safe_area_window_handle: Any = None
+        self._layout_menu: QMenu | None = None
+        self._auto_bead_selection_action: QAction | None = None
+        self._zlut_menu: QMenu | None = None
+        self._new_zlut_action: QAction | None = None
+        self._load_zlut_action: QAction | None = None
+        self._unload_zlut_action: QAction | None = None
+        self._show_current_zlut_action: QAction | None = None
+        self._menus: dict[str, QMenu] = {}
+        self._search_shortcuts: list[QShortcut] = []
+        self._search_registry = SearchRegistry()
+        self._search_highlighter = SearchHighlighter()
+
+    @classmethod
+    def _material_symbols_font(cls, point_size: int = 18) -> QFont:
+        if cls._material_symbols_font_family is None:
+            font_resource = resources.files("magscope").joinpath(
+                "assets/MaterialSymbolsRounded.ttf"
+            )
+            font_id = QFontDatabase.addApplicationFont(str(font_resource))
+            families = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
+            cls._material_symbols_font_family = families[0] if families else "Material Symbols Rounded"
+
+        font = QFont(cls._material_symbols_font_family, point_size)
+        font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+        return font
+
+    @staticmethod
+    def _material_symbols_filled_stylesheet() -> str:
+        return """
+            QToolButton {
+                border: none;
+                background: transparent;
+                color: #d0d0d0;
+                padding: 0px;
+            }
+            QToolButton:hover {
+                color: #9a9a9a;
+            }
+            QToolButton:pressed {
+                color: #606060;
+            }
+        """
+
+    @staticmethod
+    def _configure_unified_top_bar_window(window: QMainWindow) -> None:
+        flags = window.windowFlags() & ~(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        window.setWindowFlags(
+            flags
+            | Qt.WindowType.ExpandedClientAreaHint
+            | Qt.WindowType.NoTitleBarBackgroundHint
+            | Qt.WindowType.CustomizeWindowHint
+        )
+        # QWidget layouts otherwise respect the titlebar safe-area margin and
+        # leave the custom menu row below the native caption strip.
+        window.setAttribute(Qt.WidgetAttribute.WA_LayoutOnEntireRect, True)
+        UIManager._ensure_unified_top_menu_bar(window)
+
+    @staticmethod
+    def _ensure_unified_top_menu_bar(window: QMainWindow) -> _UnifiedTopMenuBar:
+        menu_bar = window.menuBar()
+        if isinstance(menu_bar, _UnifiedTopMenuBar):
+            return menu_bar
+
+        unified_menu_bar = _UnifiedTopMenuBar(window)
+        for action in list(menu_bar.actions()):
+            menu_bar.removeAction(action)
+            unified_menu_bar.addAction(action)
+        window.setMenuBar(unified_menu_bar)
+        return unified_menu_bar
+
+    @staticmethod
+    def _viewer_dock_separator_stylesheet() -> str:
+        accent_color = get_accent_color()
+        return f"""
+            QMainWindow::separator {{
+                background: transparent;
+                width: 5px;
+                height: 5px;
+            }}
+            QMainWindow::separator:vertical {{
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 transparent,
+                    stop: 0.4 transparent,
+                    stop: 0.4 #808080,
+                    stop: 0.6 #808080,
+                    stop: 0.6 transparent,
+                    stop: 1 transparent
+                );
+            }}
+            QMainWindow::separator:horizontal {{
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 transparent,
+                    stop: 0.4 transparent,
+                    stop: 0.4 #808080,
+                    stop: 0.6 #808080,
+                    stop: 0.6 transparent,
+                    stop: 1 transparent
+                );
+            }}
+            QMainWindow[viewerDockSeparatorHoverReady="true"]::separator:hover {{
+                background: {accent_color};
+            }}
+        """
+
+    def _refresh_plot_progress_indicator(self) -> None:
+        if self.plots_progress_indicator is None:
+            return
+        self.plots_progress_indicator.update()
+
+    def _live_plot_progress_indicator_enabled(self) -> bool:
+        if self.settings is None:
+            return True
+        try:
+            return bool(self.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING])
+        except (KeyError, TypeError):
+            return True
+
+    def _apply_live_plot_progress_indicator_enabled(self) -> None:
+        enabled = self._live_plot_progress_indicator_enabled()
+        if self.plots_progress_indicator is not None:
+            self.plots_progress_indicator.setVisible(enabled)
+            if enabled:
+                self.plots_progress_indicator.raise_()
+        if enabled:
+            self._ensure_plot_progress_timer()
+        else:
+            self._stop_timer(self._plot_progress_timer)
+            self._plot_progress_timer = None
+
+    @staticmethod
+    def _install_viewer_dock_separator_hover_delay(window: QMainWindow) -> None:
+        if getattr(window, "_viewer_dock_separator_hover_delay_filter", None) is not None:
+            return
+
+        window.setMouseTracking(True)
+        window.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        hover_filter = _DockSeparatorHoverDelayFilter(window)
+        window.installEventFilter(hover_filter)
+        window._viewer_dock_separator_hover_delay_filter = hover_filter
+
+    def _apply_viewer_dock_separator_style(self, window: QMainWindow) -> None:
+        self._install_viewer_dock_separator_hover_delay(window)
+        separator_style = self._viewer_dock_separator_stylesheet().strip()
+        existing_style = window.styleSheet().strip()
+        previous_style = getattr(window, "_viewer_dock_separator_stylesheet", "")
+        if previous_style and previous_style in existing_style:
+            existing_style = existing_style.replace(previous_style, "").strip()
+        if separator_style in existing_style:
+            return
+        window.setStyleSheet(
+            f"{existing_style}\n\n{separator_style}" if existing_style else separator_style
+        )
+        window._viewer_dock_separator_stylesheet = separator_style
 
     @staticmethod
     def _zlut_requested_sweep_edges(
@@ -275,21 +1132,28 @@ class UIManager(ManagerProcessBase):
         }
 
     def setup(self):
+        set_windows_app_user_model_id()
         self.qt_app = QApplication.instance()
         if not self.qt_app:
             self.qt_app = QApplication(sys.argv)
+        app_icon = load_app_icon()
+        if not app_icon.isNull():
+            self.qt_app.setWindowIcon(app_icon)
         QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+        palette = self.qt_app.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(APP_BACKGROUND_COLOR))
+        self.qt_app.setPalette(palette)
+        self._apply_accent_color(self._current_accent_color())
 
         if self.settings is not None:
             self._last_applied_roi = self.settings["ROI"]
 
-        # If the number of windows is not specified, then use the number of screens
-        if self._n_windows is None:
-            self._n_windows = len(QApplication.screens())
-
         # Create the live plots in a separate thread (but dont start it)
-        self.plots_widget = ResizableLabel()
-        self.plots_widget.setScaledContents(True)
+        self.plots_widget = ResizableLabel(ignore_pixmap_size_hint=True)
+        self.plots_widget.setScaledContents(False)
+        self.plots_widget.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.plots_widget.setMinimumSize(1, 1)
+        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.plots_thread = QThread()
         self.plot_worker = PlotWorker()
         for plot in self.plots_to_add:
@@ -299,6 +1163,8 @@ class UIManager(ManagerProcessBase):
 
         # Create controls panel
         self.controls = Controls(self)
+        if self._command_registry is not None and self._pipe is not None:
+            self.send_ipc(UpdateTrackingOptionsCommand(value=tracking_options_from_qsettings()))
 
         # Create the video viewer
         self.video_viewer = VideoViewer()
@@ -314,24 +1180,35 @@ class UIManager(ManagerProcessBase):
         # Create the layouts for each window
         self.create_central_widgets()
 
-        # Create the windows
-        for i in range(self._n_windows):
-            if i == 0:
-                window = _StartupReadyWindow(self._notify_startup_ready)
-            else:
-                window = QMainWindow()
-            window.setWindowTitle("MagScope")
-            screen = QApplication.screens()[i % len(QApplication.screens())]
-            geometry = screen.geometry()
-            window.setGeometry(
-                geometry.x(), geometry.y(), geometry.width(), geometry.height()
-            )
-            window.setMinimumWidth(300)
-            window.setMinimumHeight(300)
-            window.closeEvent = lambda _, w=window: self.quit()
+        # Create the main window. Viewer panes are dock widgets owned by this window.
+        window = _StartupReadyWindow(self._notify_startup_ready)
+        window.setWindowTitle("MagScope")
+        self._configure_unified_top_bar_window(window)
+        if not app_icon.isNull():
+            window.setWindowIcon(app_icon)
+        window.setMinimumWidth(300)
+        window.setMinimumHeight(300)
+        screen = QApplication.screens()[0]
+        window.setGeometry(_default_restored_window_geometry(window, screen.availableGeometry()))
+        window.closeEvent = lambda _, w=window: self.quit()
+        window.setCentralWidget(self.central_widgets[0])
+        self.windows.append(window)
+        self._create_viewer_docks(window)
+        self._create_preferences_menu_action(window)
+        self._create_view_menu(window)
+        self._create_tools_menu(window)
+        self._create_zlut_menu(window)
+        self._create_help_menu_action(window)
+        self._create_search_menu_widget(window)
+        self._apply_default_viewer_layout()
+        if self._restore_viewer_layout():
+            window.show()
+        else:
             window.showMaximized()
-            window.setCentralWidget(self.central_widgets[i])
-            self.windows.append(window)
+        _inject_snap_styles(window)
+        self._install_title_bar_safe_area_updates(window)
+        apply_windows_native_window_icon(window)
+        QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
 
         self._show_settings_persistence_warning_if_needed()
 
@@ -372,6 +1249,8 @@ class UIManager(ManagerProcessBase):
 
         previous_roi = self._last_applied_roi
         super().set_settings(settings)
+        self._apply_accent_color(self._current_accent_color())
+        self._apply_live_plot_progress_indicator_enabled()
         self._show_settings_persistence_warning_if_needed()
 
         new_roi = self.settings["ROI"]
@@ -380,6 +1259,29 @@ class UIManager(ManagerProcessBase):
 
         self._last_applied_roi = new_roi
         self._update_roi_labels(new_roi)
+
+    def _current_accent_color(self) -> str:
+        if self.settings is None:
+            return get_accent_color()
+        try:
+            return self.settings[GUI_ACCENT_COLOR_SETTING]
+        except (KeyError, TypeError):
+            return get_accent_color()
+
+    def _apply_accent_color(self, color: str) -> None:
+        accent_color = set_accent_color(color)
+        if getattr(self, 'qt_app', None) is not None:
+            palette = self.qt_app.palette()
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(accent_color))
+            palette.setColor(QPalette.ColorRole.Link, QColor(accent_color))
+            accent_role = getattr(QPalette.ColorRole, "Accent", None)
+            if accent_role is not None:
+                palette.setColor(accent_role, QColor(accent_color))
+            self.qt_app.setPalette(palette)
+        self._refresh_plot_progress_indicator()
+        for window in getattr(self, 'windows', []):
+            if isinstance(window, QMainWindow):
+                self._apply_viewer_dock_separator_style(window)
 
     def _show_settings_persistence_warning_if_needed(self) -> None:
         if self._settings_persistence_warning_shown:
@@ -407,12 +1309,71 @@ class UIManager(ManagerProcessBase):
 
     def update_plot_figure_size(self, w, h):
         if hasattr(self, 'plot_worker') and self.plot_worker is not None:
-            self.plot_worker.figure_size_signal.emit(w, h)
+            device_pixel_ratio = 1.0
+            if self.plots_widget is not None:
+                device_pixel_ratio = self.plots_widget.devicePixelRatioF()
+            self.plot_worker.figure_size_signal.emit(w, h, device_pixel_ratio)
 
     def _set_plot_image(self, img: QImage) -> None:
         if self.plots_widget is None:
             return
-        self.plots_widget.setPixmap(QPixmap.fromImage(img))
+        pixmap = QPixmap.fromImage(img)
+        pixmap.setDevicePixelRatio(img.devicePixelRatio())
+        self.plots_widget.setPixmap(pixmap)
+        self._reset_plot_progress()
+
+    def _create_live_plot_progress_indicator(self) -> LivePlotProgressIndicator:
+        return LivePlotProgressIndicator()
+
+    def _ensure_plot_progress_timer(self) -> None:
+        if (
+            self._plot_progress_timer is not None
+            or self.plots_progress_indicator is None
+            or not self._live_plot_progress_indicator_enabled()
+        ):
+            return
+
+        if self._plot_progress_started_at is None:
+            self._plot_progress_started_at = time()
+        self._plot_progress_timer = QTimer(self.plots_progress_indicator)
+        self._plot_progress_timer.timeout.connect(self._update_plot_progress)
+        self._plot_progress_timer.setInterval(PLOT_PROGRESS_TIMER_INTERVAL_MS)
+        self._plot_progress_timer.start()
+
+    def _reset_plot_progress(self) -> None:
+        now = time()
+        if self._plot_progress_last_image_time is not None:
+            self._plot_progress_interval_seconds = max(
+                PLOT_PROGRESS_MIN_INTERVAL_SECONDS,
+                now - self._plot_progress_last_image_time,
+            )
+        self._plot_progress_last_image_time = now
+        self._plot_progress_started_at = now
+
+        if self.plots_progress_indicator is not None:
+            self.plots_progress_indicator.setValue(0)
+        self._ensure_plot_progress_timer()
+
+    def _update_plot_progress(self) -> None:
+        if self.plots_progress_indicator is None:
+            return
+
+        now = time()
+        if self._plot_progress_started_at is None:
+            self._plot_progress_started_at = now
+            self.plots_progress_indicator.setValue(0)
+            return
+
+        elapsed_seconds = now - self._plot_progress_started_at
+        progress = min(
+            PLOT_PROGRESS_MAXIMUM,
+            int(
+                PLOT_PROGRESS_MAXIMUM
+                * elapsed_seconds
+                / max(PLOT_PROGRESS_MIN_INTERVAL_SECONDS, self._plot_progress_interval_seconds)
+            ),
+        )
+        self.plots_progress_indicator.setValue(progress)
 
     @staticmethod
     def _disconnect_signal(signal, callback) -> None:
@@ -506,6 +1467,8 @@ class UIManager(ManagerProcessBase):
         self._timer = None
         self._stop_timer(self._timer_video_view)
         self._timer_video_view = None
+        self._stop_timer(self._plot_progress_timer)
+        self._plot_progress_timer = None
 
         if self.video_viewer is not None:
             coordinates_changed = getattr(self.video_viewer, 'coordinatesChanged', None)
@@ -536,9 +1499,23 @@ class UIManager(ManagerProcessBase):
                 force_close()
             self._zlut_generation_dialog = None
 
+        self._save_viewer_layout()
+        self._search_highlighter.clear()
+        if self._search_status_timer is not None:
+            try:
+                self._search_status_timer.stop()
+            except RuntimeError:
+                pass
+        self._search_status_timer = None
+        self._search_status_label = None
+        self._title_bar_safe_area_spacer = None
+        self._title_bar_safe_area_window_handle = None
+
         for window in self.windows:
             self._close_widget(window)
         self.windows = []
+        self.camera_dock = None
+        self.plots_dock = None
 
         for central_widget in self.central_widgets:
             self._close_widget(central_widget)
@@ -551,6 +1528,7 @@ class UIManager(ManagerProcessBase):
         self.video_viewer = None
         self._close_widget(getattr(self, 'plots_widget', None))
         self.plots_widget = None
+        self.plots_progress_indicator = None
 
         if self.qt_app is not None:
             self.qt_app.quit()
@@ -666,15 +1644,14 @@ class UIManager(ManagerProcessBase):
                 self._normalize_bead_id(self.reference_bead),
             )
             self.video_viewer.viewport().update()
-        self._update_auto_bead_selection_button_state()
+        self._update_bead_count_label()
+        self._update_auto_bead_selection_action_state()
 
-    def _update_auto_bead_selection_button_state(self) -> None:
-        if self.controls is None:
+    def _update_auto_bead_selection_action_state(self) -> None:
+        action = self._auto_bead_selection_action
+        if action is None:
             return
-        button = getattr(self.controls.bead_selection_panel, 'auto_select_button', None)
-        if button is None:
-            return
-        button.setEnabled(self._can_start_auto_bead_selection())
+        action.setEnabled(self._can_start_auto_bead_selection())
 
     def _can_start_auto_bead_selection(self) -> bool:
         return (
@@ -923,19 +1900,16 @@ class UIManager(ManagerProcessBase):
 
     @property
     def n_windows(self):
-        return self._n_windows
+        return None
 
     @n_windows.setter
     def n_windows(self, value):
-        if self._running:
-            warn("Application already running", RuntimeWarning)
-            return
-
-        if not 1 <= value <= 3:
-            warn("Number of windows must be between 1 and 3")
-            return
-
-        self._n_windows = value
+        warn(
+            "UIManager.n_windows has been removed; MagScope now uses one main window "
+            "with dockable Live Camera and Live Plots panes. This value is ignored.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     @property
     def bead_roi_updates_suppressed(self) -> bool:
@@ -964,122 +1938,1604 @@ class UIManager(ManagerProcessBase):
         self._refresh_bead_roi_cache()
 
     def create_central_widgets(self):
-        match self.n_windows:
-            case 1:
-                self.create_one_window_widgets()
-            case 2:
-                self.create_two_window_widgets()
-            case 3:
-                self.create_three_window_widgets()
+        central_widget = QWidget()
+        _set_widget_background(central_widget, APP_BACKGROUND_COLOR)
+        central_layout = QVBoxLayout()
+        central_widget.setLayout(central_layout)
+        central_layout.addWidget(self.controls)
+        self.central_widgets.append(central_widget)
+        self.central_layouts.append(central_layout)
 
-    def create_one_window_widgets(self):
-        for i in range(1):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
+    def _create_viewer_docks(self, window: QMainWindow) -> None:
+        if self.video_viewer is None or self.plots_widget is None:
+            return
 
-        # Left-right split
-        lr_splitter = GripSplitter(name='One Window Left-Right Splitter',
-                                   orientation=Qt.Orientation.Horizontal)
-        self.central_layouts[0].addWidget(lr_splitter)
+        self._apply_viewer_dock_separator_style(window)
 
-        # Left
-        left_widget = QWidget()
-        left_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(left_widget)
-        left_layout = QHBoxLayout()
-        left_widget.setLayout(left_layout)
+        self.video_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.video_viewer.setMaximumSize(16777215, 16777215)
+        self.plots_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.plots_widget.setMinimumSize(1, 1)
+        self.plots_widget.setMaximumSize(16777215, 16777215)
 
-        # Add controls to left
-        left_layout.addWidget(self.controls)
+        self.camera_dock = QDockWidget("Live Camera", window)
+        self.camera_dock.setObjectName("LiveCameraDock")
+        self.camera_dock_title_bar = self._create_viewer_dock_title_bar(
+            self.camera_dock,
+            "Live Camera",
+        )
+        self.camera_dock.setTitleBarWidget(self.camera_dock_title_bar)
+        self.bead_toolbar = self._create_live_bead_toolbar()
+        camera_container, self.camera_dock_header = self._create_viewer_dock_content(
+            self.camera_dock,
+            self.video_viewer,
+            self.bead_toolbar,
+        )
+        self.camera_dock.setWidget(camera_container)
+        self.camera_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.camera_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        self.camera_dock.topLevelChanged.connect(
+            lambda floating, dock=self.camera_dock: self._handle_viewer_dock_top_level_changed(
+                dock,
+                floating,
+            )
+        )
 
-        # Right
-        right_widget = QWidget()
-        right_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(right_widget)
-        right_layout = QHBoxLayout()
-        right_widget.setLayout(right_layout)
+        self.plots_dock = QDockWidget("Live Plots", window)
+        self.plots_dock.setObjectName("LivePlotsDock")
+        self.plots_dock_title_bar = self._create_viewer_dock_title_bar(
+            self.plots_dock,
+            "Live Plots",
+        )
+        self.plots_dock.setTitleBarWidget(self.plots_dock_title_bar)
+        self.plots_progress_indicator = self._create_live_plot_progress_indicator()
+        plots_container, self.plots_dock_header = self._create_viewer_dock_content(
+            self.plots_dock,
+            self.plots_widget,
+            viewer_margins=(8, 6, 8, 8),
+            viewer_overlay=self.plots_progress_indicator,
+        )
+        self.plots_dock.setWidget(plots_container)
+        self._apply_live_plot_progress_indicator_enabled()
+        self.plots_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.plots_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+        )
+        self.plots_dock.topLevelChanged.connect(
+            lambda floating, dock=self.plots_dock: self._handle_viewer_dock_top_level_changed(
+                dock,
+                floating,
+            )
+        )
 
-        # Right: top-bottom split
-        ud_splitter = GripSplitter(name='One Window Top-Bottom Splitter',
-                                   orientation=Qt.Orientation.Vertical)
-        right_layout.addWidget(ud_splitter)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
+        window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
 
-        # Right-top
-        right_top_widget = QWidget()
-        right_top_widget.setMinimumHeight(150)
-        ud_splitter.addWidget(right_top_widget)
-        right_top_layout = QHBoxLayout()
-        right_top_widget.setLayout(right_top_layout)
+    def _create_viewer_dock_title_bar(self, dock: QDockWidget, title: str) -> QWidget:
+        title_bar = QWidget(dock)
+        title_bar.setObjectName(f"{dock.objectName()}TitleBar")
+        title_bar.setFixedHeight(24)
+        title_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        # Add plots to right-top
-        right_top_layout.addWidget(self.plots_widget)
+        layout = QHBoxLayout(title_bar)
+        layout.setContentsMargins(6, 1, 6, 1)
+        layout.setSpacing(4)
 
-        # Right-bottom
-        right_bottom_widget = QWidget()
-        right_bottom_widget.setMinimumHeight(150)
-        ud_splitter.addWidget(right_bottom_widget)
-        right_bottom_layout = QHBoxLayout()
-        right_bottom_widget.setLayout(right_bottom_layout)
+        title_label = QLabel(title, title_bar)
+        title_label.setObjectName(f"{dock.objectName()}TitleLabel")
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        title_label.setStyleSheet("color: #d0d0d0;")
+        layout.addWidget(title_label, 1)
 
-        # Add video viewer to right-bottom
-        right_bottom_layout.addWidget(self.video_viewer)
+        undock_button = QToolButton(title_bar)
+        undock_button.setObjectName(f"{dock.objectName()}UndockButton")
+        undock_button.setText("open_in_new")
+        undock_button.setToolTip("Undock this viewer")
+        undock_button.setFont(self._material_symbols_font(point_size=11))
+        undock_button.setFixedSize(20, 20)
+        undock_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        undock_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        undock_button.clicked.connect(lambda _checked=False, target=dock: target.setFloating(True))
+        layout.addWidget(undock_button, 0)
 
-    def create_two_window_widgets(self):
-        for i in range(2):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
+        close_button = QToolButton(title_bar)
+        close_button.setObjectName(f"{dock.objectName()}CloseButton")
+        close_button.setText("close")
+        close_button.setToolTip("Close this viewer")
+        close_button.setFont(self._material_symbols_font(point_size=11))
+        close_button.setFixedSize(20, 20)
+        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        close_button.clicked.connect(lambda _checked=False, target=dock: target.close())
+        layout.addWidget(close_button, 0)
 
-        ### Window 0 ###
+        return title_bar
 
-        # Left-right split
-        lr_splitter = GripSplitter(name='Two Window Left-Right Splitter',
-                                   orientation=Qt.Orientation.Horizontal)
-        self.central_layouts[0].addWidget(lr_splitter)
+    def _create_viewer_dock_content(
+        self,
+        dock: QDockWidget,
+        viewer: QWidget,
+        toolbar: QWidget | None = None,
+        viewer_margins: tuple[int, int, int, int] | None = None,
+        viewer_overlay: QWidget | None = None,
+    ) -> tuple[QWidget, QWidget]:
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
 
-        # Left
-        left_widget = QWidget()
-        left_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(left_widget)
-        left_layout = QHBoxLayout()
-        left_widget.setLayout(left_layout)
+        header = QWidget(container)
+        header.setFixedHeight(22)
+        header.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 1, 6, 1)
+        header_layout.setSpacing(4)
+        header_layout.addStretch(1)
+        dock_button = QToolButton(header)
+        dock_button.setObjectName(f"{dock.objectName()}DockButton")
+        dock_button.setText("push_pin")
+        dock_button.setToolTip("Dock this viewer")
+        dock_button.setFont(self._material_symbols_font(point_size=11))
+        dock_button.setFixedSize(20, 20)
+        dock_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        dock_button.setStyleSheet(self._material_symbols_filled_stylesheet())
+        dock_button.clicked.connect(lambda _checked=False, target=dock: self._dock_viewer_pane(target))
+        header_layout.addWidget(dock_button)
+        header.hide()
 
-        # Add controls to left
-        left_layout.addWidget(self.controls)
+        container_layout.addWidget(header, 0)
+        if toolbar is not None:
+            container_layout.addWidget(toolbar, 0)
+        if viewer_margins is None:
+            container_layout.addWidget(viewer, 1)
+        else:
+            viewer_wrapper = QWidget(container)
+            viewer_wrapper.setObjectName(f"{dock.objectName()}ViewerWrapper")
+            viewer_wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            _set_widget_background(viewer_wrapper, PANEL_BACKGROUND_COLOR)
+            viewer_layout = QVBoxLayout(viewer_wrapper)
+            viewer_layout.setContentsMargins(*viewer_margins)
+            viewer_layout.setSpacing(0)
+            viewer_layout.addWidget(viewer)
+            if viewer_overlay is not None:
+                viewer_overlay.setParent(viewer_wrapper)
+                viewer_overlay.move(viewer_margins[0], viewer_margins[1])
+                viewer_overlay.raise_()
+            container_layout.addWidget(viewer_wrapper, 1)
+        return container, header
 
-        # Right
-        right_widget = QWidget()
-        right_widget.setMinimumWidth(150)
-        lr_splitter.addWidget(right_widget)
-        right_layout = QHBoxLayout()
-        right_widget.setLayout(right_layout)
+    def _create_live_bead_toolbar(self) -> QWidget:
+        toolbar = QWidget()
+        toolbar.setObjectName("LiveBeadToolbar")
+        toolbar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(6, 3, 6, 3)
+        toolbar_layout.setSpacing(8)
 
-        # Add video viewer to right
-        right_layout.addWidget(self.video_viewer)
+        self.bead_instructions_button = QPushButton("Add/Remove Beads", toolbar)
+        self.bead_instructions_button.setObjectName("LiveBeadInstructionsButton")
+        self.bead_instructions_button.setToolTip("Show bead selection instructions")
+        self.bead_instructions_button.clicked.connect(
+            lambda _checked=False: self.show_bead_selection_instructions()
+        )
+        toolbar_layout.addWidget(self.bead_instructions_button)
 
-        ### Window 1 ###
+        self.bead_roi_size_label = QLabel(toolbar)
+        self.bead_roi_size_label.setObjectName("LiveBeadRoiSizeLabel")
+        toolbar_layout.addWidget(self.bead_roi_size_label)
 
-        # Add plots to window-1
-        self.central_layouts[1].addWidget(self.plots_widget)
+        self.bead_total_count_label = QLabel(toolbar)
+        self.bead_total_count_label.setObjectName("LiveBeadTotalCountLabel")
+        toolbar_layout.addWidget(self.bead_total_count_label)
 
-    def create_three_window_widgets(self):
-        for i in range(3):
-            self.central_widgets.append(QWidget())
-            self.central_layouts.append(QVBoxLayout())
-            self.central_widgets[i].setLayout(self.central_layouts[i])
+        self.bead_next_id_label = QLabel(toolbar)
+        self.bead_next_id_label.setObjectName("LiveBeadNextIdLabel")
+        toolbar_layout.addWidget(self.bead_next_id_label)
 
-        ### Window 0 ###
-        # Add controls to window-0
-        self.central_layouts[0].addWidget(self.controls)
+        toolbar_layout.addStretch(1)
 
-        ### Window 1 ###
-        # Add video viewer to window-1
-        self.central_layouts[1].addWidget(self.video_viewer)
+        self.bead_reassign_ids_button = QPushButton("Reassign IDs", toolbar)
+        self.bead_reassign_ids_button.setObjectName("LiveBeadReassignIdsButton")
+        self.bead_reassign_ids_button.clicked.connect(
+            lambda _checked=False: self.reset_bead_ids()
+        )
+        toolbar_layout.addWidget(self.bead_reassign_ids_button)
 
-        ### Window 2 ###
-        # Add plots to window-2
-        self.central_layouts[2].addWidget(self.plots_widget)
+        self.bead_remove_all_button = QPushButton("Remove All", toolbar)
+        self.bead_remove_all_button.setObjectName("LiveBeadRemoveAllButton")
+        self.bead_remove_all_button.clicked.connect(
+            lambda _checked=False: self.clear_beads()
+        )
+        toolbar_layout.addWidget(self.bead_remove_all_button)
+
+        self._update_live_bead_toolbar_labels()
+        return toolbar
+
+    def show_bead_selection_instructions(self) -> None:
+        parent = self.camera_dock or (self.windows[0] if self.windows else None)
+        msg = QMessageBox(parent)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Add/Remove Beads")
+        msg.setText("Use the live camera view to manage bead ROIs.")
+        msg.setInformativeText(
+            "Add a bead: left-click an empty location in the live image.\n"
+            "Activate/select a bead: left-click its ROI.\n"
+            "Move a bead: drag the active ROI.\n"
+            "Remove a bead: right-click its ROI.\n\n"
+            "For automatic bead detection, use Tools > Auto Bead Selection."
+        )
+        msg.exec()
+
+    def _dock_viewer_pane(self, dock: QDockWidget) -> None:
+        dock.setFloating(False)
+        dock.show()
+
+    def _set_viewer_dock_header_visible(self, dock: QDockWidget, visible: bool) -> None:
+        if dock is self.camera_dock:
+            header = self.camera_dock_header
+        elif dock is self.plots_dock:
+            header = self.plots_dock_header
+        else:
+            header = None
+        if header is not None:
+            header.setVisible(visible)
+
+    def _set_viewer_dock_title_bar_visible(self, dock: QDockWidget, visible: bool) -> None:
+        if dock is self.camera_dock:
+            title_bar = self.camera_dock_title_bar
+        elif dock is self.plots_dock:
+            title_bar = self.plots_dock_title_bar
+        else:
+            title_bar = None
+        if title_bar is None:
+            return
+
+        if visible:
+            dock.setTitleBarWidget(title_bar)
+            title_bar.show()
+        else:
+            dock.setTitleBarWidget(None)
+            title_bar.hide()
+
+    def _handle_viewer_dock_top_level_changed(self, dock: QDockWidget, floating: bool) -> None:
+        self._set_viewer_dock_title_bar_visible(dock, not floating)
+        self._schedule_floating_dock_window_configuration(dock, floating)
+
+    def _schedule_floating_dock_window_configuration(self, dock: QDockWidget, floating: bool) -> None:
+        self._set_viewer_dock_header_visible(dock, floating)
+        if not floating:
+            return
+
+        self._configure_floating_dock_window(dock, floating)
+        QTimer.singleShot(0, lambda: self._configure_floating_dock_window(dock, floating))
+
+    def _configure_floating_dock_window(self, dock: QDockWidget, floating: bool) -> None:
+        if not floating:
+            return
+
+        dock.setMinimumSize(300, 300)
+        dock.setMaximumSize(16777215, 16777215)
+        dock.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        child = dock.widget()
+        if child is not None:
+            child.setMaximumSize(16777215, 16777215)
+            child.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        dock.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        dock.show()
+
+    def _create_view_menu(self, window: QMainWindow) -> None:
+        view_menu = QMenu("Layout", window)
+        window.menuBar().addMenu(view_menu)
+        self._register_menu("Layout", view_menu)
+        if self.camera_dock is not None:
+            view_menu.addAction(self.camera_dock.toggleViewAction())
+        if self.plots_dock is not None:
+            view_menu.addAction(self.plots_dock.toggleViewAction())
+        view_menu.addSeparator()
+        dock_all_action = QAction("Dock All Windows", window)
+        dock_all_action.triggered.connect(lambda _checked=False: self._dock_all_viewers())
+        view_menu.addAction(dock_all_action)
+        reset_action = QAction("Reset Viewer Layout", window)
+        reset_action.triggered.connect(lambda _checked=False: self._reset_viewer_layout())
+        view_menu.addAction(reset_action)
+
+    def _create_tools_menu(self, window: QMainWindow) -> None:
+        tools_menu = QMenu("Tools", window)
+        window.menuBar().addMenu(tools_menu)
+        self._register_menu("Tools", tools_menu)
+        auto_bead_selection_action = QAction("Auto Bead Selection", window)
+        auto_bead_selection_action.triggered.connect(
+            lambda _checked=False: self.start_auto_bead_selection()
+        )
+        tools_menu.addAction(auto_bead_selection_action)
+        self._auto_bead_selection_action = auto_bead_selection_action
+        self._update_auto_bead_selection_action_state()
+
+    def _create_zlut_menu(self, window: QMainWindow) -> None:
+        zlut_menu = QMenu("Z-LUT", window)
+        window.menuBar().addMenu(zlut_menu)
+        self._register_menu("Z-LUT", zlut_menu)
+
+        new_action = QAction("New", window)
+        new_action.triggered.connect(lambda _checked=False: self.show_new_zlut_dialog())
+        zlut_menu.addAction(new_action)
+
+        load_action = QAction("Load", window)
+        load_action.triggered.connect(lambda _checked=False: self.load_zlut_file_dialog())
+        zlut_menu.addAction(load_action)
+
+        unload_action = QAction("Unload", window)
+        unload_action.triggered.connect(lambda _checked=False: self.unload_zlut())
+        zlut_menu.addAction(unload_action)
+
+        show_current_action = QAction("Show Current", window)
+        show_current_action.triggered.connect(lambda _checked=False: self.show_current_zlut_dialog())
+        zlut_menu.addAction(show_current_action)
+
+        self._zlut_menu = zlut_menu
+        self._new_zlut_action = new_action
+        self._load_zlut_action = load_action
+        self._unload_zlut_action = unload_action
+        self._show_current_zlut_action = show_current_action
+        self._update_zlut_menu_action_state()
+
+    def _update_zlut_menu_action_state(self) -> None:
+        has_loaded_zlut = self._current_zlut_filepath is not None
+        if self._unload_zlut_action is not None:
+            self._unload_zlut_action.setEnabled(has_loaded_zlut)
+        if self._show_current_zlut_action is not None:
+            self._show_current_zlut_action.setEnabled(has_loaded_zlut)
+
+    def _register_menu(self, name: str, menu: QMenu) -> None:
+        self._menus[name] = menu
+        if name == "Layout":
+            self._layout_menu = menu
+        elif name == "Z-LUT":
+            self._zlut_menu = menu
+
+    def _create_preferences_menu_action(self, window: QMainWindow) -> None:
+        preferences_action = QAction("Preferences", window)
+        preferences_action.triggered.connect(lambda _checked=False: self._show_preferences_dialog())
+        window.menuBar().addAction(preferences_action)
+
+    def _create_help_menu_action(self, window: QMainWindow) -> None:
+        help_action = QAction("Help", window)
+        help_action.triggered.connect(
+            lambda _checked=False: QDesktopServices.openUrl(QUrl("https://magscope.readthedocs.io"))
+        )
+        window.menuBar().addAction(help_action)
+        self._help_menu_action = help_action
+
+    @staticmethod
+    def _title_bar_right_safe_area_width(window: QMainWindow) -> int:
+        window_handle = window.windowHandle()
+        if window_handle is not None:
+            margins = window_handle.safeAreaMargins()
+            right_margin = max(0, margins.right())
+            if right_margin > 0:
+                return right_margin
+
+        return 0
+
+    def _update_title_bar_safe_area_spacing(self, window: QMainWindow) -> None:
+        if self._title_bar_safe_area_spacer is None:
+            return
+        self._title_bar_safe_area_spacer.setFixedWidth(
+            self._title_bar_right_safe_area_width(window)
+        )
+
+    def _install_title_bar_safe_area_updates(self, window: QMainWindow) -> None:
+        self._update_title_bar_safe_area_spacing(window)
+        window_handle = window.windowHandle()
+        if window_handle is None or window_handle is self._title_bar_safe_area_window_handle:
+            return
+
+        self._title_bar_safe_area_window_handle = window_handle
+        window_handle.safeAreaMarginsChanged.connect(
+            lambda *_args, w=window: self._update_title_bar_safe_area_spacing(w)
+        )
+
+    @staticmethod
+    def _apply_top_bar_style(menu_container: QWidget, menu_bar_vertical_padding: int) -> None:
+        menu_container.setStyleSheet(
+            f"""
+            QWidget#MainMenuContainer, QWidget#MainMenuRow {{
+                background-color: {APP_BACKGROUND_COLOR};
+            }}
+            QWidget#MainTopBarMenuControls {{
+                background: transparent;
+            }}
+            QLabel#MainWindowTitleLabel {{
+                background: transparent;
+                color: #f2f2f2;
+                padding: 0px 16px 0px 0px;
+            }}
+            QToolButton[mainTopBarButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px 10px;
+            }}
+            QToolButton[mainTopBarButton="true"][topBarCompact="true"] {{
+                padding: 0px 6px;
+            }}
+            QToolButton[mainTopBarButton="true"]:hover,
+            QToolButton[mainTopBarButton="true"]:pressed,
+            QToolButton[mainTopBarButton="true"]:checked {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
+            QToolButton[mainTopBarSearchButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px;
+            }}
+            QToolButton[mainTopBarSearchButton="true"]:hover,
+            QToolButton[mainTopBarSearchButton="true"]:pressed {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
+            QWidget#MainWindowControls {{
+                background: transparent;
+            }}
+            QToolButton[mainCaptionButton="true"] {{
+                background: transparent;
+                border: none;
+                color: #d0d0d0;
+                padding: 0px;
+            }}
+            QToolButton[mainCaptionButton="true"]:hover,
+            QToolButton[mainCaptionButton="true"]:pressed {{
+                background-color: rgba(255, 255, 255, 24);
+            }}
+            QToolButton[captionButtonRole="close"]:hover,
+            QToolButton[captionButtonRole="close"]:pressed {{
+                background-color: #c42b1c;
+                color: white;
+            }}
+            QMenuBar#MainMenuBar {{
+                background: transparent;
+                color: #d0d0d0;
+                padding-top: {menu_bar_vertical_padding}px;
+                padding-bottom: {menu_bar_vertical_padding}px;
+            }}
+            QMenuBar#MainMenuBar::item {{
+                background: transparent;
+                padding: 0px 10px;
+            }}
+            QMenuBar#MainMenuBar::item:selected {{
+                background-color: transparent;
+            }}
+            """
+        )
+
+    def _create_top_bar_menu_controls(
+        self,
+        menu_bar: QMenuBar,
+        parent: QWidget,
+        target_height: int,
+    ) -> QWidget:
+        controls = QWidget(parent)
+        controls.setObjectName("MainTopBarMenuControls")
+        controls.setFixedHeight(target_height)
+        controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(0)
+
+        self._top_bar_menu_buttons = {}
+        self._top_bar_action_buttons = {}
+        for action in menu_bar.actions():
+            if action.isSeparator() or not action.isVisible():
+                continue
+
+            button = _TopBarActionButton(action, controls)
+            button.setObjectName(_top_bar_button_object_name(action.text()))
+            action_text = action.text().replace("&", "")
+            button.set_compact_icon(
+                TOP_BAR_ACTION_ICONS.get(action_text, "more_horiz"),
+                None if action_text == "Z-LUT" else self._material_symbols_font(point_size=13),
+            )
+            button.setFixedHeight(target_height)
+            controls_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+            self._top_bar_action_buttons[action_text] = button
+            menu = action.menu()
+            if menu is not None:
+                self._top_bar_menu_buttons[menu.title().replace("&", "")] = button
+
+        return controls
+
+    def _create_caption_button(
+        self,
+        parent: QWidget,
+        object_name: str,
+        icon_text: str,
+        tooltip: str,
+        callback: Callable[[], None],
+        target_height: int,
+        role: str,
+    ) -> QToolButton:
+        button = QToolButton(parent)
+        button.setObjectName(object_name)
+        button.setText(icon_text)
+        button.setToolTip(tooltip)
+        button.setFont(self._material_symbols_font(point_size=12))
+        button.setAutoRaise(True)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        button.setProperty("mainCaptionButton", True)
+        button.setProperty("captionButtonRole", role)
+        button.setFixedSize(MAIN_CAPTION_BUTTON_WIDTH, target_height)
+        button.clicked.connect(lambda _checked=False: callback())
+        return button
+
+    def _create_main_window_controls(
+        self,
+        window: QMainWindow,
+        parent: QWidget,
+        target_height: int,
+    ) -> QWidget:
+        controls = QWidget(parent)
+        controls.setObjectName("MainWindowControls")
+        controls.setFixedHeight(target_height)
+        controls.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(0)
+
+        minimize_button = self._create_caption_button(
+            controls,
+            "MainWindowMinimizeButton",
+            MAIN_CAPTION_MINIMIZE_ICON,
+            "Minimize",
+            window.showMinimized,
+            target_height,
+            "minimize",
+        )
+        maximize_restore_button = self._create_caption_button(
+            controls,
+            "MainWindowMaximizeRestoreButton",
+            MAIN_CAPTION_MAXIMIZE_ICON,
+            "Maximize",
+            lambda w=window: self._toggle_main_window_maximized(w),
+            target_height,
+            "maximize",
+        )
+        close_button = self._create_caption_button(
+            controls,
+            "MainWindowCloseButton",
+            MAIN_CAPTION_CLOSE_ICON,
+            "Close",
+            window.close,
+            target_height,
+            "close",
+        )
+
+        controls_layout.addWidget(minimize_button)
+        controls_layout.addWidget(maximize_restore_button)
+        controls_layout.addWidget(close_button)
+
+        self._minimize_button = minimize_button
+        self._maximize_restore_button = maximize_restore_button
+        self._close_button = close_button
+        self._caption_button_state_filter = _CaptionButtonStateFilter(
+            window,
+            maximize_restore_button,
+        )
+        window.installEventFilter(self._caption_button_state_filter)
+        _update_maximize_restore_button(window, maximize_restore_button)
+        return controls
+
+    def _toggle_main_window_maximized(self, window: QMainWindow) -> None:
+        if window.isMaximized():
+            window.showNormal()
+            _restore_default_geometry_if_fullscreenish(window)
+        else:
+            window.showMaximized()
+        if self._maximize_restore_button is not None:
+            _update_maximize_restore_button(window, self._maximize_restore_button)
+        _inject_snap_styles(window)
+
+    def _create_search_menu_widget(self, window: QMainWindow) -> None:
+        self._refresh_search_registry()
+        menu_bar = self._ensure_unified_top_menu_bar(window)
+        menu_bar.setObjectName("MainMenuBar")
+        menu_bar.hide()
+        self._menu_bar = menu_bar
+        menu_bar_natural_height = menu_bar.sizeHint().height()
+        target_height = max(
+            menu_bar_natural_height,
+            menu_bar.fontMetrics().height() + 14,
+            MAIN_TOP_BAR_HEIGHT,
+        )
+        menu_bar_vertical_padding = max(0, (target_height - menu_bar.fontMetrics().height()) // 2)
+        menu_bar.setFixedHeight(target_height)
+        menu_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        menu_container = QWidget(window)
+        menu_container.setObjectName("MainMenuContainer")
+        menu_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        menu_container_layout = QVBoxLayout(menu_container)
+        menu_container_layout.setContentsMargins(0, 0, 0, 0)
+        menu_container_layout.setSpacing(0)
+
+        menu_row = _UnifiedTopBar(window, menu_container)
+        menu_row.setObjectName("MainMenuRow")
+        menu_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        menu_row.setFixedHeight(target_height)
+        menu_row_layout = QHBoxLayout(menu_row)
+        menu_row_layout.setContentsMargins(0, 0, 0, 0)
+        menu_row_layout.setSpacing(0)
+
+        icon_label = QLabel(menu_row)
+        icon_label.setObjectName("MainWindowIcon")
+        icon_label.setFixedSize(MAIN_WINDOW_ICON_SIZE + 20, target_height)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        icon_label.setToolTip(window.windowTitle())
+        window_icon = window.windowIcon()
+        if not window_icon.isNull():
+            icon_label.setPixmap(window_icon.pixmap(MAIN_WINDOW_ICON_SIZE, MAIN_WINDOW_ICON_SIZE))
+        menu_row_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        window_title = window.windowTitle() or "MagScope"
+        title_label = QLabel(window_title, menu_row)
+        title_label.setObjectName("MainWindowTitleLabel")
+        title_label.setFixedHeight(target_height)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        title_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        title_label.setToolTip(window_title)
+        menu_row_layout.addWidget(title_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        menu_controls = self._create_top_bar_menu_controls(menu_bar, menu_row, target_height)
+        menu_row_layout.addWidget(menu_controls, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        search_container = QWidget(menu_row)
+        search_container.setObjectName("MenuSearchContainer")
+        search_container.setFixedHeight(target_height)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(10, 4, 0, 4)
+        search_layout.setSpacing(0)
+
+        search_toggle_button = QToolButton(search_container)
+        search_toggle_button.setObjectName("MenuSearchToggleButton")
+        search_toggle_button.setText("search")
+        search_toggle_button.setToolTip("Search")
+        search_toggle_button.setFont(self._material_symbols_font(point_size=13))
+        search_toggle_button.setAutoRaise(True)
+        search_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_toggle_button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        search_toggle_button.setProperty("mainTopBarSearchButton", True)
+        search_toggle_button.setFixedSize(
+            MENU_SEARCH_ICON_BUTTON_WIDTH,
+            max(24, target_height - 8),
+        )
+        search_toggle_button.hide()
+        search_toggle_button.clicked.connect(lambda _checked=False: self._show_search_popup())
+        search_layout.addWidget(search_toggle_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        search_box = QLineEdit(search_container)
+        search_box.setObjectName("MenuSearchBox")
+        search_box.setPlaceholderText("Search for controls ...")
+        search_box.setToolTip("Search shows where controls are; it does not run actions.")
+        search_box.setClearButtonEnabled(True)
+        search_box.setFixedWidth(MENU_SEARCH_FULL_WIDTH)
+        search_box.setFixedHeight(max(24, target_height - 8))
+        search_layout.addWidget(search_box, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._connect_menu_search_box(search_box)
+        search_popup, popup_search_box = self._create_search_popup(window, target_height)
+
+        menu_row_layout.addWidget(search_container, 0, Qt.AlignmentFlag.AlignVCenter)
+        search_status_label = QLabel(menu_row)
+        search_status_label.setObjectName("MenuSearchStatusLabel")
+        search_status_label.setFixedHeight(target_height)
+        search_status_label.setVisible(False)
+        menu_row_layout.addWidget(search_status_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        menu_row_layout.addStretch(1)
+
+        window_controls = self._create_main_window_controls(window, menu_row, target_height)
+        menu_row_layout.addWidget(window_controls, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        title_bar_safe_area_spacer = QWidget(menu_row)
+        title_bar_safe_area_spacer.setObjectName("MainTitleBarSafeAreaSpacer")
+        title_bar_safe_area_spacer.setFixedHeight(target_height)
+        title_bar_safe_area_spacer.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        menu_row_layout.addWidget(title_bar_safe_area_spacer, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        menu_divider = QFrame(menu_container)
+        menu_divider.setObjectName("MainMenuDivider")
+        menu_divider.setFrameShape(QFrame.Shape.NoFrame)
+        menu_divider.setFixedHeight(1)
+        menu_divider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        menu_divider.setStyleSheet("#MainMenuDivider { background-color: #808080; }")
+
+        menu_container_layout.addWidget(menu_row)
+        menu_container_layout.addWidget(menu_divider)
+        self._apply_top_bar_style(menu_container, menu_bar_vertical_padding)
+        window.setMenuWidget(menu_container)
+        self._top_bar = menu_row
+        self._menu_row = menu_row
+        self._top_bar_menu_controls = menu_controls
+        self._window_controls = window_controls
+        self._window_icon_label = icon_label
+        self._window_title_label = title_label
+        self._title_bar_safe_area_spacer = title_bar_safe_area_spacer
+        self._search_container = search_container
+        self._search_toggle_button = search_toggle_button
+        self._search_box = search_box
+        self._search_popup = search_popup
+        self._search_popup_box = popup_search_box
+        self._search_status_label = search_status_label
+        self._update_title_bar_safe_area_spacing(window)
+        QTimer.singleShot(0, lambda w=window: self._install_title_bar_safe_area_updates(w))
+        search_status_label.destroyed.connect(lambda _obj=None: self._clear_search_status_label_ref())
+        self._search_status_timer = QTimer(menu_row)
+        self._search_status_timer.setSingleShot(True)
+        self._search_status_timer.setInterval(3000)
+        self._search_status_timer.timeout.connect(lambda: self._set_search_status(""))
+        self._install_search_shortcuts(window, search_box)
+        self._top_bar_compact_filter = _TopBarCompactModeFilter(
+            self._update_top_bar_compact_mode,
+            menu_row,
+        )
+        menu_row.installEventFilter(self._top_bar_compact_filter)
+        QTimer.singleShot(0, self._update_top_bar_compact_mode)
+
+    def _connect_menu_search_box(self, search_box: QLineEdit) -> None:
+        completion_model = QStringListModel(self._search_completion_labels(""), search_box)
+        completer = QCompleter(completion_model, search_box)
+        completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        search_box.setCompleter(completer)
+        search_box.returnPressed.connect(
+            lambda box=search_box: self._guide_to_search_result_from_box(box)
+        )
+        search_box.textEdited.connect(
+            lambda text, box=search_box, model=completion_model, completer=completer: (
+                self._handle_search_box_text_edited(box, model, completer, text)
+            )
+        )
+        completer.activated.connect(lambda text: self._guide_to_search_result_from_text(str(text)))
+
+    def _create_search_popup(
+        self,
+        window: QMainWindow,
+        target_height: int,
+    ) -> tuple[QWidget, QLineEdit]:
+        search_popup = QWidget(
+            window,
+            Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
+        )
+        search_popup.setObjectName("MenuSearchPopup")
+        search_popup.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        search_popup.setStyleSheet(
+            f"""
+            QWidget#MenuSearchPopup {{
+                background-color: {APP_BACKGROUND_COLOR};
+                border: 1px solid #3a3a3a;
+            }}
+            """
+        )
+        popup_layout = QHBoxLayout(search_popup)
+        popup_layout.setContentsMargins(8, 8, 8, 8)
+        popup_layout.setSpacing(0)
+
+        popup_search_box = QLineEdit(search_popup)
+        popup_search_box.setObjectName("MenuSearchPopupBox")
+        popup_search_box.setPlaceholderText("Search for controls ...")
+        popup_search_box.setToolTip("Search shows where controls are; it does not run actions.")
+        popup_search_box.setClearButtonEnabled(True)
+        popup_search_box.setFixedWidth(MENU_SEARCH_FULL_WIDTH)
+        popup_search_box.setFixedHeight(max(24, target_height - 8))
+        popup_layout.addWidget(popup_search_box)
+        self._connect_menu_search_box(popup_search_box)
+
+        self._search_popup_escape_shortcut = QShortcut(QKeySequence("Escape"), popup_search_box)
+        self._search_popup_escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self._search_popup_escape_shortcut.activated.connect(self._clear_search_popup_box)
+        return search_popup, popup_search_box
+
+    def _handle_search_box_text_edited(
+        self,
+        search_box: QLineEdit,
+        model: QStringListModel,
+        completer: QCompleter,
+        text: str,
+    ) -> None:
+        self._sync_search_boxes(text, source=search_box)
+        self._update_search_completion_model(model, completer, text)
+
+    def _guide_to_search_result_from_box(self, search_box: QLineEdit) -> None:
+        text = search_box.text()
+        self._sync_search_boxes(text, source=search_box)
+        if self._guide_to_search_result(text):
+            self._hide_search_popup()
+
+    def _guide_to_search_result_from_text(self, text: str) -> None:
+        self._sync_search_boxes(text)
+        if self._guide_to_search_result(text):
+            self._hide_search_popup()
+
+    def _sync_search_boxes(self, text: str, source: QLineEdit | None = None) -> None:
+        for search_box in (self._search_box, self._search_popup_box):
+            if search_box is None or search_box is source:
+                continue
+            try:
+                if search_box.text() != text:
+                    search_box.setText(text)
+            except RuntimeError:
+                continue
+
+    def _show_search_popup(self) -> None:
+        if self._search_popup is None or self._search_popup_box is None:
+            return
+        anchor = self._search_toggle_button or self._search_container
+        if anchor is None:
+            return
+        if self._search_box is not None:
+            self._search_popup_box.setText(self._search_box.text())
+        self._search_popup.adjustSize()
+        self._search_popup.move(anchor.mapToGlobal(QPoint(0, anchor.height())))
+        self._search_popup.show()
+        self._search_popup.raise_()
+        self._search_popup_box.setFocus()
+        self._search_popup_box.selectAll()
+
+    def _hide_search_popup(self) -> None:
+        if self._search_popup is not None and self._search_popup.isVisible():
+            self._search_popup.hide()
+
+    def _clear_search_popup_box(self) -> None:
+        if self._search_popup_box is not None:
+            self._search_popup_box.clear()
+        if self._search_box is not None:
+            self._search_box.clear()
+        self._hide_search_popup()
+        self._set_search_status("")
+
+    def _focus_menu_search(self) -> None:
+        if self._search_box is not None and self._search_box.isVisible():
+            self._focus_search_box(self._search_box)
+            return
+        self._show_search_popup()
+
+    def _search_container_horizontal_margins(self) -> int:
+        if self._search_container is None:
+            return 0
+        layout = self._search_container.layout()
+        if layout is None:
+            return 0
+        margins = layout.contentsMargins()
+        return margins.left() + margins.right()
+
+    def _search_inline_total_width(self, search_box_width: int) -> int:
+        return search_box_width + self._search_container_horizontal_margins()
+
+    def _search_collapsed_total_width(self) -> int:
+        button_width = MENU_SEARCH_ICON_BUTTON_WIDTH
+        if self._search_toggle_button is not None:
+            button_width = (
+                self._search_toggle_button.width()
+                or self._search_toggle_button.sizeHint().width()
+            )
+        return button_width + self._search_container_horizontal_margins()
+
+    @staticmethod
+    def _widget_width_hint(widget: QWidget | None) -> int:
+        if widget is None:
+            return 0
+        return max(
+            0,
+            widget.width(),
+            widget.minimumWidth(),
+            widget.sizeHint().width(),
+            widget.minimumSizeHint().width(),
+        )
+
+    def _set_menu_search_compact_state(self, collapsed: bool, search_box_width: int) -> None:
+        if self._search_container is None or self._search_box is None:
+            return
+        if collapsed:
+            self._search_box.hide()
+            if self._search_toggle_button is not None:
+                self._search_toggle_button.show()
+            self._search_container.setFixedWidth(self._search_collapsed_total_width())
+            return
+
+        self._hide_search_popup()
+        if self._search_toggle_button is not None:
+            self._search_toggle_button.hide()
+        self._search_box.show()
+        clamped_width = max(MENU_SEARCH_MIN_WIDTH, min(MENU_SEARCH_FULL_WIDTH, search_box_width))
+        self._search_box.setFixedWidth(clamped_width)
+        self._search_container.setFixedWidth(self._search_inline_total_width(clamped_width))
+
+    def _set_top_bar_menu_icon_mode(self, icon_only: bool) -> None:
+        for button in self._top_bar_action_buttons.values():
+            button.set_icon_only(icon_only)
+        if self._top_bar_menu_controls is not None:
+            layout = self._top_bar_menu_controls.layout()
+            if layout is not None:
+                layout.invalidate()
+            self._top_bar_menu_controls.updateGeometry()
+
+    def _update_top_bar_compact_mode(self) -> None:
+        if self._menu_row is None or self._search_box is None or self._search_container is None:
+            return
+        row_width = self._menu_row.width()
+        if row_width <= 0:
+            return
+
+        reserved_width = (
+            self._widget_width_hint(self._window_icon_label)
+            + self._widget_width_hint(self._window_controls)
+            + self._widget_width_hint(self._title_bar_safe_area_spacer)
+            + TOP_BAR_COMPACT_WIDTH_BUFFER
+        )
+        available_width = max(0, row_width - reserved_width)
+        title_width = self._window_title_label.sizeHint().width() if self._window_title_label else 0
+        menu_buttons = list(self._top_bar_action_buttons.values())
+        menu_full_width = sum(button.full_width_hint() for button in menu_buttons)
+        search_full_width = self._search_inline_total_width(MENU_SEARCH_FULL_WIDTH)
+        search_min_width = self._search_inline_total_width(MENU_SEARCH_MIN_WIDTH)
+        search_button_width = self._search_collapsed_total_width()
+
+        title_visible = True
+        menu_icon_only = False
+        search_collapsed = False
+        search_box_width = MENU_SEARCH_FULL_WIDTH
+
+        if available_width < title_width + menu_full_width + search_full_width:
+            title_visible = False
+            if available_width >= menu_full_width + search_full_width:
+                search_box_width = MENU_SEARCH_FULL_WIDTH
+            else:
+                remaining_search_width = available_width - menu_full_width
+                if remaining_search_width >= search_min_width:
+                    search_box_width = (
+                        remaining_search_width - self._search_container_horizontal_margins()
+                    )
+                elif available_width >= menu_full_width + search_button_width:
+                    search_collapsed = True
+                else:
+                    menu_icon_only = True
+                    search_collapsed = True
+
+        if self._window_title_label is not None:
+            self._window_title_label.setVisible(title_visible)
+        self._set_top_bar_menu_icon_mode(menu_icon_only)
+        self._set_menu_search_compact_state(search_collapsed, search_box_width)
+
+    def _refresh_search_registry(self) -> None:
+        registry = SearchRegistry()
+        registry.register_many(self._menu_search_targets())
+        registry.register_many(MagScopeSettingsPanel.search_targets())
+        registry.register_many(TrackingOptionsPanel.search_targets())
+        registry.register_many(self._generic_panel_search_targets())
+        registry.register_many(self._core_control_search_targets())
+
+        panels = getattr(self.controls, "panels", {}) if self.controls is not None else {}
+        if panels:
+            for panel in panels.values():
+                search_targets = getattr(panel, "search_targets", None)
+                if callable(search_targets):
+                    registry.register_many(search_targets())
+
+        self._search_registry = registry
+
+    def _ensure_search_registry(self) -> None:
+        if not self._search_registry.targets:
+            self._refresh_search_registry()
+
+    def _menu_search_targets(self) -> list[SearchTarget]:
+        return [
+            MenuActionTarget(
+                label="Auto Bead Selection",
+                aliases=(
+                    "auto bead",
+                    "automatic bead selection",
+                    "find bead",
+                    "find beads",
+                    "detect beads",
+                ),
+                context="Tools Menu",
+                description="Opens automatic bead selection.",
+                keywords=("bead finder", "select beads automatically"),
+                menu_name="Tools",
+                action_text="Auto Bead Selection",
+            ),
+            MenuActionTarget(
+                label="New Z-LUT",
+                aliases=("new zlut", "generate zlut", "generate z-lut", "z lut generation"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="New",
+            ),
+            MenuActionTarget(
+                label="Load Z-LUT",
+                aliases=("load zlut", "select z-lut file", "choose z-lut file"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Load",
+            ),
+            MenuActionTarget(
+                label="Unload Z-LUT",
+                aliases=("clear zlut", "clear z-lut", "remove zlut", "remove z-lut"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Unload",
+            ),
+            MenuActionTarget(
+                label="Show Current Z-LUT",
+                aliases=("current zlut", "current z-lut", "show zlut", "show z-lut"),
+                context="Z-LUT Menu",
+                menu_name="Z-LUT",
+                action_text="Show Current",
+            ),
+            MenuActionTarget(
+                label="Dock All Windows",
+                aliases=("dock", "dock windows", "dock all", "dock viewers"),
+                context="Layout Menu",
+                menu_name="Layout",
+                action_text="Dock All Windows",
+            ),
+            MenuActionTarget(
+                label="Reset Viewer Layout",
+                aliases=("reset layout", "viewer layout", "reset windows"),
+                context="Layout Menu",
+                menu_name="Layout",
+                action_text="Reset Viewer Layout",
+            ),
+        ]
+
+    def _generic_panel_search_targets(self) -> list[SearchTarget]:
+        panel_definitions = [
+            ("Status", "StatusPanel", ()),
+            ("Camera Settings", "CameraPanel", ("camera",)),
+            ("Recording and Saving", "AcquisitionPanel", ("acquisition", "recording", "saving")),
+            ("Histogram", "HistogramPanel", ()),
+            ("Radial Profile Monitor", "ProfilePanel", ("profile",)),
+            ("Plot Settings", "PlotSettingsPanel", ("plots",)),
+            ("Scripting", "ScriptPanel", ("scripts",)),
+            ("XY-Lock", "XYLockPanel", ("xy lock",)),
+            ("Z-Lock", "ZLockPanel", ("z lock",)),
+            ("Allan Deviation", "AllanDeviationPanel", ("allan",)),
+        ]
+        panels = getattr(self.controls, "panels", {}) if self.controls is not None else {}
+        if panels:
+            panel_definitions = [
+                definition for definition in panel_definitions if definition[1] in panels
+            ]
+        return [
+            PanelControlTarget(
+                label=label,
+                aliases=aliases,
+                context="Panel",
+                panel_id=panel_id,
+            )
+            for label, panel_id, aliases in panel_definitions
+        ]
+
+    def _core_control_search_targets(self) -> list[SearchTarget]:
+        return [
+            PanelControlTarget(
+                label="Add/Remove Beads",
+                aliases=("bead instructions", "bead controls", "manage beads"),
+                context="Live Camera",
+                description="Shows live camera bead selection instructions.",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_instructions_button",),
+            ),
+            PanelControlTarget(
+                label="Remove All Beads",
+                aliases=("clear beads", "delete beads"),
+                context="Live Camera",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_remove_all_button",),
+            ),
+            PanelControlTarget(
+                label="Reassign IDs",
+                aliases=("reset bead ids", "renumber beads"),
+                context="Live Camera",
+                panel_id="LiveBeadToolbar",
+                widget_path=("bead_reassign_ids_button",),
+            ),
+        ]
+
+    @staticmethod
+    def _normalize_search_text(text: str) -> str:
+        return normalize_search_text(text)
+
+    def _find_search_target(self, text: str) -> SearchTarget | None:
+        self._ensure_search_registry()
+        return self._search_registry.best(text)
+
+    def _find_exact_search_target(self, text: str) -> SearchTarget | None:
+        self._ensure_search_registry()
+        query = normalize_search_text(text)
+        if not query:
+            return None
+        for target in self._search_registry.targets:
+            if query in {normalize_search_text(value) for value in target.search_values}:
+                return target
+        return None
+
+    def _search_completion_labels(self, text: str) -> list[str]:
+        self._ensure_search_registry()
+        return self._search_registry.labels(text)
+
+    def _update_search_completion_model(
+        self,
+        model: QStringListModel,
+        completer: QCompleter,
+        text: str,
+    ) -> None:
+        labels = self._search_completion_labels(text)
+        model.setStringList(labels)
+        if labels and text.strip():
+            completer.complete()
+
+    def _guide_to_search_result(self, text: str) -> bool:
+        target = self._find_search_target(text)
+        if target is None:
+            logger.debug("No UI search target matched query %r", text)
+            self._set_search_status("")
+            return False
+
+        logger.debug("Guiding to UI search target %s", target.display_label)
+        self._guide_to_target(target)
+        return True
+
+    def _guide_to_target(self, target: SearchTarget) -> None:
+        self._reveal_search_target(target)
+        if self._search_box is not None:
+            self._search_box.setText(target.label)
+            self._search_box.selectAll()
+        if self._search_popup_box is not None:
+            self._search_popup_box.setText(target.label)
+            self._search_popup_box.selectAll()
+        status_parts = [f"Showing: {target.display_label}"]
+        if target.guide_only:
+            status_parts.append("Guide only; no action was run.")
+        if target.description:
+            status_parts.append(target.description)
+        self._set_search_status(" ".join(status_parts))
+
+    def _reveal_search_target(self, target: SearchTarget) -> None:
+        if isinstance(target, PreferencesSettingTarget):
+            self._reveal_preference_setting(target)
+            return
+        if isinstance(target, PreferencesWidgetTarget):
+            self._reveal_preference_widget(target)
+            return
+        if isinstance(target, MenuActionTarget):
+            self._reveal_menu_action(target)
+            return
+        if not isinstance(target, PanelControlTarget):
+            return
+
+        if target.panel_id == "LiveBeadToolbar":
+            if self.camera_dock is not None:
+                self.camera_dock.show()
+                self.camera_dock.raise_()
+            widget = self._search_target_widget(target)
+            if widget is not None:
+                self._highlight_search_widget(widget)
+            else:
+                logger.warning("Search target widget could not be found: %s", target.display_label)
+            return
+
+        if self.controls is None:
+            return
+
+        reveal_panel = getattr(self.controls, "reveal_panel", None)
+        if callable(reveal_panel):
+            reveal_panel(target.panel_id)
+        else:
+            logger.debug("Controls object cannot reveal search panel %s", target.panel_id)
+
+        widget = self._search_target_widget(target)
+        if widget is not None:
+            self._highlight_search_widget(widget)
+        else:
+            logger.warning("Search target widget could not be found: %s", target.display_label)
+
+    def _search_target_widget(self, target: PanelControlTarget) -> QWidget | None:
+        if target.panel_id == "LiveBeadToolbar":
+            if not target.widget_path:
+                return self.bead_toolbar
+
+            widget = self
+            for attr_name in target.widget_path:
+                widget = getattr(widget, attr_name, None)
+                if widget is None:
+                    return self.bead_toolbar
+            return widget if isinstance(widget, QWidget) else None
+
+        if self.controls is None:
+            return None
+
+        panel = getattr(self.controls, "panels", {}).get(target.panel_id)
+        if panel is None:
+            return None
+
+        if not target.widget_path:
+            groupbox = getattr(panel, "groupbox", None)
+            if isinstance(groupbox, QWidget):
+                return groupbox
+            return panel if isinstance(panel, QWidget) else None
+
+        widget = panel
+        for attr_name in target.widget_path:
+            widget = getattr(widget, attr_name, None)
+            if widget is None:
+                return panel if isinstance(panel, QWidget) else None
+        return widget if isinstance(widget, QWidget) else None
+
+    def _reveal_preference_setting(self, target: PreferencesSettingTarget) -> None:
+        self._show_preferences_dialog()
+        if self._preferences_dialog is None:
+            return
+
+        reveal_setting = getattr(self._preferences_dialog, "reveal_setting", None)
+        if callable(reveal_setting):
+            reveal_setting(target.setting_key)
+        else:
+            logger.warning("Preferences dialog cannot reveal setting %s", target.setting_key)
+
+    def _reveal_preference_widget(self, target: PreferencesWidgetTarget) -> None:
+        self._show_preferences_dialog()
+        if self._preferences_dialog is None:
+            return
+
+        reveal_widget = getattr(self._preferences_dialog, "reveal_widget", None)
+        if callable(reveal_widget):
+            reveal_widget(target.tab_name, target.widget_attr)
+        else:
+            logger.warning(
+                "Preferences dialog cannot reveal widget %s > %s",
+                target.tab_name,
+                target.widget_attr,
+            )
+
+    def _reveal_menu_action(self, target: MenuActionTarget) -> None:
+        menu = self._menus.get(target.menu_name)
+        if menu is None:
+            logger.warning("Search target menu could not be found: %s", target.menu_name)
+            return
+
+        action = next(
+            (action for action in menu.actions() if action.text() == target.action_text),
+            None,
+        )
+        if action is None:
+            logger.warning(
+                "Search target menu action could not be found: %s > %s",
+                target.menu_name,
+                target.action_text,
+            )
+            return
+
+        menu.setActiveAction(action)
+        if QGuiApplication.platformName() == "offscreen":
+            return
+
+        menu_bar = self._menu_bar
+        if menu_bar is None:
+            logger.warning("Search target menu bar is not available for %s", target.display_label)
+            return
+
+        for search_box in (self._search_box, self._search_popup_box):
+            completer = search_box.completer() if search_box is not None else None
+            if completer is not None:
+                completer.popup().hide()
+        menu_button = self._top_bar_menu_buttons.get(target.menu_name)
+        if menu_button is not None and menu_button.show_action_menu(action):
+            return
+
+        menu_action_geometry = menu_bar.actionGeometry(menu.menuAction())
+        menu.popup(menu_bar.mapToGlobal(menu_action_geometry.bottomLeft()))
+
+    def _highlight_search_widget(self, widget: QWidget) -> None:
+        self._search_highlighter.highlight(widget)
+
+    def _clear_search_highlight(self, widget: QWidget) -> None:
+        self._search_highlighter.clear_widget(widget)
+
+    def _install_search_shortcuts(self, window: QMainWindow, search_box: QLineEdit) -> None:
+        for shortcut_text in ("Ctrl+K", "Ctrl+F"):
+            shortcut = QShortcut(QKeySequence(shortcut_text), window)
+            shortcut.activated.connect(self._focus_menu_search)
+            self._search_shortcuts.append(shortcut)
+        escape_shortcut = QShortcut(QKeySequence("Escape"), search_box)
+        escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        escape_shortcut.activated.connect(lambda box=search_box: self._clear_search_box(box))
+        self._search_shortcuts.append(escape_shortcut)
+
+    def _focus_search_box(self, search_box: QLineEdit) -> None:
+        search_box.setFocus()
+        search_box.selectAll()
+
+    def _clear_search_box(self, search_box: QLineEdit) -> None:
+        search_box.clear()
+        search_box.clearFocus()
+        self._set_search_status("")
+
+    def _set_search_status(self, text: str) -> None:
+        label = self._search_status_label
+        if label is None:
+            return
+        try:
+            label.setText(text)
+            label.setVisible(bool(text))
+        except RuntimeError:
+            self._clear_search_status_label_ref()
+            return
+
+        timer = self._search_status_timer
+        if timer is None:
+            return
+        try:
+            if text:
+                timer.start()
+            else:
+                timer.stop()
+        except RuntimeError:
+            self._search_status_timer = None
+
+    def _clear_search_status_label_ref(self) -> None:
+        self._search_status_label = None
+        self._search_status_timer = None
+
+    def _show_preferences_dialog(self) -> None:
+        if self._preferences_dialog is None:
+            self._preferences_dialog = PreferencesDialog(self)
+        self._preferences_dialog.show()
+        self._preferences_dialog.raise_()
+        self._preferences_dialog.activateWindow()
+
+    def _dock_all_viewers(self) -> None:
+        for dock in (self.camera_dock, self.plots_dock):
+            if dock is not None:
+                self._dock_viewer_pane(dock)
+
+    def _viewer_layout_settings(self) -> QSettings:
+        return QSettings("MagScope", "MagScope")
+
+    def _save_viewer_layout(self) -> None:
+        if not self.windows:
+            return
+        window = self.windows[0]
+        if not hasattr(window, 'saveGeometry') or not hasattr(window, 'saveState'):
+            return
+        settings = self._viewer_layout_settings()
+        settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, window.saveGeometry())
+        settings.setValue(
+            self.VIEWER_DOCK_STATE_SETTINGS_KEY,
+            window.saveState(self.VIEWER_LAYOUT_STATE_VERSION),
+        )
+
+    def _restore_viewer_layout(self) -> bool:
+        if not self.windows:
+            return False
+        settings = self._viewer_layout_settings()
+        geometry = settings.value(self.VIEWER_GEOMETRY_SETTINGS_KEY)
+        dock_state = settings.value(self.VIEWER_DOCK_STATE_SETTINGS_KEY)
+        if geometry is None or dock_state is None:
+            return False
+
+        window = self.windows[0]
+        geometry_restored = window.restoreGeometry(geometry)
+        if not geometry_restored:
+            self._clear_viewer_layout()
+            self._apply_default_viewer_layout()
+            return False
+
+        state_restored = window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+        if not state_restored:
+            self._clear_viewer_layout()
+            self._apply_default_viewer_layout()
+            return False
+
+        self._sync_viewer_dock_headers()
+        return True
+
+    def _clear_viewer_layout(self) -> None:
+        settings = self._viewer_layout_settings()
+        settings.remove(self.VIEWER_GEOMETRY_SETTINGS_KEY)
+        settings.remove(self.VIEWER_DOCK_STATE_SETTINGS_KEY)
+
+    @staticmethod
+    def _encode_qbytearray(value: QByteArray) -> str:
+        return bytes(value.toBase64()).decode('ascii')
+
+    @staticmethod
+    def _decode_qbytearray(value: str) -> QByteArray:
+        return QByteArray.fromBase64(value.encode('ascii'))
+
+    def export_appearance_layout_preferences(self) -> dict[str, Any]:
+        settings = self._viewer_layout_settings()
+        preferences: dict[str, Any] = {}
+
+        if self.windows:
+            window = self.windows[0]
+            preferences['viewer_geometry'] = self._encode_qbytearray(window.saveGeometry())
+            preferences['viewer_dock_state'] = self._encode_qbytearray(
+                window.saveState(self.VIEWER_LAYOUT_STATE_VERSION)
+            )
+
+        controls = self.controls
+        if controls is not None and hasattr(controls, 'export_preferences'):
+            preferences['controls'] = controls.export_preferences()
+
+        splitter_sizes: dict[str, list[int]] = {}
+        for key in settings.allKeys():
+            key = str(key)
+            if not key.endswith(' Grip Splitter Sizes'):
+                continue
+            raw_sizes = settings.value(key, [], list)
+            try:
+                splitter_sizes[key] = [int(size) for size in raw_sizes]
+            except (TypeError, ValueError):
+                continue
+        if splitter_sizes:
+            preferences['splitter_sizes'] = splitter_sizes
+
+        return preferences
+
+    def import_appearance_layout_preferences(self, preferences: Mapping[str, Any]) -> None:
+        self.validate_appearance_layout_preferences(preferences)
+
+        settings = self._viewer_layout_settings()
+        window = self.windows[0] if self.windows else None
+        previous_geometry = window.saveGeometry() if window is not None else None
+        previous_dock_state = (
+            window.saveState(self.VIEWER_LAYOUT_STATE_VERSION) if window is not None else None
+        )
+
+        def restore_previous_layout() -> None:
+            if window is None:
+                return
+            if previous_geometry is not None:
+                window.restoreGeometry(previous_geometry)
+            if previous_dock_state is not None:
+                window.restoreState(previous_dock_state, self.VIEWER_LAYOUT_STATE_VERSION)
+            self._sync_viewer_dock_headers()
+
+        viewer_geometry = preferences.get('viewer_geometry')
+        viewer_dock_state = preferences.get('viewer_dock_state')
+        if viewer_geometry is not None:
+            geometry = self._decode_qbytearray(viewer_geometry)
+        else:
+            geometry = None
+
+        if viewer_dock_state is not None:
+            dock_state = self._decode_qbytearray(viewer_dock_state)
+        else:
+            dock_state = None
+
+        if window is not None and geometry is not None:
+            if not window.restoreGeometry(geometry):
+                restore_previous_layout()
+                raise ValueError('appearance_layout.viewer_geometry is invalid')
+        if window is not None and dock_state is not None:
+            if not window.restoreState(dock_state, self.VIEWER_LAYOUT_STATE_VERSION):
+                restore_previous_layout()
+                raise ValueError('appearance_layout.viewer_dock_state is invalid')
+            self._sync_viewer_dock_headers()
+
+        try:
+            controls_preferences = preferences.get('controls', {})
+            controls = self.controls
+            if controls_preferences and controls is not None and hasattr(controls, 'import_preferences'):
+                controls.import_preferences(controls_preferences)
+
+            if geometry is not None:
+                settings.setValue(self.VIEWER_GEOMETRY_SETTINGS_KEY, geometry)
+            if dock_state is not None:
+                settings.setValue(self.VIEWER_DOCK_STATE_SETTINGS_KEY, dock_state)
+
+            splitter_sizes = preferences.get('splitter_sizes', {})
+            if splitter_sizes is not None:
+                for key, raw_sizes in splitter_sizes.items():
+                    settings.setValue(str(key), [int(size) for size in raw_sizes])
+
+            settings.sync()
+        except Exception:
+            restore_previous_layout()
+            raise
+
+    def validate_appearance_layout_preferences(self, preferences: Mapping[str, Any]) -> None:
+        if not isinstance(preferences, Mapping):
+            raise ValueError('appearance_layout must be a mapping')
+
+        viewer_geometry = preferences.get('viewer_geometry')
+        viewer_dock_state = preferences.get('viewer_dock_state')
+        if viewer_geometry is not None:
+            if not isinstance(viewer_geometry, str):
+                raise ValueError('appearance_layout.viewer_geometry must be a string')
+
+        if viewer_dock_state is not None:
+            if not isinstance(viewer_dock_state, str):
+                raise ValueError('appearance_layout.viewer_dock_state must be a string')
+
+        splitter_sizes = preferences.get('splitter_sizes', {})
+        if splitter_sizes is not None:
+            if not isinstance(splitter_sizes, Mapping):
+                raise ValueError('appearance_layout.splitter_sizes must be a mapping')
+            for key, raw_sizes in splitter_sizes.items():
+                if not isinstance(raw_sizes, list):
+                    raise ValueError(f'appearance_layout.splitter_sizes.{key} must be a list')
+                try:
+                    [int(size) for size in raw_sizes]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f'appearance_layout.splitter_sizes.{key} must contain integers'
+                    ) from exc
+
+        controls_preferences = preferences.get('controls', {})
+        controls = self.controls
+        if controls_preferences and controls is not None and hasattr(controls, 'validate_preferences'):
+            controls.validate_preferences(controls_preferences)
+
+    def reset_appearance_layout_preferences(self) -> None:
+        settings = self._viewer_layout_settings()
+        self._clear_viewer_layout()
+        for key in settings.allKeys():
+            key = str(key)
+            if key.endswith(' Grip Splitter Sizes'):
+                settings.remove(key)
+        controls = self.controls
+        if controls is not None and hasattr(controls, 'reset_to_defaults'):
+            controls.reset_to_defaults()
+        self._apply_default_viewer_layout()
+        settings.sync()
+
+    def _sync_viewer_dock_headers(self) -> None:
+        for dock in (self.camera_dock, self.plots_dock):
+            if dock is not None:
+                self._set_viewer_dock_header_visible(dock, dock.isFloating())
+
+    def _apply_default_viewer_layout(self) -> None:
+        if not self.windows or self.camera_dock is None or self.plots_dock is None:
+            return
+
+        window = self.windows[0]
+        self.camera_dock.show()
+        self.plots_dock.show()
+        self.camera_dock.setFloating(False)
+        self.plots_dock.setFloating(False)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.camera_dock)
+        window.splitDockWidget(self.camera_dock, self.plots_dock, Qt.Orientation.Vertical)
+        window.resizeDocks(
+            [self.camera_dock, self.plots_dock],
+            [max(1, window.height() * 2 // 3), max(1, window.height() // 3)],
+            Qt.Orientation.Vertical,
+        )
+        window.resizeDocks(
+            [self.camera_dock],
+            [max(300, window.width() - self.central_widgets[0].sizeHint().width())],
+            Qt.Orientation.Horizontal,
+        )
+        self._sync_viewer_dock_headers()
+
+    def _reset_viewer_layout(self) -> None:
+        self._clear_viewer_layout()
+        self._apply_default_viewer_layout()
 
     def update_view_coords(self):
         pass
@@ -1222,6 +3678,9 @@ class UIManager(ManagerProcessBase):
         command = RemoveBeadsFromPendingMovesCommand(ids=moved_ids)
         self.send_ipc(command)
 
+        if hasattr(self.controls, 'xy_lock_panel'):
+            self.controls.xy_lock_panel.notify_correction()
+
     def add_bead(self, pos: QPoint):
         if self._bead_next_id >= self._bead_roi_capacity:
             self.show_error(
@@ -1280,7 +3739,7 @@ class UIManager(ManagerProcessBase):
         dialog.finished.connect(self._on_auto_bead_selection_dialog_finished)
         dialog.selectionAccepted.connect(self._apply_auto_bead_selection)
         self._auto_bead_selection_dialog = dialog
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
         dialog.open()
 
     def _apply_auto_bead_selection(self, rois: list[tuple[int, int, int, int]]) -> None:
@@ -1318,7 +3777,7 @@ class UIManager(ManagerProcessBase):
 
     def _on_auto_bead_selection_dialog_finished(self, _result: int) -> None:
         self._auto_bead_selection_dialog = None
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
 
     def remove_bead(self, id: int):
         old_selected = self._normalize_bead_id(self.selected_bead)
@@ -1365,6 +3824,7 @@ class UIManager(ManagerProcessBase):
         if not self._bead_rois:
             self._bead_next_id = 0
             self._update_next_bead_id_label()
+            self._update_bead_count_label()
             return
 
         old_active_bead = self._active_bead_id
@@ -1392,28 +3852,44 @@ class UIManager(ManagerProcessBase):
         self._refresh_bead_overlay()
 
     def _update_roi_labels(self, roi: int) -> None:
+        self._update_bead_roi_size_label(roi)
         if self.controls is None:
             return
 
-        self.controls.bead_selection_panel.roi_size_label.setText(
-            f"{roi} x {roi} pixels"
-        )
-        self.controls.z_lut_generation_panel.roi_size_label.setText(
-            f"{roi} x {roi} pixels"
-        )
+        zlut_generation_panel = getattr(self.controls, 'z_lut_generation_panel', None)
+        if zlut_generation_panel is not None:
+            zlut_generation_panel.roi_size_label.setText(f"{roi} x {roi} pixels")
 
     def _update_next_bead_id_label(self) -> None:
-        if self.controls is None:
+        if self.bead_next_id_label is not None:
+            self.bead_next_id_label.setText(f"Next Bead ID: {self._bead_next_id}")
+
+    def _update_bead_roi_size_label(self, roi: int | None = None) -> None:
+        if self.bead_roi_size_label is None:
             return
 
-        self.controls.bead_selection_panel.update_next_bead_id_label(
-            self._bead_next_id
-        )
+        if roi is None:
+            try:
+                roi = self.settings["ROI"]
+            except (KeyError, TypeError, AttributeError):
+                roi = None
+
+        roi_text = "--" if roi is None else str(roi)
+        self.bead_roi_size_label.setText(f"ROI: {roi_text} px")
+
+    def _update_bead_count_label(self) -> None:
+        if self.bead_total_count_label is not None:
+            self.bead_total_count_label.setText(f"Total Beads: {len(self._bead_rois)}")
+
+    def _update_live_bead_toolbar_labels(self) -> None:
+        self._update_bead_roi_size_label()
+        self._update_bead_count_label()
+        self._update_next_bead_id_label()
 
     def _clear_pending_bead_add(self) -> None:
         self._pending_bead_add_id = None
         self._pending_bead_add_roi = None
-        self._update_auto_bead_selection_button_state()
+        self._update_auto_bead_selection_action_state()
 
     def _calculate_next_bead_id(self) -> int:
         if not self._bead_rois:
@@ -1545,9 +4021,10 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
     def set_acquisition_dir(self, value: str | None):
         super().set_acquisition_dir(value)
-        textedit = self.controls.acquisition_panel.acquisition_dir_textedit
+        panel = self.controls.acquisition_panel
+        textedit = panel.acquisition_dir_textedit
         textedit.blockSignals(True) # to prevent a loop
-        textedit.setText(value or '')
+        panel.set_acquisition_dir_text(value)
         textedit.blockSignals(False)
 
     @register_ipc_command(SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
@@ -1594,6 +4071,8 @@ class UIManager(ManagerProcessBase):
     @register_ipc_command(UpdateZLockTargetCommand)
     def update_z_lock_target(self, value: float):
         self.controls.z_lock_panel.update_target(value)
+        if hasattr(self.controls.z_lock_panel, 'notify_correction'):
+            self.controls.z_lock_panel.notify_correction()
 
     @register_ipc_command(UpdateZLockIntervalCommand)
     def update_z_lock_interval(self, value: float):
@@ -1611,12 +4090,150 @@ class UIManager(ManagerProcessBase):
         if not filepath:
             return
 
+        self._set_current_zlut(filepath=filepath)
         command = LoadZLUTCommand(filepath=filepath)
         self.send_ipc(command)
 
     def clear_zlut(self) -> None:
+        self.unload_zlut()
+
+    def unload_zlut(self) -> None:
+        self._set_current_zlut(filepath=None)
         command = UnloadZLUTCommand()
         self.send_ipc(command)
+
+    def load_zlut_file_dialog(self) -> None:
+        settings = QSettings('MagScope', 'MagScope')
+        last_value = settings.value(
+            'last zlut directory',
+            os.path.expanduser('~'),
+            type=str,
+        )
+        path, _ = QFileDialog.getOpenFileName(
+            self.windows[0] if self.windows else None,
+            'Load Z-LUT',
+            last_value,
+            'Text Files (*.txt)',
+        )
+        if not path:
+            return
+
+        directory = os.path.dirname(path) or last_value
+        settings.setValue('last zlut directory', directory)
+        self.request_zlut_file(path)
+
+    def show_current_zlut_dialog(self) -> None:
+        if self._current_zlut_filepath is None:
+            return
+
+        parent = self.windows[0] if self.windows else None
+        if (
+            self._current_zlut_dialog is not None
+            and getattr(self._current_zlut_dialog, '_matplotlib_disposed', False)
+        ):
+            self._current_zlut_dialog = None
+
+        if self._current_zlut_dialog is None:
+            dialog = CurrentZLUTDialog(parent)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            dialog.destroyed.connect(lambda *_: self._clear_current_zlut_dialog_ref())
+            self._current_zlut_dialog = dialog
+        self._update_current_zlut_dialog()
+        self._current_zlut_dialog.show()
+        self._current_zlut_dialog.raise_()
+        self._current_zlut_dialog.activateWindow()
+
+    def _clear_current_zlut_dialog_ref(self) -> None:
+        self._current_zlut_dialog = None
+
+    def show_new_zlut_dialog(self) -> None:
+        preflight_error = self._zlut_generation_preflight_error()
+        if preflight_error is not None:
+            self.show_warning('Cannot generate Z-LUT', preflight_error)
+            return
+
+        parent = self.windows[0] if self.windows else None
+        dialog = ZLUTGenerationSetupDialog(
+            parent,
+            roi_size=int(self.settings['ROI']),
+            default_measurements=int(self.settings['video buffer n images']),
+        )
+        self._zlut_generation_setup_dialog = dialog
+        try:
+            if not dialog.exec():
+                return
+            values = dialog.values
+            if values is None:
+                return
+            start_nm, step_nm, stop_nm, profiles_per_bead = values
+            self.start_zlut_generation(
+                start_nm=start_nm,
+                step_nm=step_nm,
+                stop_nm=stop_nm,
+                profiles_per_bead=profiles_per_bead,
+            )
+        finally:
+            self._zlut_generation_setup_dialog = None
+
+    def _zlut_generation_preflight_error(self) -> str | None:
+        if not self._bead_rois:
+            return 'At least one bead ROI must be selected before generating a Z-LUT.'
+        if self.video_buffer is None:
+            return 'Video buffer is not available.'
+        if self._acquisition_mode not in self._ZLUT_TRACKING_ACQUISITION_MODES:
+            return (
+                'Z-LUT generation requires a tracking acquisition mode. '
+                'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
+            )
+
+        focus_motor_names = self._registered_focus_motor_names()
+        if not focus_motor_names:
+            return 'No FocusMotorBase hardware is registered.'
+        if len(focus_motor_names) > 1:
+            return 'Z-LUT generation requires exactly one registered FocusMotorBase hardware manager.'
+        return None
+
+    def _registered_focus_motor_names(self) -> list[str]:
+        from magscope.hardware import FocusMotorBase
+
+        focus_motor_names: list[str] = []
+        for name, hardware_type in self.hardware_types.items():
+            try:
+                if issubclass(hardware_type, FocusMotorBase):
+                    focus_motor_names.append(name)
+            except TypeError:
+                continue
+        return focus_motor_names
+
+    def _set_current_zlut(
+        self,
+        *,
+        filepath: str | None,
+        z_min: float | None = None,
+        z_max: float | None = None,
+        step_size: float | None = None,
+        profile_length: int | None = None,
+    ) -> None:
+        self._current_zlut_filepath = filepath
+        self._current_zlut_metadata = {
+            'z_min': z_min,
+            'z_max': z_max,
+            'step_size': step_size,
+            'profile_length': profile_length,
+        }
+        self._update_zlut_menu_action_state()
+        self._update_current_zlut_dialog()
+
+    def _update_current_zlut_dialog(self) -> None:
+        if self._current_zlut_dialog is None:
+            return
+        self._current_zlut_dialog.update_zlut(
+            self._current_zlut_filepath,
+            z_min=self._current_zlut_metadata['z_min'],
+            z_max=self._current_zlut_metadata['z_max'],
+            step_size=self._current_zlut_metadata['step_size'],
+            profile_length=self._current_zlut_metadata['profile_length'],
+        )
 
     def _clear_zlut_generation_preview(
         self,
@@ -1766,12 +4383,13 @@ class UIManager(ManagerProcessBase):
                              z_max: float | None = None,
                              step_size: float | None = None,
                              profile_length: int | None = None) -> None:
-        if self.controls is None:
-            return
-
-        panel = self.controls.zlut_panel
-        panel.set_filepath(filepath)
-        panel.update_metadata(z_min, z_max, step_size, profile_length)
+        self._set_current_zlut(
+            filepath=filepath,
+            z_min=z_min,
+            z_max=z_max,
+            step_size=step_size,
+            profile_length=profile_length,
+        )
 
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:
@@ -1789,19 +4407,19 @@ class UIManager(ManagerProcessBase):
         z_axis_max_nm: float | None = None,
         z_axis_descending: bool = False,
     ) -> None:
-        if self.controls is None:
-            return
         self._zlut_generation_phase = phase
         self._zlut_generation_z_axis_min_nm = z_axis_min_nm
         self._zlut_generation_z_axis_max_nm = z_axis_max_nm
         self._zlut_generation_z_axis_descending = bool(z_axis_descending)
-        self.controls.z_lut_generation_panel.update_state(
-            status,
-            detail,
-            running=running,
-            can_cancel=can_cancel,
-            phase=phase,
-        )
+        panel = getattr(self.controls, 'z_lut_generation_panel', None) if self.controls is not None else None
+        if panel is not None:
+            panel.update_state(
+                status,
+                detail,
+                running=running,
+                can_cancel=can_cancel,
+                phase=phase,
+            )
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_state(
                 status,
@@ -1840,8 +4458,6 @@ class UIManager(ManagerProcessBase):
         capture_capacity: int,
         motor_z_value: float | None = None,
     ) -> None:
-        if self.controls is None:
-            return
         if self._zlut_generation_dialog is not None:
             self._zlut_generation_dialog.update_progress(
                 current_step,
@@ -1986,9 +4602,9 @@ class AddColumnDropTarget(QFrame):
             self._set_active(False)
 
     def _set_active(self, active: bool) -> None:
-        color = "palette(highlight)" if active else "palette(midlight)"
+        color = get_accent_color() if active else "palette(midlight)"
         self.setStyleSheet(
-            "#add_column_drop_target { border: 2px dashed %s; border-radius: 6px; }" % color
+            "#add_column_drop_target { border: 2px dashed %s; border-radius: 0px; }" % color
         )
 
     def _wrapper_from_event(self, event) -> PanelWrapper | None:
@@ -2036,7 +4652,7 @@ class AddColumnDropTarget(QFrame):
         self._controls.create_new_column_with_panel(wrapper)
         event.acceptProposedAction()
 
-class Controls(QWidget):
+class LegacyDraggableControls(QWidget):
     """Container widget hosting draggable, persistent control panels."""
 
     LAYOUT_SETTINGS_GROUP = "controls/layout"
@@ -2045,6 +4661,7 @@ class Controls(QWidget):
         super().__init__()
         self.manager = manager
         self.panels: dict[str, ControlPanelBase | QWidget] = {}
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
 
         self._settings = QSettings("MagScope", "MagScope")
 
@@ -2074,7 +4691,7 @@ class Controls(QWidget):
         stored_layout = self.layout_manager.stored_layout()
         self._update_column_counter(stored_layout.keys())
 
-        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
+        self._add_column("left", index=0)
         for name in stored_layout.keys():
             if name in self.layout_manager.columns:
                 continue
@@ -2083,14 +4700,9 @@ class Controls(QWidget):
             self._add_column("right")
 
         # Instantiate standard panels
-        self.help_panel = HelpPanel(self.manager)
-        self.reset_panel = ResetPanel(self.manager)
-        self.settings_panel = MagScopeSettingsPanel(self.manager)
         self.acquisition_panel = AcquisitionPanel(self.manager)
-        self.bead_selection_panel = BeadSelectionPanel(self.manager)
         self.camera_panel = CameraPanel(self.manager)
         self.histogram_panel = HistogramPanel(self.manager)
-        self.tracking_options_panel = TrackingOptionsPanel(self.manager)
         self.plot_settings_panel = PlotSettingsPanel(self.manager)
         self.allan_deviation_panel = (
             AllanDeviationPanel(self.manager) if has_tweezepy_support() else None
@@ -2100,33 +4712,21 @@ class Controls(QWidget):
         self.status_panel = StatusPanel(self.manager)
         self.xy_lock_panel = XYLockPanel(self.manager)
         self.z_lock_panel = ZLockPanel(self.manager)
-        self.zlut_panel = ZLUTPanel(self.manager)
-        self.z_lut_generation_panel = ZLUTGenerationPanel(self.manager)
-
-        self.zlut_panel.zlut_file_selected.connect(self.manager.request_zlut_file)
-        self.zlut_panel.zlut_clear_requested.connect(self.manager.clear_zlut)
 
         definitions: list[tuple[str, QWidget, str, bool]] = [
-            ("HelpPanel", self.help_panel, "left", False),
-            ("ResetPanel", self.reset_panel, "left", False),
-            ("MagScopeSettingsPanel", self.settings_panel, "left", True),
             ("StatusPanel", self.status_panel, "left", True),
-            ("BeadSelectionPanel", self.bead_selection_panel, "left", True),
             ("CameraPanel", self.camera_panel, "left", True),
             ("AcquisitionPanel", self.acquisition_panel, "left", True),
-            ("TrackingOptionsPanel", self.tracking_options_panel, "left", True),
             ("HistogramPanel", self.histogram_panel, "left", True),
             ("ProfilePanel", self.profile_panel, "left", True),
             ("PlotSettingsPanel", self.plot_settings_panel, "right", True),
-            ("ZLUTPanel", self.zlut_panel, "right", True),
-            ("ZLUTGenerationPanel", self.z_lut_generation_panel, "right", True),
             ("ScriptPanel", self.script_panel, "right", True),
             ("XYLockPanel", self.xy_lock_panel, "right", True),
             ("ZLockPanel", self.z_lock_panel, "right", True),
         ]
         if self.allan_deviation_panel is not None:
             definitions.insert(
-                definitions.index(("ZLUTPanel", self.zlut_panel, "right", True)),
+                definitions.index(("ScriptPanel", self.script_panel, "right", True)),
                 ("AllanDeviationPanel", self.allan_deviation_panel, "right", True),
             )
 
@@ -2209,6 +4809,7 @@ class Controls(QWidget):
 
         if name not in self._column_scrolls:
             scroll = QScrollArea(self)
+            _set_widget_background(scroll.viewport(), APP_BACKGROUND_COLOR)
             scroll.setWidgetResizable(True)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -2272,6 +4873,22 @@ class Controls(QWidget):
         self.layout_manager.layout_changed()
         self._add_column_target.refresh_visibility()
 
+    def reveal_panel(self, panel_id: str) -> None:
+        panel = self.panels.get(panel_id)
+        if panel is None:
+            return
+
+        groupbox = getattr(panel, "groupbox", None)
+        if isinstance(groupbox, CollapsibleGroupBox) and groupbox.collapsed:
+            groupbox._apply_collapsed_state(False, animate=False, persist=True)
+
+        wrapper = self.layout_manager.wrapper_for_id(panel_id)
+        if wrapper is None or wrapper.column is None:
+            return
+        scroll = self._column_scrolls.get(wrapper.column.name)
+        if scroll is not None:
+            scroll.ensureWidgetVisible(wrapper)
+
     def reset_to_defaults(self) -> None:
         """Restore panel visibility, order, and columns to defaults."""
 
@@ -2299,7 +4916,7 @@ class Controls(QWidget):
         self.layout_manager.columns = OrderedDict()
         self._column_counter = 1
 
-        self._add_column("left", pinned_ids={"HelpPanel", "ResetPanel"}, index=0)
+        self._add_column("left", index=0)
         self._add_column("right")
 
         for panel_id in self.layout_manager._default_order:
@@ -2333,3 +4950,578 @@ class Controls(QWidget):
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
         self._add_column_target.refresh_visibility()
+
+
+WORKFLOW_TAB_MIME_TYPE = "application/x-magscope-workflow-tab"
+
+
+class WorkflowTabBar(QTabBar):
+    """Tab bar that supports moving workflow tabs between control columns."""
+
+    def __init__(self, tab_widget: "WorkflowTabWidget") -> None:
+        super().__init__(tab_widget)
+        self._tab_widget = tab_widget
+        self._drag_start_pos: QPoint | None = None
+        self.setAcceptDrops(True)
+
+    def mousePressEvent(self, event):  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # type: ignore[override]
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            return
+        if self._drag_start_pos is None:
+            super().mouseMoveEvent(event)
+            return
+        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            super().mouseMoveEvent(event)
+            return
+
+        index = self.tabAt(self._drag_start_pos)
+        tab_id = self._tab_widget.tab_id_at(index)
+        if tab_id is None:
+            super().mouseMoveEvent(event)
+            return
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        payload = json.dumps(
+            {
+                "tab_id": tab_id,
+                "source_column": self._tab_widget.column_index,
+            }
+        )
+        mime.setData(WORKFLOW_TAB_MIME_TYPE, payload.encode("utf-8"))
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        if not event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            event.ignore()
+            return
+
+        try:
+            payload = json.loads(bytes(event.mimeData().data(WORKFLOW_TAB_MIME_TYPE)).decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError):
+            event.ignore()
+            return
+
+        tab_id = payload.get("tab_id")
+        if not isinstance(tab_id, str):
+            event.ignore()
+            return
+
+        target_index = self.tabAt(event.position().toPoint())
+        if target_index < 0:
+            target_index = self.count()
+        self._tab_widget.controls.move_workflow_tab(
+            tab_id,
+            self._tab_widget.column_index,
+            target_index,
+        )
+        event.acceptProposedAction()
+
+
+class WorkflowTabWidget(QTabWidget):
+    """A tab widget representing one adaptive workflow control column."""
+
+    def __init__(self, controls: "Controls", column_index: int) -> None:
+        super().__init__(controls)
+        self.controls = controls
+        self.column_index = column_index
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
+        self.setTabBar(WorkflowTabBar(self))
+        self.setDocumentMode(True)
+        self.setUsesScrollButtons(True)
+        self.setAcceptDrops(True)
+        self.setMinimumWidth(Controls.MIN_COLUMN_WIDTH)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def tab_id_at(self, index: int) -> str | None:
+        if index < 0:
+            return None
+        value = self.tabBar().tabData(index)
+        return str(value) if value else None
+
+    def _dragged_tab_id(self, event) -> str | None:
+        if not event.mimeData().hasFormat(WORKFLOW_TAB_MIME_TYPE):
+            return None
+        try:
+            payload = json.loads(bytes(event.mimeData().data(WORKFLOW_TAB_MIME_TYPE)).decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return None
+        tab_id = payload.get("tab_id")
+        return tab_id if isinstance(tab_id, str) else None
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if self._dragged_tab_id(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._dragged_tab_id(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        tab_id = self._dragged_tab_id(event)
+        if tab_id is None:
+            event.ignore()
+            return
+        self.controls.move_workflow_tab(tab_id, self.column_index, self.count())
+        event.acceptProposedAction()
+
+
+class Controls(QWidget):
+    """Adaptive workflow controls with movable tabs and responsive columns."""
+
+    LAYOUT_SETTINGS_GROUP = "controls/layout"
+    WORKFLOW_COLUMNS_SETTINGS_KEY = "controls/workflow_columns"
+    MIN_COLUMN_WIDTH = 360
+    MAX_COLUMNS = 4
+    WORKFLOW_ORDER = ["Run", "Analysis", "Locking", "Motors"]
+    WORKFLOW_TAB_ALIASES = {"Custom": "Motors"}
+
+    DEFAULT_LAYOUTS = {
+        1: [["Run", "Analysis", "Locking", "Motors"]],
+        2: [["Run", "Motors"], ["Analysis", "Locking"]],
+        3: [["Run", "Motors"], ["Analysis"], ["Locking"]],
+        4: [["Run"], ["Analysis"], ["Locking"], ["Motors"]],
+    }
+
+    def __init__(self, manager: UIManager):
+        super().__init__()
+        self.manager = manager
+        self.panels: dict[str, ControlPanelBase | QWidget] = {}
+        _set_widget_background(self, APP_BACKGROUND_COLOR)
+        self._settings = QSettings("MagScope", "MagScope")
+        self._tab_widgets: list[WorkflowTabWidget] = []
+        self._tab_pages: dict[str, QScrollArea] = {}
+        self._tab_content_layouts: dict[str, QVBoxLayout] = {}
+        self._panel_to_tab: dict[str, str] = {}
+        self._current_column_count = 0
+        self._loading_layout = False
+
+        self.setMinimumWidth(self.MIN_COLUMN_WIDTH)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(6)
+
+        self._columns_layout = QHBoxLayout()
+        self._columns_layout.setContentsMargins(0, 0, 0, 0)
+        self._columns_layout.setSpacing(6)
+        root_layout.addLayout(self._columns_layout, 1)
+
+        self._create_standard_panels()
+        self._create_workflow_pages()
+        self._populate_workflow_pages()
+        self._apply_workflow_layout(self._default_layout_for_count(1), save=False)
+
+    @property
+    def settings(self):
+        return self.manager.settings
+
+    @settings.setter
+    def settings(self, value):
+        raise AttributeError("Read-only attribute.")
+
+    def _create_standard_panels(self) -> None:
+        self.acquisition_panel = AcquisitionPanel(self.manager)
+        self.camera_panel = CameraPanel(self.manager)
+        self.histogram_panel = HistogramPanel(self.manager)
+        self.plot_settings_panel = PlotSettingsPanel(self.manager)
+        self.allan_deviation_panel = (
+            AllanDeviationPanel(self.manager) if has_tweezepy_support() else None
+        )
+        self.profile_panel = ProfilePanel(self.manager)
+        self.script_panel = ScriptPanel(self.manager)
+        self.status_panel = StatusPanel(self.manager)
+        self.xy_lock_panel = XYLockPanel(self.manager)
+        self.z_lock_panel = ZLockPanel(self.manager)
+
+        panel_tabs: list[tuple[str, QWidget, str]] = [
+            ("StatusPanel", self.status_panel, "Run"),
+            ("AcquisitionPanel", self.acquisition_panel, "Run"),
+            ("CameraPanel", self.camera_panel, "Run"),
+            ("ScriptPanel", self.script_panel, "Run"),
+            ("PlotSettingsPanel", self.plot_settings_panel, "Analysis"),
+            ("HistogramPanel", self.histogram_panel, "Analysis"),
+            ("ProfilePanel", self.profile_panel, "Analysis"),
+            ("XYLockPanel", self.xy_lock_panel, "Locking"),
+            ("ZLockPanel", self.z_lock_panel, "Locking"),
+        ]
+        if self.allan_deviation_panel is not None:
+            panel_tabs.insert(
+                panel_tabs.index(("XYLockPanel", self.xy_lock_panel, "Locking")),
+                ("AllanDeviationPanel", self.allan_deviation_panel, "Analysis"),
+            )
+
+        for panel_id, panel, tab_id in panel_tabs:
+            self.panels[panel_id] = panel
+            self._panel_to_tab[panel_id] = tab_id
+
+        for control_factory, _column in self.manager.controls_to_add:
+            widget = control_factory(self.manager)
+            panel_id = widget.__class__.__name__
+            self.panels[panel_id] = widget
+            self._panel_to_tab[panel_id] = "Motors"
+
+        if not getattr(self.manager, "hardware_types", {}):
+            self.motors_placeholder_panel = MotorsPlaceholderPanel(self.manager)
+            self.panels["MotorsPlaceholderPanel"] = self.motors_placeholder_panel
+            self._panel_to_tab["MotorsPlaceholderPanel"] = "Motors"
+
+    def _create_workflow_pages(self) -> None:
+        for tab_id in self.WORKFLOW_ORDER:
+            content = QWidget(self)
+            _set_widget_background(content, APP_BACKGROUND_COLOR)
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(0, 6, 0, 6)
+            content_layout.setSpacing(6)
+            content_layout.addStretch(1)
+
+            scroll = QScrollArea(self)
+            _set_widget_background(scroll.viewport(), APP_BACKGROUND_COLOR)
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(content)
+
+            self._tab_pages[tab_id] = scroll
+            self._tab_content_layouts[tab_id] = content_layout
+
+    def _populate_workflow_pages(self) -> None:
+        for panel_id, panel in self.panels.items():
+            tab_id = self._panel_to_tab.get(panel_id, "Motors")
+            layout = self._tab_content_layouts[tab_id]
+            layout.insertWidget(max(0, layout.count() - 1), panel)
+
+    def _desired_column_count(self) -> int:
+        width = max(self.width(), self.MIN_COLUMN_WIDTH)
+        count = max(1, width // self.MIN_COLUMN_WIDTH)
+        return min(self.MAX_COLUMNS, len(self.WORKFLOW_ORDER), int(count))
+
+    def _default_layout_for_count(self, count: int) -> list[list[str]]:
+        return [list(column) for column in self.DEFAULT_LAYOUTS.get(count, self.DEFAULT_LAYOUTS[self.MAX_COLUMNS])]
+
+    def _load_saved_layout(self) -> list[list[str]] | None:
+        raw_value = self._settings.value(self.WORKFLOW_COLUMNS_SETTINGS_KEY, "", type=str)
+        if not raw_value:
+            return None
+        try:
+            value = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(value, list):
+            return None
+        normalized: list[list[str]] = []
+        used: set[str] = set()
+        for column in value:
+            if not isinstance(column, list):
+                continue
+            normalized_column: list[str] = []
+            for tab_id in column:
+                tab_id = self._canonical_workflow_tab_id(tab_id)
+                if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
+                    normalized_column.append(tab_id)
+                    used.add(tab_id)
+            normalized.append(normalized_column)
+        for tab_id in self.WORKFLOW_ORDER:
+            if tab_id not in used:
+                if not normalized:
+                    normalized.append([])
+                normalized[-1].append(tab_id)
+        return normalized
+
+    def _save_workflow_layout(self) -> None:
+        if self._loading_layout:
+            return
+        self._settings.setValue(
+            self.WORKFLOW_COLUMNS_SETTINGS_KEY,
+            json.dumps(self._current_workflow_layout()),
+        )
+
+    def _current_workflow_layout(self) -> list[list[str]]:
+        columns: list[list[str]] = []
+        for tab_widget in self._tab_widgets:
+            column: list[str] = []
+            tab_bar = tab_widget.tabBar()
+            for index in range(tab_widget.count()):
+                value = tab_bar.tabData(index)
+                if value:
+                    column.append(str(value))
+            columns.append(column)
+        return columns
+
+    @classmethod
+    def _canonical_workflow_tab_id(cls, tab_id: Any) -> str:
+        tab_id = str(tab_id)
+        return cls.WORKFLOW_TAB_ALIASES.get(tab_id, tab_id)
+
+    def _layout_for_column_count(self, count: int) -> list[list[str]]:
+        saved = self._load_saved_layout()
+        if saved is None:
+            return self._default_layout_for_count(count)
+
+        columns = [list(column) for column in saved]
+        if len(columns) > count:
+            merged = columns[: count - 1]
+            overflow: list[str] = []
+            for column in columns[count - 1 :]:
+                overflow.extend(column)
+            merged.append(overflow)
+            columns = merged
+        elif len(columns) < count:
+            columns = self._expand_layout_to_count(columns, count)
+        else:
+            columns = self._fill_empty_columns(columns, self._default_layout_for_count(count))
+        return columns[:count]
+
+    def _expand_layout_to_count(self, columns: list[list[str]], count: int) -> list[list[str]]:
+        expanded = [list(column) for column in columns]
+        while len(expanded) < count:
+            expanded.append([])
+        return self._fill_empty_columns(expanded, self._default_layout_for_count(count))
+
+    def _fill_empty_columns(
+        self,
+        columns: list[list[str]],
+        preferred_layout: list[list[str]],
+    ) -> list[list[str]]:
+        for empty_index, column in enumerate(columns):
+            if column:
+                continue
+
+            moved_tabs = self._tabs_for_empty_column(columns, preferred_layout, empty_index)
+            if not moved_tabs:
+                continue
+            columns[empty_index].extend(moved_tabs)
+        return columns
+
+    def _tabs_for_empty_column(
+        self,
+        columns: list[list[str]],
+        preferred_layout: list[list[str]],
+        empty_index: int,
+    ) -> list[str]:
+        preferred_tabs = preferred_layout[empty_index] if empty_index < len(preferred_layout) else []
+        for source in columns:
+            if len(source) <= 1:
+                continue
+            movable_tabs = [tab_id for tab_id in preferred_tabs if tab_id in source]
+            if not movable_tabs or len(source) - len(movable_tabs) < 1:
+                continue
+            for tab_id in movable_tabs:
+                source.remove(tab_id)
+            return movable_tabs
+
+        source = max((column for column in columns if len(column) > 1), key=len, default=None)
+        if source is None:
+            return []
+        return [source.pop()]
+
+    def _clear_tab_widgets(self) -> None:
+        while self._tab_widgets:
+            tab_widget = self._tab_widgets.pop()
+            while tab_widget.count():
+                tab_widget.removeTab(0)
+            self._columns_layout.removeWidget(tab_widget)
+            tab_widget.deleteLater()
+
+    def _apply_workflow_layout(self, layout: list[list[str]], *, save: bool) -> None:
+        self._loading_layout = True
+        try:
+            self._clear_tab_widgets()
+            for column_index, tab_ids in enumerate(layout):
+                tab_widget = WorkflowTabWidget(self, column_index)
+                self._columns_layout.addWidget(tab_widget, 1)
+                self._tab_widgets.append(tab_widget)
+                for tab_id in tab_ids:
+                    page = self._tab_pages.get(tab_id)
+                    if page is None:
+                        continue
+                    index = tab_widget.addTab(page, tab_id)
+                    tab_widget.tabBar().setTabData(index, tab_id)
+        finally:
+            self._current_column_count = len(layout)
+            self._loading_layout = False
+        if save:
+            self._save_workflow_layout()
+
+    def _sync_column_count_to_width(self) -> None:
+        desired = self._desired_column_count()
+        if desired == self._current_column_count:
+            return
+        self._apply_workflow_layout(self._layout_for_column_count(desired), save=False)
+
+    def move_workflow_tab(self, tab_id: str, target_column: int, target_index: int) -> None:
+        if tab_id not in self._tab_pages or not self._tab_widgets:
+            return
+        target_column = max(0, min(target_column, len(self._tab_widgets) - 1))
+        target_widget = self._tab_widgets[target_column]
+        source_widget: WorkflowTabWidget | None = None
+        source_index = -1
+        for tab_widget in self._tab_widgets:
+            for index in range(tab_widget.count()):
+                if tab_widget.tab_id_at(index) == tab_id:
+                    source_widget = tab_widget
+                    source_index = index
+                    break
+            if source_widget is not None:
+                break
+        if source_widget is None or source_index < 0:
+            return
+
+        page = self._tab_pages[tab_id]
+        if source_widget is target_widget and source_index < target_index:
+            target_index -= 1
+        source_widget.removeTab(source_index)
+        target_index = max(0, min(target_index, target_widget.count()))
+        new_index = target_widget.insertTab(target_index, page, tab_id)
+        target_widget.tabBar().setTabData(new_index, tab_id)
+        target_widget.setCurrentIndex(new_index)
+        self._save_workflow_layout()
+
+    def export_preferences(self) -> dict[str, Any]:
+        panel_collapsed: dict[str, bool] = {}
+        for panel_id, panel in self.panels.items():
+            groupbox = getattr(panel, 'groupbox', None)
+            if isinstance(groupbox, CollapsibleGroupBox):
+                panel_collapsed[panel_id] = bool(groupbox.collapsed)
+
+        return {
+            'workflow_columns': self._current_workflow_layout(),
+            'panel_collapsed': panel_collapsed,
+        }
+
+    def import_preferences(self, preferences: Mapping[str, Any]) -> None:
+        self.validate_preferences(preferences)
+
+        workflow_columns = preferences.get('workflow_columns')
+        if workflow_columns is not None:
+            layout = self._normalise_workflow_layout(workflow_columns)
+            self._apply_workflow_layout(layout, save=True)
+
+        panel_collapsed = preferences.get('panel_collapsed', {})
+        if panel_collapsed is not None:
+            for panel_id, collapsed in panel_collapsed.items():
+                panel = self.panels.get(str(panel_id))
+                if panel is None:
+                    continue
+                groupbox = getattr(panel, 'groupbox', None)
+                if isinstance(groupbox, CollapsibleGroupBox):
+                    groupbox._apply_collapsed_state(collapsed, animate=False, persist=True)
+
+    def validate_preferences(self, preferences: Mapping[str, Any]) -> None:
+        if not isinstance(preferences, Mapping):
+            raise ValueError('appearance_layout.controls must be a mapping')
+
+        workflow_columns = preferences.get('workflow_columns')
+        if workflow_columns is not None:
+            self._normalise_workflow_layout(workflow_columns)
+
+        panel_collapsed = preferences.get('panel_collapsed', {})
+        if panel_collapsed is not None:
+            if not isinstance(panel_collapsed, Mapping):
+                raise ValueError('appearance_layout.controls.panel_collapsed must be a mapping')
+            for panel_id, collapsed in panel_collapsed.items():
+                if not isinstance(collapsed, bool):
+                    raise ValueError(
+                        f'appearance_layout.controls.panel_collapsed.{panel_id} must be a boolean'
+                    )
+
+    def _normalise_workflow_layout(self, raw_layout: Any) -> list[list[str]]:
+        if not isinstance(raw_layout, list):
+            raise ValueError('appearance_layout.controls.workflow_columns must be a list')
+
+        normalized: list[list[str]] = []
+        used: set[str] = set()
+        for raw_column in raw_layout:
+            if not isinstance(raw_column, list):
+                raise ValueError('appearance_layout.controls.workflow_columns columns must be lists')
+            if len(normalized) < self.MAX_COLUMNS:
+                column: list[str] = []
+                normalized.append(column)
+            else:
+                column = normalized[-1]
+            for raw_tab_id in raw_column:
+                tab_id = self._canonical_workflow_tab_id(raw_tab_id)
+                if tab_id in self.WORKFLOW_ORDER and tab_id not in used:
+                    column.append(tab_id)
+                    used.add(tab_id)
+
+        if not normalized:
+            normalized.append([])
+        for tab_id in self.WORKFLOW_ORDER:
+            if tab_id not in used:
+                normalized[-1].append(tab_id)
+        return normalized
+
+    def reveal_panel(self, panel_id: str) -> None:
+        if not hasattr(self, "_panel_to_tab"):
+            Controls._reveal_legacy_panel(self, panel_id)
+            return
+
+        tab_id = self._panel_to_tab.get(panel_id)
+        if tab_id is None:
+            return
+        for tab_widget in self._tab_widgets:
+            for index in range(tab_widget.count()):
+                if tab_widget.tab_id_at(index) == tab_id:
+                    tab_widget.setCurrentIndex(index)
+                    panel = self.panels.get(panel_id)
+                    page = self._tab_pages.get(tab_id)
+                    if isinstance(panel, QWidget) and page is not None:
+                        QTimer.singleShot(0, lambda p=page, w=panel: p.ensureWidgetVisible(w))
+                    return
+
+    def _reveal_legacy_panel(self, panel_id: str) -> None:
+        panel = getattr(self, "panels", {}).get(panel_id)
+        if panel is None:
+            return
+
+        groupbox = getattr(panel, "groupbox", None)
+        if isinstance(groupbox, CollapsibleGroupBox):
+            groupbox._apply_collapsed_state(False, animate=False, persist=True)
+
+        layout_manager = getattr(self, "layout_manager", None)
+        wrapper_for_id = getattr(layout_manager, "wrapper_for_id", None)
+        wrapper = wrapper_for_id(panel_id) if callable(wrapper_for_id) else None
+        column = getattr(wrapper, "column", None)
+        column_name = getattr(column, "name", None)
+        scroll = getattr(self, "_column_scrolls", {}).get(column_name)
+        ensure_visible = getattr(scroll, "ensureWidgetVisible", None)
+        if callable(ensure_visible):
+            ensure_visible(wrapper if wrapper is not None else panel)
+
+    def reset_to_defaults(self) -> None:
+        self._settings.remove(self.WORKFLOW_COLUMNS_SETTINGS_KEY)
+        for panel in self.panels.values():
+            groupbox = getattr(panel, "groupbox", None)
+            if isinstance(groupbox, CollapsibleGroupBox):
+                self._settings.remove(groupbox.settings_key)
+                groupbox.reset_to_default()
+        self._apply_workflow_layout(self._default_layout_for_count(self._desired_column_count()), save=False)
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        super().resizeEvent(event)
+        self._sync_column_count_to_width()

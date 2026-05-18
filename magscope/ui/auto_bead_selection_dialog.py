@@ -25,6 +25,7 @@ from magscope.auto_bead_selection import (
     roi_overlaps,
     run_auto_bead_search_process,
 )
+from magscope.ui.theme import get_accent_color
 from magscope.ui.video_viewer import VideoViewer
 from magscope.ui.widgets import BeadGraphic
 from magscope.utils import numpy_type_to_qt_image_type
@@ -506,10 +507,11 @@ class AutoBeadSelectionDialog(QDialog):
 
     def _apply_instruction_card_style(self, card: QFrame, *, active: bool) -> None:
         if active:
-            background = '#eef5ff'
-            border = '#aac4ee'
-            title_color = '#17365d'
-            body_color = '#26476f'
+            accent_color = get_accent_color()
+            background = '#f4f6f8'
+            border = accent_color
+            title_color = accent_color
+            body_color = '#51657f'
         else:
             background = '#f4f6f8'
             border = '#cfd8e3'

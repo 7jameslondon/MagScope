@@ -18,42 +18,15 @@ This creates the default window layout and begins streaming data from the built-
 You can only launch MagScope once.
 After launching it if you want to start again you must close it and delete the instance (delete ``scope`` in the example).
 
-To close MagScope you can close any of the windows, you might need to wait up to a couple of minutes for it to finish.
-Or you call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
+To close MagScope, close the main MagScope window; shutdown might take up to a couple of minutes.
+Alternatively, call :py:meth:`MagScope.stop <magscope.scope.MagScope.stop>`.
 
 Windows and Multiple Screens
 ----------------------------
 It is often easier to see everything in MagScope with multiple screens.
-By default MagScope will try to detect how many screens your computer has and place one Window in full screen on each.
-Alternatively, you can specify the number of windows between 1-3 using the following::
-
-   import magscope
-
-   scope = magscope.MagScope()
-   scope.ui_manager.n_windows = 1
-   scope.start()
-
-.. list-table::
-   :widths: 15 85
-   :header-rows: 0
-
-   * - One Screen
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/One-Window_v1.jpg
-        :width: 200px
-
-   * - Two Screens
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-a_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Two-Windows-b_v1.jpg
-        :width: 200px
-
-   * - Three Screens
-     - .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-a_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-c_v1.jpg
-        :width: 200px
-       .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Three-Windows-b_v1.jpg
-        :width: 200px
+MagScope opens one main window with dockable Live Camera and Live Plots panes.
+You can undock either pane and move it to another screen, then dock it again by dragging it back into the main window.
+Use the Layout menu to show hidden viewer panes, dock all floating panes, or reset the viewer layout.
 
 Live Video Viewer
 -----------------
@@ -77,11 +50,26 @@ Panels can move arranged by dragging them by the top-right corner. If space perm
    :alt: Demonstration of moving a GUI panel in MagScope
    :align: center
 
-The interface can be reset to the default arrangement by clicking the "Reset the GUI" button in the top-left corner of the window with the control panels.
+The control panels can be reset to their default arrangement from ``Preferences`` by opening the
+``Appearance/Layout`` tab and clicking ``Reset GUI Layout``.
 
-.. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Reset-GUI_v1.jpg
-   :alt: The "Reset the GUI" button
-   :align: center
+Finding Controls
+----------------
+Use the ``Search for controls ...`` box in the top menu bar to find controls without running them.
+Search suggestions appear while you type; press ``Enter`` or select a suggestion to show where that
+control is located. MagScope opens the relevant panel, menu, or Preferences tab, scrolls the control
+into view when needed, and temporarily highlights it. Search is guide-only: it does not click buttons,
+change settings, or execute actions.
+
+Useful examples include:
+
+* ``ROI`` - opens ``Preferences`` and highlights the ROI size setting in the ``MagScope`` tab.
+* ``find beads`` - shows ``Auto Bead Selection`` in the ``Bead Selection`` panel.
+* ``FFT rmin`` - opens ``Preferences`` and highlights the tracking option in the ``Tracking`` tab.
+* ``dock`` - opens the ``Layout`` menu and highlights ``Dock All Windows`` without docking anything.
+
+Press ``Ctrl+K`` or ``Ctrl+F`` to focus the search box. Press ``Escape`` while the search box is
+focused to clear it.
 
 Bead Selection
 --------------
@@ -273,7 +261,7 @@ Z-Lock has five settings which must be set before the Z-Lock will take affect:
 * Bead - Which bead ROI will be kept in focus. This should generally be a reference bead.
 * Target - The Z-value that the selected bead will be maintained at.
 * Interval - The frequency with which the difference between the target value and current value will be checked/adjusted.
-* Max - An upper limit you can set. The Z-Lock will not move more than this amount at a given time. If the Z-Look keep over shooting the target try decreasing this value.
+* Max - An upper limit you can set. The Z-Lock caps each correction at this amount, then applies damping so the motor moves half of the capped correction. If the Z-Lock keeps overshooting the target, try decreasing this value.
 
 .. image:: https://raw.githubusercontent.com/7jameslondon/MagScope/refs/heads/master/assets/Z-Lock_Panel_v1.jpg
          :alt: Screenshot of the Z-Lock panel.

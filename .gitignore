@@ -6,6 +6,8 @@ dev/
 dist/
 *.egg-info/
 *.whl
+.coverage
+htmlcov/
 __pycache__
 .vscode/
 *.ipynb*

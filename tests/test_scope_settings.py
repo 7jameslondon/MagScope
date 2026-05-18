@@ -4,10 +4,27 @@ from typing import Any
 
 from PyQt6.QtCore import QSettings
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from magscope.settings import MagScopeSettings, SettingSpec
+from magscope import settings as settings_module
+from magscope.settings import (
+    DEFAULT_GUI_ACCENT_COLOR,
+    GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    MagScopeSettings,
+    PREFERENCES_BUNDLE_VERSION,
+    TRACKING_OPTIONS_QSETTINGS_GROUP,
+    TRACKING_OPTIONS_QSETTINGS_KEY,
+    SettingSpec,
+    build_preferences_bundle,
+    default_tracking_options,
+    import_preferences_bundle,
+    load_preferences_bundle_mapping,
+    tracking_options_from_qsettings,
+    tracking_options_from_mapping,
+)
 
 
 class FakeQSettings:
@@ -30,8 +47,11 @@ class FakeQSettings:
     def contains(self, key: str) -> bool:
         return key in self._group_store()
 
-    def value(self, key: str) -> Any:
-        return self._group_store()[key]
+    def value(self, key: str, default: Any = None, type: type | None = None) -> Any:
+        value = self._group_store().get(key, default)
+        if type is not None and value is not None:
+            return type(value)
+        return value
 
     def setValue(self, key: str, value: Any) -> None:
         if not type(self).writable:
@@ -115,6 +135,37 @@ def test_settings_validation_and_coercion():
 
     with pytest.raises(KeyError):
         settings["unknown"] = 1
+
+
+def test_gui_accent_color_setting_validates_hex_color():
+    settings = MagScopeSettings()
+
+    assert settings[GUI_ACCENT_COLOR_SETTING] == DEFAULT_GUI_ACCENT_COLOR
+
+    settings[GUI_ACCENT_COLOR_SETTING] = ' #AABBCC '
+    assert settings[GUI_ACCENT_COLOR_SETTING] == '#aabbcc'
+
+    with pytest.raises(ValueError):
+        settings[GUI_ACCENT_COLOR_SETTING] = 'blue'
+
+    with pytest.raises(ValueError):
+        settings[GUI_ACCENT_COLOR_SETTING] = '#abcd'
+
+
+def test_gui_live_plot_progress_indicator_setting_coerces_boolean_strings():
+    settings = MagScopeSettings()
+
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+    assert GUI_LIVE_PLOT_PROGRESS_BAR_SETTING not in list(MagScopeSettings.magscope_panel_keys())
+
+    settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'false'
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is False
+
+    settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'yes'
+    assert settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
+
+    with pytest.raises(ValueError):
+        settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'sometimes'
 
 
 def test_roi_must_be_even():
@@ -204,3 +255,232 @@ def test_settingspec_display_label_defaults_to_key():
 
     spec_without_display = SettingSpec("fallback", int)
     assert spec_without_display.label == "fallback"
+
+
+def test_tracking_options_validation_coerces_values():
+    options = tracking_options_from_mapping(
+        {
+            'center_of_mass': {'background': 'mean'},
+            'n auto_conv_multiline_sub_pixel': '6',
+            'auto_conv_multiline_sub_pixel': {'line_ratio': '0.25', 'n_local': '4'},
+            'use fft_profile': 'yes',
+            'fft_profile': {'oversample': '8', 'rmin': '0.1', 'rmax': '0.9'},
+            'lookup_z': {'n_local': 6},
+        }
+    )
+
+    assert options['center_of_mass']['background'] == 'mean'
+    assert options['n auto_conv_multiline_sub_pixel'] == 6
+    assert options['auto_conv_multiline_sub_pixel']['line_ratio'] == 0.25
+    assert options['auto_conv_multiline_sub_pixel']['n_local'] == 5
+    assert options['use fft_profile'] is True
+    assert options['fft_profile']['oversample'] == 8
+    assert options['fft_profile']['rmin'] == 0.1
+    assert options['fft_profile']['rmax'] == 0.9
+    assert options['fft_profile']['gaus_factor'] == default_tracking_options()['fft_profile']['gaus_factor']
+    assert options['lookup_z']['n_local'] == 7
+
+
+def test_tracking_options_validation_rejects_invalid_values():
+    with pytest.raises(ValueError):
+        tracking_options_from_mapping({'center_of_mass': {'background': 'mode'}})
+
+    with pytest.raises(ValueError):
+        tracking_options_from_mapping({'fft_profile': {'oversample': 0}})
+
+
+def test_tracking_options_from_qsettings_falls_back_on_malformed_yaml(fake_qsettings, monkeypatch):
+    fake_qsettings.store[TRACKING_OPTIONS_QSETTINGS_GROUP] = {
+        TRACKING_OPTIONS_QSETTINGS_KEY: 'tracking: [',
+    }
+    monkeypatch.setattr(settings_module, 'QSettings', FakeQSettings)
+
+    assert tracking_options_from_qsettings() == default_tracking_options()
+
+
+def test_preferences_bundle_import_export_round_trip(tmp_path):
+    settings = MagScopeSettings()
+    settings['magnification'] = 3.5
+    tracking = default_tracking_options()
+    tracking['use fft_profile'] = True
+    tracking['fft_profile']['oversample'] = 9
+    appearance_layout = {
+        'controls': {
+            'workflow_columns': [['Run', 'Custom'], ['Analysis', 'Locking']],
+            'panel_collapsed': {'CameraPanel': True},
+        },
+        'splitter_sizes': {'Main Grip Splitter Sizes': [100, 200]},
+    }
+
+    bundle = build_preferences_bundle(
+        magscope_settings=settings,
+        tracking_options=tracking,
+        appearance_layout=appearance_layout,
+    )
+    path = tmp_path / 'magscope-preferences.yaml'
+    with open(path, 'w', encoding='utf-8') as file:
+        yaml.safe_dump(bundle, file)
+
+    loaded = import_preferences_bundle(path)
+
+    assert loaded['version'] == PREFERENCES_BUNDLE_VERSION
+    assert loaded['magscope']['magnification'] == 3.5
+    assert loaded['tracking']['use fft_profile'] is True
+    assert loaded['tracking']['fft_profile']['oversample'] == 9
+    assert loaded['appearance_layout'] == appearance_layout
+
+
+def test_preferences_bundle_validation_rejects_missing_sections():
+    with pytest.raises(ValueError):
+        load_preferences_bundle_mapping({'version': PREFERENCES_BUNDLE_VERSION})
+
+    with pytest.raises(ValueError):
+        load_preferences_bundle_mapping(
+            {
+                'version': PREFERENCES_BUNDLE_VERSION,
+                'magscope': {},
+                'tracking': {},
+                'appearance_layout': [],
+            }
+        )
+
+
+def test_preferences_bundle_validation_rejects_unknown_magscope_settings():
+    with pytest.raises(ValueError, match='Unknown setting'):
+        load_preferences_bundle_mapping(
+            {
+                'version': PREFERENCES_BUNDLE_VERSION,
+                'magscope': {'unknown setting': 1},
+                'tracking': {},
+            }
+        )
+
+
+def test_preferences_bundle_import_reports_malformed_yaml(tmp_path):
+    path = tmp_path / 'magscope-preferences.yaml'
+    path.write_text('preferences: [', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Invalid preferences YAML'):
+        import_preferences_bundle(path)
+
+
+def test_tracking_options_from_mapping_rejects_none():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='empty'):
+        tracking_options_from_mapping(None)
+
+
+def test_tracking_options_from_mapping_rejects_non_mapping():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='YAML mapping'):
+        tracking_options_from_mapping("not a mapping")
+
+
+def test_tracking_options_from_mapping_rejects_invalid_background():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match='background'):
+        tracking_options_from_mapping({'center_of_mass': {'background': 'invalid'}})
+
+
+def test_build_preferences_bundle_includes_tracking_options():
+    from magscope.settings import build_preferences_bundle, MagScopeSettings, default_tracking_options, PREFERENCES_BUNDLE_VERSION
+    settings = MagScopeSettings()
+    bundle = build_preferences_bundle(
+        magscope_settings=settings,
+        tracking_options=default_tracking_options(),
+    )
+    assert 'tracking' in bundle
+    assert 'magscope' in bundle
+    assert 'version' in bundle
+    assert bundle['version'] == PREFERENCES_BUNDLE_VERSION
+
+
+def test_coerce_tracking_int_value_non_numeric():
+    from magscope.settings import _coerce_tracking_int_value
+    with pytest.raises(ValueError, match="must be an integer"):
+        _coerce_tracking_int_value("abc", name="test", fallback=5)
+
+
+def test_coerce_tracking_float_value_non_numeric():
+    from magscope.settings import _coerce_tracking_float_value
+    with pytest.raises(ValueError, match="must be a number"):
+        _coerce_tracking_float_value("abc", name="test", fallback=1.0)
+
+
+def test_coerce_tracking_float_value_below_minimum():
+    from magscope.settings import _coerce_tracking_float_value
+    with pytest.raises(ValueError, match="must be at least"):
+        _coerce_tracking_float_value(0.1, name="test", fallback=1.0, minimum=1.0)
+
+
+def test_coerce_tracking_bool_value_numeric():
+    from magscope.settings import _coerce_tracking_bool_value
+    assert _coerce_tracking_bool_value(1, fallback=False) is True
+    assert _coerce_tracking_bool_value(0, fallback=True) is False
+    assert _coerce_tracking_bool_value(1.0, fallback=False) is True
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _coerce_tracking_bool_value([], fallback=False)
+
+
+def test_tracking_options_mapping_rejects_non_mapping_center_of_mass():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="center_of_mass"):
+        tracking_options_from_mapping({'center_of_mass': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_auto_conv():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="auto_conv_multiline_sub_pixel"):
+        tracking_options_from_mapping({'auto_conv_multiline_sub_pixel': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_fft():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="fft_profile"):
+        tracking_options_from_mapping({'fft_profile': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_radial():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="radial_profile"):
+        tracking_options_from_mapping({'radial_profile': 'not_a_dict'})
+
+
+def test_tracking_options_mapping_rejects_non_mapping_lookup_z():
+    from magscope.settings import tracking_options_from_mapping
+    with pytest.raises(ValueError, match="lookup_z"):
+        tracking_options_from_mapping({'lookup_z': 'not_a_dict'})
+
+
+def test_load_preferences_bundle_validation_errors():
+    from magscope.settings import load_preferences_bundle_mapping, PREFERENCES_BUNDLE_VERSION
+    with pytest.raises(ValueError, match="empty"):
+        load_preferences_bundle_mapping(None)
+    with pytest.raises(ValueError, match="YAML mapping"):
+        load_preferences_bundle_mapping([1, 2, 3])
+    with pytest.raises(ValueError, match="Unsupported preferences"):
+        load_preferences_bundle_mapping({'version': '0', 'magscope': {}, 'tracking': {}})
+    with pytest.raises(ValueError, match="tracking"): 
+        load_preferences_bundle_mapping({'version': PREFERENCES_BUNDLE_VERSION, 'magscope': {}, 'tracking': 'not_a_dict'})
+
+
+def test_magscope_settings_iter_and_len():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    keys = list(s)
+    assert len(keys) > 0
+    assert len(s) == len(keys)
+
+
+def test_magscope_settings_persistent_copy():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    copy = s.persistent_copy()
+    assert copy['ROI'] == s['ROI']
+
+
+def test_magscope_settings_update_iterable():
+    from magscope.settings import MagScopeSettings
+    s = MagScopeSettings()
+    s.update([('ROI', 32)])
+    assert s['ROI'] == 32

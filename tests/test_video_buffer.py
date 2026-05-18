@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+import pytest
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "magscope" / "datatypes.py"
 SPEC = util.spec_from_file_location("magscope.datatypes", MODULE_PATH)
@@ -544,3 +545,29 @@ class TestIntToUintDtype(unittest.TestCase):
         self.assertEqual(int_to_uint_dtype(64), np.uint64)
         with self.assertRaises(ValueError):
             int_to_uint_dtype(12)
+
+
+# ---------------------------------------------------------------------------
+# Pytest-style additional tests
+# ---------------------------------------------------------------------------
+
+def test_video_buffer_write_timestamp():
+    _cleanup_video_shared_memory()
+    lock = Lock()
+    buffer = VideoBuffer(
+        create=True, locks={VIDEO_BUFFER_NAME: lock},
+        n_stacks=4, width=4, height=4, n_images=1, bits=8,
+    )
+    buffer.write_timestamp(123.456)
+    buffer.write_timestamp(789.012)
+    assert buffer.get_level() > 0
+    _cleanup_video_shared_memory()
+
+
+def test_matrix_buffer_peak_unsorted():
+    _cleanup_video_shared_memory()
+    lock = Lock()
+    buffer = MatrixBuffer(create=True, locks={'MatrixBuffer': lock}, name='MatrixBuffer', shape=(100, 4))
+    buffer.write(np.asarray([[1.0, 2.0, 3.0, 4.0]]))
+    result = buffer.peak_unsorted()
+    assert result.shape[0] >= 1

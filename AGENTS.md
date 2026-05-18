@@ -2,7 +2,11 @@
    These guidelines apply to every file within this repository unless overridden by a more specific `AGENTS.md` file in a subdirectory.
 
 # Tests and validation ( IMPORTANT ):
-   - Check if there is a .venv if so use that as the enviorment unless told otherwise.
+   - Always prefer the repository virtual environment when running tests.
+   - On Windows, run `./scripts/test.ps1` or `./.venv/Scripts/python.exe -m pytest`.
+   - On Linux/macOS, run `./.venv/bin/python -m pytest`.
+   - Do not run bare `pytest` unless the `.venv` Python executable is unavailable.
+   - If `.venv` is missing, report that explicitly instead of assuming pytest is unavailable.
    - If the environment allows, run pytest after making changes and report the results. Do not treat the tests as exhaustive; also reason about correctness and performance.
 
 # Import Guidelines

@@ -12,12 +12,24 @@ from magscope.ipc_commands import Command
 
 
 class AcquisitionMode(StrEnum):
-    """ Enum for the different acquisition modes """
-    TRACK = 'track'
-    TRACK_AND_CROP_VIDEO = 'track & video (cropped)'
-    TRACK_AND_FULL_VIDEO = 'track & video (full)'
-    CROP_VIDEO = 'video (cropped)'
-    FULL_VIDEO = 'video (full)'
+    """Enum for acquisition modes.
+
+    The UI redesign changed the enum values to match the new display labels. Existing scripts
+    that compare or pass raw strings should update old values such as ``"video (full)"`` to
+    the new values such as ``"Video (Full)"``. The old member names remain as aliases so
+    scripts using ``AcquisitionMode.FULL_VIDEO`` continue to resolve to the new canonical mode.
+    """
+
+    TRACK = 'Track'
+    TRACK_AND_VIDEO_ROIS = 'Track and Video (ROIs)'
+    TRACK_AND_VIDEO_FULL = 'Track and Video (Full)'
+    VIDEO_ROIS = 'Video (ROIs)'
+    VIDEO_FULL = 'Video (Full)'
+
+    TRACK_AND_CROP_VIDEO = TRACK_AND_VIDEO_ROIS
+    TRACK_AND_FULL_VIDEO = TRACK_AND_VIDEO_FULL
+    CROP_VIDEO = VIDEO_ROIS
+    FULL_VIDEO = VIDEO_FULL
 
 def crop_stack_to_rois(stack, rois):
     rois = np.asarray(rois, dtype=np.int64)

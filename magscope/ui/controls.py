@@ -8,47 +8,60 @@ import os
 import sys
 import textwrap
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import matplotlib
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
-from PyQt6.QtCore import QPointF, QSettings, QSize, QUrl, Qt, QVariant, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QSettings, QSize, QTimer, QUrl, Qt, QVariant, pyqtSignal
 from PyQt6.QtGui import (
+    QColor,
     QDesktopServices,
     QFont,
     QIcon,
     QPalette,
     QPainter,
+    QPen,
     QPixmap,
     QPolygonF,
     QTextOption,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QBoxLayout,
+    QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedLayout,
+    QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
-import yaml
 
 from magscope.ipc_commands import (
     ExecuteXYLockCommand,
+    ExecuteZLockCommand,
     GetCameraSettingCommand,
     LoadScriptCommand,
     PauseScriptCommand,
@@ -74,7 +87,25 @@ from magscope.ipc_commands import (
     UpdateSettingsCommand,
 )
 from magscope.scripting import ScriptStatus
-from magscope.settings import MagScopeSettings
+from magscope.settings import (
+    DEFAULT_GUI_ACCENT_COLOR,
+    GUI_ACCENT_COLOR_SETTING,
+    GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    MagScopeSettings,
+    default_tracking_options,
+    export_preferences_bundle,
+    import_preferences_bundle,
+    save_tracking_options_to_qsettings,
+    tracking_options_from_mapping,
+    tracking_options_from_qsettings,
+)
+from magscope.ui.search import (
+    PanelControlTarget,
+    PreferencesSettingTarget,
+    PreferencesWidgetTarget,
+    SearchTarget,
+)
+from magscope.ui.theme import PANEL_BACKGROUND_COLOR, get_accent_color
 from magscope.ui.widgets import (
     CollapsibleGroupBox,
     FlashLabel,
@@ -89,41 +120,100 @@ if TYPE_CHECKING:
     from magscope.ui.ui import UIManager
 
 
+def _panel_control_target(
+    label: str,
+    panel_id: str,
+    widget_attr: str,
+    *,
+    context: str,
+    aliases: tuple[str, ...] = (),
+    description: str = '',
+    keywords: tuple[str, ...] = (),
+) -> PanelControlTarget:
+    return PanelControlTarget(
+        label=label,
+        aliases=aliases,
+        context=context,
+        description=description,
+        keywords=keywords,
+        panel_id=panel_id,
+        widget_path=(widget_attr,),
+    )
+
+
+def _preference_widget_targets(
+    definitions: tuple[tuple[str, str, tuple[str, ...]], ...],
+    *,
+    tab_name: str,
+    context: str,
+) -> list[SearchTarget]:
+    return [
+        PreferencesWidgetTarget(
+            label=label,
+            aliases=aliases,
+            context=context,
+            description=f'Shows the {label} control in {context}.',
+            keywords=(widget_attr,),
+            tab_name=tab_name,
+            widget_attr=widget_attr,
+        )
+        for widget_attr, label, aliases in definitions
+    ]
+
+
 class ControlPanelBase(QWidget):
-    def __init__(self, manager: 'UIManager', title: str, collapsed_by_default: bool = False):
+    def __init__(
+        self,
+        manager: 'UIManager',
+        title: str,
+        collapsed_by_default: bool = False,
+        collapsible: bool = False,
+    ):
         super().__init__()
         self.manager: UIManager = manager
-        self.groupbox: CollapsibleGroupBox = CollapsibleGroupBox(
-            title=title,
-            collapsed=collapsed_by_default,
-        )
+        self.groupbox: CollapsibleGroupBox | None = None
+        self._content_layout: QBoxLayout | None = None
 
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(self.groupbox)
         super().setLayout(outer_layout)
 
         content_layout = QVBoxLayout()
+        if title or collapsible:
+            self.groupbox = CollapsibleGroupBox(
+                title=title,
+                collapsed=collapsed_by_default,
+                collapsible=collapsible,
+            )
+            outer_layout.addWidget(self.groupbox)
+        else:
+            content_layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(content_layout)
 
     def set_title(self, text: str) -> None:
-        self.groupbox.setTitle(text)
+        if self.groupbox is not None:
+            self.groupbox.setTitle(text)
 
     def setLayout(self, layout: QBoxLayout) -> None:
+        if self.groupbox is None:
+            self._content_layout = layout
+            super().layout().addLayout(layout)
+            return
         self.groupbox.setContentLayout(layout)
+        self._content_layout = self.groupbox.content_area.layout()
 
     def layout(self) -> QBoxLayout:
-        return self.groupbox.content_area.layout()
+        if self._content_layout is None:
+            raise RuntimeError('Control panel layout has not been initialized')
+        return self._content_layout
 
     def set_highlighted(self, enabled: bool) -> None:
-        highlight_color = self.palette().color(QPalette.ColorRole.Highlight)
+        if self.groupbox is None:
+            return
         if enabled:
-            color_name = highlight_color.name()
-            self.groupbox.setStyleSheet(
-                f"QGroupBox {{ border: 2px solid {color_name}; border-radius: 6px; }}"
-            )
+            self.groupbox.set_highlight_border(get_accent_color())
         else:
-            self.groupbox.setStyleSheet("")
+            self.groupbox.set_highlight_border(None)
 
 
 class MatplotlibCleanupMixin:
@@ -288,238 +378,255 @@ class HelpPanel(QFrame):
         )
 
 
-class ResetPanel(QFrame):
-    """Clickable panel that resets the GUI layout to defaults."""
+class MotorsPlaceholderPanel(ControlPanelBase):
+    """Panel shown when no user hardware managers are configured."""
 
-    def __init__(self, manager: "UIManager"):
-        super().__init__()
-        self.manager = manager
-        self.setObjectName("ResetPanelFrame")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFrameShape(QFrame.Shape.NoFrame)
+    HELP_URL = QUrl("https://magscope.readthedocs.io/en/latest/connect_hardware.html")
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(2)
-        self.setLayout(layout)
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager=manager, title='Hardware Managers', collapsed_by_default=False)
 
-        self.title_label = QLabel("Reset the GUI")
-        font = self.title_label.font()
-        font.setPointSize(font.pointSize() + 1)
-        font.setBold(True)
-        self.title_label.setFont(font)
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        description_label = QLabel(
+            "No user hardware managers are registered. MagScope includes a framework "
+            "for adding motors, stages, and other devices to your acquisition workflow."
+        )
+        description_label.setWordWrap(True)
 
-
-        layout.addWidget(self.title_label)
-
-        self._is_hovered = False
-        self._apply_styles()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self.rect().contains(event.pos()):
-                confirmation = QMessageBox.question(
-                    self,
-                    "Reset GUI",
-                    "Reset panels to their default layout and states?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if confirmation == QMessageBox.StandardButton.Yes:
-                    self.manager.controls.reset_to_defaults()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def enterEvent(self, event):
-        self._is_hovered = True
-        self._apply_styles()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._is_hovered = False
-        self._apply_styles()
-        super().leaveEvent(event)
-
-    def _apply_styles(self):
-        text_color = "black" if self._is_hovered else "white"
-        background_color = "white" if self._is_hovered else "transparent"
-        self.setStyleSheet(
-            f"""
-            #ResetPanelFrame {{
-                border: 1px solid #5b5b5b;
-                border-radius: 6px;
-                background-color: {background_color};
-            }}
-            #ResetPanelFrame QLabel {{
-                color: {text_color};
-            }}
-            """
+        docs_button = QPushButton("Open hardware connection guide")
+        docs_button.setToolTip("Open the MagScope hardware manager documentation")
+        docs_button.clicked.connect(
+            lambda _checked=False: QDesktopServices.openUrl(self.HELP_URL)
         )
 
+        self.layout().addWidget(description_label)
+        self.layout().addWidget(docs_button)
 
-class MagScopeSettingsPanel(ControlPanelBase):
+
+class MagScopeSettingsPanel(QWidget):
     """Allow importing, exporting, and editing MagScope configuration values."""
 
-    def __init__(self, manager: "UIManager"):
-        super().__init__(manager=manager, title="MagScope Settings", collapsed_by_default=True)
+    _SETTING_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("Imaging", ("ROI", "magnification")),
+        (
+            "Data Buffers",
+            (
+                "tracks max datapoints",
+                "video buffer n images",
+                "video buffer n stacks",
+                "video processors n",
+            ),
+        ),
+        (
+            "XY Lock Defaults",
+            ("xy-lock default interval", "xy-lock default max", "xy-lock default window"),
+        ),
+        (
+            "Z Lock Defaults",
+            ("z-lock default interval", "z-lock default max", "z-lock default window"),
+        ),
+    )
 
+    def __init__(
+        self,
+        manager: "UIManager",
+        *,
+        collapsible: bool = True,
+        file_status_label: QLabel | None = None,
+    ):
+        super().__init__()
+        self.manager = manager
         self._current_settings = manager.settings.clone()
-        self._setting_inputs: dict[str, LabeledLineEditWithValue] = {}
-        self._last_settings_update: datetime.datetime | None = None
+        self._setting_inputs: dict[str, QLineEdit] = {}
+        self._setting_value_labels: dict[str, QLabel] = {}
 
-        button_layout = QVBoxLayout()
-        self.layout().addLayout(button_layout)
+        self.setMaximumWidth(760)
 
-        top_row = QHBoxLayout()
-        button_layout.addLayout(top_row)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 6, 20, 12)
+        layout.setSpacing(6)
 
-        self.load_button = QPushButton("Import")
-        self.load_button.clicked.connect(self._on_load_clicked)  # type: ignore
-        top_row.addWidget(self.load_button)
+        if file_status_label is not None:
+            file_status_label.setWordWrap(True)
+            file_status_label.setVisible(bool(file_status_label.text()))
+            layout.addWidget(file_status_label)
 
-        self.save_button = QPushButton("Export")
-        self.save_button.clicked.connect(self._on_save_clicked)  # type: ignore
-        top_row.addWidget(self.save_button)
+        for group_title, keys in self._SETTING_GROUPS:
+            group = self._build_setting_group(group_title, keys)
+            layout.addWidget(group)
 
-        self.defaults_button = QPushButton("Set to Defaults")
-        self.defaults_button.clicked.connect(self._on_defaults_clicked)  # type: ignore
-        top_row.addWidget(self.defaults_button)
+        layout.addStretch(1)
 
-        bottom_row = QHBoxLayout()
-        button_layout.addLayout(bottom_row)
-
-        self.apply_button = QPushButton("Apply Changes")
-        self.apply_button.clicked.connect(self._on_apply_clicked)  # type: ignore
-        self.apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bottom_row.addWidget(self.apply_button)
-
-        for key in MagScopeSettings.defined_keys():
+    @staticmethod
+    def search_targets() -> list[SearchTarget]:
+        targets: list[SearchTarget] = []
+        for key in MagScopeSettings.magscope_panel_keys():
             spec = MagScopeSettings.spec_for(key)
-            widget = LabeledLineEditWithValue(
-                label_text=spec.label,
-                widths=(180, 100, 80),
-            )
-            widget.lineedit.setText(str(self._current_settings[key]))
-            widget.value_label.setText(str(self._current_settings[key]))
-            self._setting_inputs[key] = widget
-            self.layout().addWidget(widget)
-
-        self.status_label = FlashLabel()
-        self.status_label.setText(self._format_last_updated_text())
-        self.layout().addWidget(self.status_label)
-
-    def _notify(self, text: str) -> None:
-        self.status_label.setText(text)
-
-    def _format_last_updated_text(self) -> str:
-        if self._last_settings_update is None:
-            return "Last Updated: "
-        return f"Last Updated: {self._last_settings_update.strftime('%Y-%m-%d %H:%M:%S')}"
+            if key == "ROI":
+                targets.append(
+                    PreferencesSettingTarget(
+                        label="ROI Size",
+                        aliases=("ROI", "ROI size", "ROI (pixels)", "bead ROI", "region of interest"),
+                        context="Preferences > MagScope",
+                        setting_key="ROI",
+                    )
+                )
+            else:
+                targets.append(
+                    PreferencesSettingTarget(
+                        label=spec.label,
+                        aliases=(key,),
+                        context="Preferences > MagScope",
+                        setting_key=key,
+                    )
+                )
+        return targets
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Settings", message)
 
-    def _collect_settings_from_inputs(self) -> MagScopeSettings | None:
-        updated = MagScopeSettings(self._current_settings.to_dict())
-        for key, widget in self._setting_inputs.items():
-            text = widget.lineedit.text().strip()
-            if not text:
-                continue
-            try:
-                updated[key] = text
-            except (KeyError, ValueError) as exc:
-                self._show_error(str(exc))
-                return None
-        return updated
-
     def _push_settings(self, settings: MagScopeSettings) -> None:
         self._current_settings = settings.clone()
         self.manager.settings = settings.clone()
+        apply_accent_color = getattr(self.manager, "_apply_accent_color", None)
+        if callable(apply_accent_color):
+            apply_accent_color(settings[GUI_ACCENT_COLOR_SETTING])
+        apply_progress_indicator_enabled = getattr(
+            self.manager,
+            "_apply_live_plot_progress_indicator_enabled",
+            None,
+        )
+        if callable(apply_progress_indicator_enabled):
+            apply_progress_indicator_enabled()
         command = UpdateSettingsCommand(settings=settings.clone())
         self.manager.send_ipc(command)
         self._refresh_fields()
-        self._last_settings_update = datetime.datetime.now()
-        self._notify(self._format_last_updated_text())
 
     def _refresh_fields(self) -> None:
-        for key, widget in self._setting_inputs.items():
+        for key, lineedit in self._setting_inputs.items():
             value = self._current_settings[key]
-            widget.value_label.setText(str(value))
-            widget.lineedit.setText(str(value))
+            lineedit.setText(str(value))
+            if key in self._setting_value_labels:
+                self._update_saved_label_for_input(key)
 
-    def _on_apply_clicked(self) -> None:
-        pending = self._collect_settings_from_inputs()
-        if pending is None:
+    def _apply_setting_from_input(self, key: str) -> None:
+        lineedit = self._setting_inputs.get(key)
+        if lineedit is None:
             return
-        self._push_settings(pending)
-
-    def _on_defaults_clicked(self) -> None:
-        self._push_settings(MagScopeSettings())
-
-    def _on_load_clicked(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Import settings",
-            "",
-            "YAML Files (*.yaml);;All Files (*)",
-        )
-        if not path:
-            return
+        text = lineedit.text().strip()
+        updated = self._current_settings.clone()
         try:
-            settings = MagScopeSettings.import_yaml(path)
-        except (OSError, ValueError) as exc:
+            updated[key] = text
+        except (KeyError, ValueError) as exc:
             self._show_error(str(exc))
+            lineedit.setText(str(self._current_settings[key]))
             return
-        self._push_settings(settings)
-        self._notify(
-            f"Imported settings from {os.path.basename(path)}; {self._format_last_updated_text()}"
-        )
+        if updated[key] == self._current_settings[key]:
+            lineedit.setText(str(updated[key]))
+            return
+        self._push_settings(updated)
 
-    def _on_save_clicked(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export settings",
-            "magscope-settings.yaml",
-            "YAML Files (*.yaml);;All Files (*)",
-        )
-        if not path:
+    def reset_defaults(self) -> None:
+        defaults = MagScopeSettings()
+        defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
+        defaults[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = self._current_settings[
+            GUI_LIVE_PLOT_PROGRESS_BAR_SETTING
+        ]
+        self._push_settings(defaults)
+
+    def _build_setting_group(self, title: str, keys: tuple[str, ...]) -> QWidget:
+        group = QWidget(self)
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(5)
+
+        title_label = QLabel(title, group)
+        title_label.setObjectName("preferencesGroupTitle")
+        group_layout.addWidget(title_label)
+
+        panel = QFrame(group)
+        panel.setObjectName("preferencesGroupPanel")
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(14, 10, 14, 10)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(3)
+
+        for row, key in enumerate(keys):
+            spec = MagScopeSettings.spec_for(key)
+
+            label = QLabel(spec.label)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setFixedWidth(155)
+            grid.addWidget(label, row, 0)
+
+            lineedit = QLineEdit(str(self._current_settings[key]))
+            lineedit.setFixedWidth(120)
+            lineedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lineedit.editingFinished.connect(  # type: ignore[arg-type]
+                lambda k=key: self._apply_setting_from_input(k)
+            )
+            lineedit.textChanged.connect(  # type: ignore[arg-type]
+                lambda _text, k=key: self._update_saved_label_for_input(k)
+            )
+            grid.addWidget(lineedit, row, 1)
+            self._setting_inputs[key] = lineedit
+
+            saved_label = QLabel("")
+            saved_label.setObjectName("preferencesSavedLabel")
+            saved_label.setVisible(False)
+            grid.addWidget(saved_label, row, 2)
+            self._setting_value_labels[key] = saved_label
+
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(2, 1)
+
+        group_layout.addWidget(panel)
+        return group
+
+    def _update_saved_label_for_input(self, key: str) -> None:
+        lineedit = self._setting_inputs.get(key)
+        label = self._setting_value_labels.get(key)
+        if lineedit is None or label is None:
             return
-        try:
-            self._current_settings.export_yaml(path)
-        except OSError as exc:
-            self._show_error(str(exc))
-            return
-        self._notify(f"Exported settings to {os.path.basename(path)}")
+
+        saved_value = str(self._current_settings[key])
+        unsaved = lineedit.text().strip() != saved_value
+        label.setText(saved_value if unsaved else "")
+        label.setVisible(unsaved)
 
 
 class AcquisitionPanel(ControlPanelBase):
-    NO_DIRECTORY_SELECTED_TEXT = 'No save directory selected'
+    NO_DIRECTORY_SELECTED_TEXT = 'No save folder selected'
 
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Acquisition', collapsed_by_default=True)
-        acquisition_controls_row = QHBoxLayout()
-        self.layout().addLayout(acquisition_controls_row)
+        super().__init__(manager=manager, title='Recording and Saving', collapsed_by_default=True)
+        self.layout().setSpacing(4)
+        controls_grid = QGridLayout()
+        controls_grid.setContentsMargins(0, 0, 0, 0)
+        controls_grid.setHorizontalSpacing(6)
+        controls_grid.setVerticalSpacing(4)
+        self.layout().addLayout(controls_grid)
 
         self.acquisition_on_checkbox = LabeledCheckbox(
             label_text='Acquire',
             default=self.manager._acquisition_on,
             callback=self.callback_acquisition_on)
-        acquisition_controls_row.addWidget(self.acquisition_on_checkbox)
+        self.acquisition_on_checkbox.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+        controls_grid.addWidget(self.acquisition_on_checkbox, 0, 0)
 
-        mode_selection_layout = QHBoxLayout()
-        acquisition_controls_row.addLayout(mode_selection_layout)
-        mode_selection_label = QLabel('Mode:')
-        mode_selection_layout.addWidget(mode_selection_label)
+        mode_selection_label = QLabel('Data:')
+        controls_grid.addWidget(mode_selection_label, 0, 1)
         self.acquisition_mode_combobox = QComboBox()
-        mode_selection_layout.addWidget(self.acquisition_mode_combobox, stretch=1)
+        controls_grid.addWidget(self.acquisition_mode_combobox, 0, 2, 1, 2)
         acquisition_modes = [
             AcquisitionMode.TRACK,
-            AcquisitionMode.TRACK_AND_CROP_VIDEO,
-            AcquisitionMode.TRACK_AND_FULL_VIDEO,
-            AcquisitionMode.CROP_VIDEO,
-            AcquisitionMode.FULL_VIDEO,
+            AcquisitionMode.TRACK_AND_VIDEO_ROIS,
+            AcquisitionMode.TRACK_AND_VIDEO_FULL,
+            AcquisitionMode.VIDEO_ROIS,
+            AcquisitionMode.VIDEO_FULL,
         ]
         for mode in acquisition_modes:
             self.acquisition_mode_combobox.addItem(mode)
@@ -527,29 +634,44 @@ class AcquisitionPanel(ControlPanelBase):
         self.acquisition_mode_combobox.currentIndexChanged.connect(
             self.callback_acquisition_mode)  # type: ignore
 
-        save_controls_row = QHBoxLayout()
-        self.layout().addLayout(save_controls_row)
-
         self.acquisition_dir_on_checkbox = LabeledCheckbox(
-            label_text='Save',
+            label_text='Saving',
             default=self.manager._acquisition_dir_on,
             callback=self.callback_acquisition_dir_on)
-        save_controls_row.addWidget(self.acquisition_dir_on_checkbox)
+        self.acquisition_dir_on_checkbox.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Preferred,
+        )
+        controls_grid.addWidget(self.acquisition_dir_on_checkbox, 1, 0)
 
-        self.acquisition_dir_button = QPushButton('Select Directory to Save To')
-        self.acquisition_dir_button.setMinimumWidth(200)
+        directory_label = QLabel('Folder:')
+        controls_grid.addWidget(directory_label, 1, 1)
+
+        self.acquisition_dir_textedit = QLineEdit()
+        self.acquisition_dir_textedit.setReadOnly(True)
+        self.acquisition_dir_textedit.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.acquisition_dir_textedit.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls_grid.addWidget(self.acquisition_dir_textedit, 1, 2)
+
+        self.acquisition_dir_button = QPushButton('Browse...')
         self.acquisition_dir_button.clicked.connect(self.callback_acquisition_dir)  # type: ignore
-        save_controls_row.addWidget(self.acquisition_dir_button)
+        controls_grid.addWidget(self.acquisition_dir_button, 1, 3)
+        controls_grid.setColumnStretch(2, 1)
 
-        self.acquisition_dir_textedit = QTextEdit(self.NO_DIRECTORY_SELECTED_TEXT)
-        self.acquisition_dir_textedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.acquisition_dir_textedit.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.acquisition_dir_textedit.setFixedHeight(40)
-        self.acquisition_dir_textedit.setWordWrapMode(QTextOption.WrapMode.NoWrap)
-        self.acquisition_dir_textedit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.layout().addWidget(self.acquisition_dir_textedit)
+        self.set_acquisition_dir_text(self.manager._acquisition_dir)
 
         self.update_save_highlight(self.acquisition_dir_on_checkbox.checkbox.isChecked())
+
+    def set_acquisition_dir_text(self, path: str | None) -> None:
+        display_text = path or self.NO_DIRECTORY_SELECTED_TEXT
+        self.acquisition_dir_textedit.setText(display_text)
+        self.acquisition_dir_textedit.setToolTip(path or '')
+        self.acquisition_dir_textedit.setCursorPosition(0)
 
     def callback_acquisition_on(self):
         is_enabled: bool = self.acquisition_on_checkbox.checkbox.isChecked()
@@ -580,17 +702,49 @@ class AcquisitionPanel(ControlPanelBase):
             last_directory)
 
         if selected_directory:
-            self.acquisition_dir_textedit.setText(selected_directory)
+            self.set_acquisition_dir_text(selected_directory)
             settings.setValue('last acquisition_dir', QVariant(selected_directory))
         else:
             selected_directory = None
-            self.acquisition_dir_textedit.setText(self.NO_DIRECTORY_SELECTED_TEXT)
+            self.set_acquisition_dir_text(None)
 
         command = SetAcquisitionDirCommand(value=selected_directory)
         self.manager.send_ipc(command)
 
     def update_save_highlight(self, should_save: bool) -> None:
         self.set_highlighted(should_save)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target(
+                'Acquire',
+                'AcquisitionPanel',
+                'acquisition_on_checkbox',
+                context='Recording and Saving',
+                aliases=('acquisition on', 'start acquisition', 'record'),
+            ),
+            _panel_control_target(
+                'Data Mode',
+                'AcquisitionPanel',
+                'acquisition_mode_combobox',
+                context='Recording and Saving',
+                aliases=('acquisition mode', 'mode', 'recording mode', 'save mode'),
+            ),
+            _panel_control_target(
+                'Save Recording',
+                'AcquisitionPanel',
+                'acquisition_dir_on_checkbox',
+                context='Recording and Saving',
+                aliases=('save', 'save data', 'save acquisition'),
+            ),
+            _panel_control_target(
+                'Save Folder',
+                'AcquisitionPanel',
+                'acquisition_dir_button',
+                context='Recording and Saving',
+                aliases=('save directory', 'output folder', 'acquisition folder'),
+            ),
+        ]
 
 
 class BeadSelectionPanel(ControlPanelBase):
@@ -644,11 +798,23 @@ class BeadSelectionPanel(ControlPanelBase):
         self.clear_button.clicked.connect(self.manager.clear_beads)  # type: ignore
         button_row.addWidget(self.clear_button)
 
-        self.auto_select_button = QPushButton('Auto Bead Selection')
-        self.auto_select_button.clicked.connect(self.manager.start_auto_bead_selection)  # type: ignore
-        button_row.addWidget(self.auto_select_button)
-
-        self.manager._update_auto_bead_selection_button_state()
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            PanelControlTarget(
+                label='Remove All Beads',
+                aliases=('clear beads', 'delete beads'),
+                context='Bead Selection',
+                panel_id='BeadSelectionPanel',
+                widget_path=('clear_button',),
+            ),
+            PanelControlTarget(
+                label='Reassign IDs',
+                aliases=('reset bead ids', 'renumber beads'),
+                context='Bead Selection',
+                panel_id='BeadSelectionPanel',
+                widget_path=('reset_id_button',),
+            ),
+        ]
 
     def update_next_bead_id_label(self, next_bead_id: int) -> None:
         self.next_bead_id_label.setText(f"Next Bead ID: {next_bead_id}")
@@ -718,6 +884,8 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         # ===== First Row ===== #
         controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(8)
         self.layout().addLayout(controls_row)
 
         self.enable_checkbox = LabeledCheckbox(
@@ -731,31 +899,42 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
         self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
         self.only_beads_checkbox = LabeledCheckbox(
-            label_text='Only Bead ROIs', default=False)
+            label_text='Only ROIs', default=False)
         controls_row.addWidget(self.only_beads_checkbox)
+        controls_row.addStretch(1)
 
         # ===== Plot ===== #
         self.n_bins = 256
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setFixedHeight(100)
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
+        self.figure.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0.0, wspace=0.0)
+        self.canvas = ResponsivePlotCanvas(
+            self.figure,
+            minimum_height=102,
+            maximum_height=123,
+            height_for_width=0.32,
+        )
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.figure.tight_layout()
-        self.figure.subplots_adjust(bottom=0.2, top=1)
 
         _, _, self.bars = self.axes.hist(
             [],
             bins=self.n_bins,
             edgecolor=None,
-            facecolor='white'
+            facecolor=get_accent_color(),
         )
 
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Intensity')
         self.axes.set_ylabel('Count')
+        plot_font_size = self.font().pointSizeF()
+        if plot_font_size <= 0:
+            plot_font_size = float(self.font().pointSize() or 9)
+        plot_font_size = max(6.0, plot_font_size - 1.5)
+        self.axes.xaxis.label.set_size(plot_font_size)
+        self.axes.yaxis.label.set_size(plot_font_size)
+        self.axes.tick_params(axis='both', labelsize=plot_font_size)
         self.axes.set_yticks([])
         self.axes.set_xticks([])
-        self.axes.spines['left'].set_visible(False)
+        self.axes.spines['left'].set_visible(True)
         self.axes.spines['top'].set_visible(False)
         self.axes.spines['right'].set_visible(False)
         self.axes.set_xlim(0, 1)
@@ -804,6 +983,7 @@ class HistogramPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         for count, rect in zip(counts, self.bars.patches):
             rect.set_height(count)
+            rect.set_facecolor(get_accent_color())
 
         max_count = counts.max() if len(counts) > 0 else 1
         self.axes.set_ylim(0, max_count * 1.1)
@@ -1010,6 +1190,59 @@ class PlotSettingsPanel(ControlPanelBase):
         bead_options_toggle.toggled.connect(_toggle_bead_overlay_options)
         self.layout().addWidget(bead_view_container)
 
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target(
+                'Selected Bead',
+                'PlotSettingsPanel',
+                'selected_bead',
+                context='Plot Settings',
+                aliases=('active bead', 'red bead'),
+            ),
+            _panel_control_target(
+                'Reference Bead',
+                'PlotSettingsPanel',
+                'reference_bead',
+                context='Plot Settings',
+                aliases=('green bead', 'subtract bead'),
+            ),
+            _panel_control_target(
+                'Time axis mode',
+                'PlotSettingsPanel',
+                'time_mode',
+                context='Plot Settings',
+                aliases=('time mode', 'absolute time', 'relative time'),
+            ),
+            _panel_control_target(
+                'Relative Time',
+                'PlotSettingsPanel',
+                'time_relative_window',
+                context='Plot Settings',
+                aliases=('relative time window', 'time window'),
+            ),
+            _panel_control_target(
+                'Show beads on video',
+                'PlotSettingsPanel',
+                'beads_in_view_on',
+                context='Plot Settings',
+                aliases=('show bead centers', 'bead overlay', 'plot beads on video'),
+            ),
+            _panel_control_target(
+                'Number of timepoints to show',
+                'PlotSettingsPanel',
+                'beads_in_view_count',
+                context='Plot Settings',
+                aliases=('bead overlay history', 'timepoints'),
+            ),
+            _panel_control_target(
+                'Marker size',
+                'PlotSettingsPanel',
+                'beads_in_view_marker_size',
+                context='Plot Settings',
+                aliases=('bead marker size', 'crosshair size'),
+            ),
+        ]
+
     def selected_bead_callback(self, value):
         try:
             bead = int(value)
@@ -1181,7 +1414,7 @@ class AllanDeviationPanel(MatplotlibCleanupMixin, ControlPanelBase):
         self.taus_mode.setCurrentText(self._load_setting('taus_mode', 'Octave'))
         taus_row.addWidget(self.taus_mode)
 
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e', constrained_layout=True)
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
         self.canvas = ResponsivePlotCanvas(
             self.figure,
             minimum_height=210,
@@ -1216,7 +1449,7 @@ class AllanDeviationPanel(MatplotlibCleanupMixin, ControlPanelBase):
 
     def _configure_axes(self) -> None:
         self.axes.clear()
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Tau (s)')
         self.axes.set_ylabel('Allan deviation (nm)')
         self.axes.set_xscale('log')
@@ -1419,44 +1652,58 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
         super().__init__(manager=manager, title='Radial Profile Monitor', collapsed_by_default=True)
 
-        # Enable
+        # Controls
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(8)
+        self.layout().addLayout(controls_row)
+
         self.enable = LabeledCheckbox(
             label_text='Enabled',
             callback=self.enabled_callback,
         )
-        self.layout().addWidget(self.enable)
+        controls_row.addWidget(self.enable)
         self.groupbox.toggle_button.toggled.connect(self._groupbox_toggled)
 
-        # Selected bead
-        selected_bead_row = QHBoxLayout()
-        self.layout().addLayout(selected_bead_row)
-        selected_bead_row.addWidget(QLabel('Selected bead:'))
+        controls_row.addWidget(QLabel('Bead:'))
         self.selected_bead_label = QLabel('')
-        selected_bead_row.addWidget(self.selected_bead_label)
+        self.selected_bead_label.setMinimumWidth(24)
+        controls_row.addWidget(self.selected_bead_label)
 
-        profile_length_row = QHBoxLayout()
-        self.layout().addLayout(profile_length_row)
-        profile_length_row.addWidget(QLabel('Profile length:'))
+        controls_row.addWidget(QLabel('Length:'))
         self.profile_length_label = QLabel('')
-        profile_length_row.addWidget(self.profile_length_label)
+        self.profile_length_label.setMinimumWidth(36)
+        controls_row.addWidget(self.profile_length_label)
+        controls_row.addStretch(1)
 
         # Figure
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setFixedHeight(100)
-        self.figure.tight_layout()
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR, constrained_layout=True)
+        self.figure.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0.0, wspace=0.0)
+        self.canvas = ResponsivePlotCanvas(
+            self.figure,
+            minimum_height=102,
+            maximum_height=123,
+            height_for_width=0.32,
+        )
         self.layout().addWidget(self.canvas)
 
         # Plot
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Radius (pixels)')
         self.axes.set_ylabel('Intensity')
+        plot_font_size = self.font().pointSizeF()
+        if plot_font_size <= 0:
+            plot_font_size = float(self.font().pointSize() or 9)
+        plot_font_size = max(6.0, plot_font_size - 1.5)
+        self.axes.xaxis.label.set_size(plot_font_size)
+        self.axes.yaxis.label.set_size(plot_font_size)
+        self.axes.tick_params(axis='both', labelsize=plot_font_size)
         self.axes.spines['top'].set_visible(False)
         self.axes.spines['right'].set_visible(False)
-        self.axes.spines['left'].set_visible(False)
+        self.axes.spines['left'].set_visible(True)
         self.axes.set_yticks([])
-        self.line, = self.axes.plot([], [], 'w')
+        self.line, = self.axes.plot([], [], color=get_accent_color(), linewidth=1.0)
         self._init_matplotlib_cleanup()
 
     def enabled_callback(self, enabled: bool) -> None:
@@ -1504,6 +1751,7 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
 
         self.line.set_xdata(radial_distances)
         self.line.set_ydata(cleaned_profile)
+        self.line.set_color(get_accent_color())
 
         if len(cleaned_profile) > 0:
             self.axes.set_xlim(0, max(radial_distances))
@@ -1520,179 +1768,221 @@ class ProfilePanel(MatplotlibCleanupMixin, ControlPanelBase):
 
 
 class TrackingOptionsPanel(ControlPanelBase):
-    _DEFAULTS: dict[str, Any] = {
-        'center_of_mass': {'background': 'median'},
-        'n auto_conv_multiline_sub_pixel': 5,
-        'auto_conv_multiline_sub_pixel': {'line_ratio': 0.1, 'n_local': 5},
-        'use fft_profile': False,
-        'fft_profile': {'oversample': 4, 'rmin': 0.0, 'rmax': 0.5, 'gaus_factor': 6.0},
-        'radial_profile': {'oversample': 1},
-        'lookup_z': {'n_local': 7},
-    }
+    def __init__(self, manager: 'UIManager', *, collapsible: bool = True):
+        super().__init__(
+            manager=manager,
+            title='Tracking Options' if collapsible else '',
+            collapsed_by_default=True,
+            collapsible=collapsible,
+        )
+        self._current_options: dict[str, Any] = tracking_options_from_qsettings()
+        self._updating_fields = False
 
-    def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Tracking Options', collapsed_by_default=True)
-        self._current_options: dict[str, Any] = copy.deepcopy(self._DEFAULTS)
-        self._last_options_update: datetime.datetime | None = None
+        self.setMaximumWidth(760)
+        self.layout().setContentsMargins(20, 6, 20, 12)
+        self.layout().setSpacing(6)
 
         note = QLabel(
             textwrap.dedent(
                 """
                 <a href="https://magtrack.readthedocs.io/en/stable/api/magtrack/core/index.html#magtrack.core.stack_to_xyzp_advanced">Advanced Tracking Options Guide</a>
                 <br>Configure the arguments forwarded to MagTrack's
-                stack_to_xyzp_advanced pipeline. Leave fields blank to
-                keep existing values. Defaults reflect MagTrack's standard parameters.
+                stack_to_xyzp_advanced pipeline. Changes are applied when a field loses focus
+                or Enter is pressed. Defaults reflect MagTrack's standard parameters.
                 """
             ).strip()
         )
         note.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         note.setOpenExternalLinks(True)
         note.setWordWrap(True)
-        self.layout().addWidget(note)
+
+        guide_group, guide_layout = self._build_preferences_group('Guide', self)
+        note.setObjectName("preferencesDescription")
+        guide_layout.addWidget(note)
+        self.layout().addWidget(guide_group)
+
+        general_group, general_layout = self._build_preferences_group('General', self)
 
         background_row = QHBoxLayout()
-        background_row.addWidget(QLabel('Center-of-mass background:'))
+        background_row.setContentsMargins(0, 0, 0, 0)
+        background_row.setSpacing(10)
+
+        background_label = QLabel('Center-of-mass background')
+        background_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        background_label.setFixedWidth(155)
+        background_row.addWidget(background_label)
+
         self.background_combo = QComboBox()
         self.background_combo.addItems(['none', 'mean', 'median'])
         self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+        self.background_combo.currentTextChanged.connect(lambda _value: self._apply_options_from_inputs())
+        self.background_combo.setFixedWidth(120)
         background_row.addWidget(self.background_combo)
         background_row.addStretch(1)
-        self.layout().addLayout(background_row)
+        general_layout.addLayout(background_row)
+        self.layout().addWidget(general_group)
+
+        auto_group, auto_layout = self._build_preferences_group('Auto Convolution', self)
 
         self.iterations = LabeledLineEditWithValue(
             label_text='Auto-conv iterations',
             default=str(self._current_options['n auto_conv_multiline_sub_pixel']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.iterations)
+        self._configure_lineedit_row(self.iterations)
+        auto_layout.addWidget(self.iterations)
 
         self.line_ratio = LabeledLineEditWithValue(
             label_text='Line ratio',
             default=str(self._current_options['auto_conv_multiline_sub_pixel']['line_ratio']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.line_ratio)
+        self._configure_lineedit_row(self.line_ratio)
+        auto_layout.addWidget(self.line_ratio)
 
         self.n_local = LabeledLineEditWithValue(
             label_text='n_local (auto-conv)',
             default=str(self._current_options['auto_conv_multiline_sub_pixel']['n_local']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.n_local)
+        self._configure_lineedit_row(self.n_local)
+        auto_layout.addWidget(self.n_local)
+
+        self.layout().addWidget(auto_group)
+
+        profile_group, profile_layout = self._build_preferences_group('Profiles', self)
 
         self.use_fft = LabeledCheckbox(
             label_text='Use FFT profile',
+            widths=(155, 0),
             callback=self._use_fft_changed,
         )
-        self.layout().addWidget(self.use_fft)
+        self._configure_checkbox_row(self.use_fft)
+        profile_layout.addWidget(self.use_fft)
 
         self.fft_oversample = LabeledLineEditWithValue(
             label_text='FFT oversample',
             default=str(self._current_options['fft_profile']['oversample']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_oversample)
+        self._configure_lineedit_row(self.fft_oversample)
+        profile_layout.addWidget(self.fft_oversample)
 
         self.fft_rmin = LabeledLineEditWithValue(
             label_text='FFT rmin',
             default=str(self._current_options['fft_profile']['rmin']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_rmin)
+        self._configure_lineedit_row(self.fft_rmin)
+        profile_layout.addWidget(self.fft_rmin)
 
         self.fft_rmax = LabeledLineEditWithValue(
             label_text='FFT rmax',
             default=str(self._current_options['fft_profile']['rmax']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_rmax)
+        self._configure_lineedit_row(self.fft_rmax)
+        profile_layout.addWidget(self.fft_rmax)
 
         self.fft_gaus_factor = LabeledLineEditWithValue(
             label_text='FFT gaus_factor',
             default=str(self._current_options['fft_profile']['gaus_factor']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.fft_gaus_factor)
+        self._configure_lineedit_row(self.fft_gaus_factor)
+        profile_layout.addWidget(self.fft_gaus_factor)
 
         self.radial_oversample = LabeledLineEditWithValue(
             label_text='Radial oversample',
             default=str(self._current_options['radial_profile']['oversample']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.radial_oversample)
+        self._configure_lineedit_row(self.radial_oversample)
+        profile_layout.addWidget(self.radial_oversample)
 
         self.lookup_n_local = LabeledLineEditWithValue(
             label_text='lookup_z n_local',
             default=str(self._current_options['lookup_z']['n_local']),
-            widths=(150, 60, 0),
+            widths=(155, 120, 0),
         )
-        self.layout().addWidget(self.lookup_n_local)
+        self._configure_lineedit_row(self.lookup_n_local)
+        profile_layout.addWidget(self.lookup_n_local)
 
-        button_layout = QVBoxLayout()
-        self.layout().addLayout(button_layout)
+        self.layout().addWidget(profile_group)
 
-        top_row = QHBoxLayout()
-        button_layout.addLayout(top_row)
-
-        load_button = QPushButton('Load')
-        load_button.clicked.connect(self._on_load_clicked)  # type: ignore
-        top_row.addWidget(load_button)
-
-        save_button = QPushButton('Save')
-        save_button.clicked.connect(self._on_save_clicked)  # type: ignore
-        top_row.addWidget(save_button)
-
-        reset_button = QPushButton('Set to Defaults')
-        reset_button.clicked.connect(self.reset_defaults)  # type: ignore
-        top_row.addWidget(reset_button)
-
-        bottom_row = QHBoxLayout()
-        button_layout.addLayout(bottom_row)
-
-        apply_button = QPushButton('Apply Changes')
-        apply_button.clicked.connect(self.apply_options)  # type: ignore
-        apply_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bottom_row.addWidget(apply_button)
-
-        self.status_label = FlashLabel()
-        self.layout().addWidget(self.status_label)
-
-        self.status_label.setText(self._format_last_updated_text())
+        for widget in self._option_line_edits():
+            widget.lineedit.editingFinished.connect(self._apply_options_from_inputs)  # type: ignore[arg-type]
 
         self._update_value_labels()
+        self._populate_inputs_from_options()
         self._sync_fft_enabled_state()
+        self.layout().addStretch(1)
 
-    def _parse_int(self, widget: LabeledLineEditWithValue, fallback: int, *, minimum: int | None = None) -> int:
-        text = widget.lineedit.text().strip()
-        widget.lineedit.setText('')
-        if text:
-            try:
-                value = int(text)
-                if minimum is not None and value < minimum:
-                    return fallback
-                return value
-            except ValueError:
-                return fallback
-        return fallback
+    @staticmethod
+    def _build_preferences_group(title: str, parent: QWidget) -> tuple[QWidget, QVBoxLayout]:
+        group = QWidget(parent)
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(5)
 
-    def _parse_float(
-        self,
-        widget: LabeledLineEditWithValue,
-        fallback: float,
-        *,
-        minimum: float | None = None,
-    ) -> float:
-        text = widget.lineedit.text().strip()
-        widget.lineedit.setText('')
-        if text:
-            try:
-                value = float(text)
-                if minimum is not None and value < minimum:
-                    return fallback
-                return value
-            except ValueError:
-                return fallback
-        return fallback
+        title_label = QLabel(title, group)
+        title_label.setObjectName("preferencesGroupTitle")
+        group_layout.addWidget(title_label)
+
+        panel = QFrame(group)
+        panel.setObjectName("preferencesGroupPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(14, 10, 14, 10)
+        panel_layout.setSpacing(3)
+        group_layout.addWidget(panel)
+        return group, panel_layout
+
+    @staticmethod
+    def _configure_lineedit_row(widget: LabeledLineEditWithValue) -> None:
+        widget.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        widget.label.setFixedWidth(155)
+        widget.lineedit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        widget.lineedit.setFixedWidth(120)
+        widget.value_label.setObjectName("preferencesSavedLabel")
+        widget.layout.setSpacing(10)
+
+    @staticmethod
+    def _configure_checkbox_row(widget: LabeledCheckbox) -> None:
+        widget.label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        widget.label.setFixedWidth(155)
+        widget.layout.setSpacing(10)
+
+    @staticmethod
+    def search_targets() -> list[SearchTarget]:
+        return _preference_widget_targets(
+            (
+                ('use_fft', 'Use FFT profile', ('FFT profile', 'enable FFT profile')),
+                ('fft_oversample', 'FFT oversample', ('FFT oversampling',)),
+                ('fft_rmin', 'FFT rmin', ('FFT Rmin', 'rmin', 'FFT r min', 'minimum FFT radius')),
+                ('fft_rmax', 'FFT rmax', ('FFT Rmax', 'rmax', 'FFT r max', 'maximum FFT radius')),
+                ('fft_gaus_factor', 'FFT gaus_factor', ('FFT gaussian factor', 'FFT gaus factor')),
+                ('radial_oversample', 'Radial oversample', ('radial oversampling',)),
+                ('lookup_n_local', 'lookup_z n_local', ('lookup z n local', 'z lookup n local')),
+                ('iterations', 'Auto-conv iterations', ('auto conv iterations', 'auto convolution iterations')),
+                ('line_ratio', 'Line ratio', ('tracking line ratio',)),
+                ('n_local', 'n_local (auto-conv)', ('n local auto conv', 'auto conv n local')),
+            ),
+            tab_name='Tracking',
+            context='Preferences > Tracking',
+        )
+
+    def _option_line_edits(self) -> tuple[LabeledLineEditWithValue, ...]:
+        return (
+            self.iterations,
+            self.line_ratio,
+            self.n_local,
+            self.fft_oversample,
+            self.fft_rmin,
+            self.fft_rmax,
+            self.fft_gaus_factor,
+            self.radial_oversample,
+            self.lookup_n_local,
+        )
 
     def _update_value_labels(self) -> None:
         self.iterations.value_label.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
@@ -1718,8 +2008,9 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.radial_oversample.setEnabled(not use_fft)
 
     def _use_fft_changed(self, value: bool) -> None:
-        self._current_options['use fft_profile'] = value
-        self._sync_fft_enabled_state()
+        if self._updating_fields:
+            return
+        self._apply_options_from_inputs()
 
     def _set_options(
         self,
@@ -1728,23 +2019,20 @@ class TrackingOptionsPanel(ControlPanelBase):
         *,
         populate_inputs: bool = False,
     ) -> None:
-        self._current_options = copy.deepcopy(options)
-        self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
-        self._update_value_labels()
-        self._sync_fft_enabled_state()
-        if populate_inputs:
+        self._current_options = tracking_options_from_mapping(options)
+        self._updating_fields = True
+        try:
+            self.background_combo.blockSignals(True)
+            self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+            self.background_combo.blockSignals(False)
+            self._update_value_labels()
             self._populate_inputs_from_options()
+            self._sync_fft_enabled_state()
+        finally:
+            self.background_combo.blockSignals(False)
+            self._updating_fields = False
+        save_tracking_options_to_qsettings(self._current_options)
         self.manager.send_ipc(UpdateTrackingOptionsCommand(value=copy.deepcopy(self._current_options)))
-        self._last_options_update = datetime.datetime.now()
-        if message:
-            self.status_label.setText(f"{message}; {self._format_last_updated_text()}")
-        else:
-            self.status_label.setText(self._format_last_updated_text())
-
-    def _format_last_updated_text(self) -> str:
-        if self._last_options_update is None:
-            return 'Last Updated: '
-        return f"Last Updated: {self._last_options_update.strftime('%Y-%m-%d %H:%M:%S')}"
 
     def _populate_inputs_from_options(self) -> None:
         self.iterations.lineedit.setText(str(self._current_options['n auto_conv_multiline_sub_pixel']))
@@ -1757,245 +2045,752 @@ class TrackingOptionsPanel(ControlPanelBase):
         self.radial_oversample.lineedit.setText(str(self._current_options['radial_profile']['oversample']))
         self.lookup_n_local.lineedit.setText(str(self._current_options['lookup_z']['n_local']))
 
-    def _coerce_int_value(
-        self,
-        raw: Any,
-        *,
-        name: str,
-        fallback: int,
-        minimum: int | None = None,
-        enforce_odd: bool = False,
-    ) -> int:
-        if raw is None:
-            return fallback
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            raise ValueError(f'{name} must be an integer')
-        if minimum is not None and value < minimum:
-            raise ValueError(f'{name} must be at least {minimum}')
-        if enforce_odd and value % 2 == 0:
-            value += 1
-        return value
-
-    def _coerce_float_value(
-        self,
-        raw: Any,
-        *,
-        name: str,
-        fallback: float,
-        minimum: float | None = None,
-    ) -> float:
-        if raw is None:
-            return fallback
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            raise ValueError(f'{name} must be a number')
-        if minimum is not None and value < minimum:
-            raise ValueError(f'{name} must be at least {minimum}')
-        return value
-
-    def _coerce_bool_value(self, raw: Any, *, fallback: bool) -> bool:
-        if raw is None:
-            return fallback
-        if isinstance(raw, bool):
-            return raw
-        if isinstance(raw, str):
-            normalized = raw.strip().lower()
-            if normalized in {'true', '1', 'yes'}:
-                return True
-            if normalized in {'false', '0', 'no'}:
-                return False
-        if isinstance(raw, (int, float)):
-            return bool(raw)
-        raise ValueError('use fft_profile must be a boolean')
-
     def _load_options_from_mapping(self, loaded: Any) -> dict[str, Any]:
-        if loaded is None:
-            raise ValueError('Tracking options file is empty')
-        if not isinstance(loaded, dict):
-            raise ValueError('Tracking options file must be a YAML mapping')
+        return tracking_options_from_mapping(loaded)
 
-        options = copy.deepcopy(self._DEFAULTS)
+    def _options_from_inputs(self) -> dict[str, Any]:
+        return {
+            'center_of_mass': {'background': self.background_combo.currentText()},
+            'n auto_conv_multiline_sub_pixel': self.iterations.lineedit.text().strip(),
+            'auto_conv_multiline_sub_pixel': {
+                'line_ratio': self.line_ratio.lineedit.text().strip(),
+                'n_local': self.n_local.lineedit.text().strip(),
+            },
+            'use fft_profile': self.use_fft.checkbox.isChecked(),
+            'fft_profile': {
+                'oversample': self.fft_oversample.lineedit.text().strip(),
+                'rmin': self.fft_rmin.lineedit.text().strip(),
+                'rmax': self.fft_rmax.lineedit.text().strip(),
+                'gaus_factor': self.fft_gaus_factor.lineedit.text().strip(),
+            },
+            'radial_profile': {'oversample': self.radial_oversample.lineedit.text().strip()},
+            'lookup_z': {'n_local': self.lookup_n_local.lineedit.text().strip()},
+        }
 
-        center_of_mass = loaded.get('center_of_mass')
-        if center_of_mass is not None:
-            if not isinstance(center_of_mass, dict):
-                raise ValueError('center_of_mass must be a mapping')
-            background = center_of_mass.get('background', options['center_of_mass']['background'])
-            if background not in {'none', 'mean', 'median'}:
-                raise ValueError('center_of_mass.background must be one of none, mean, median')
-            options['center_of_mass']['background'] = background
+    def _apply_options_from_inputs(self) -> None:
+        if self._updating_fields:
+            return
+        try:
+            options = tracking_options_from_mapping(self._options_from_inputs())
+        except ValueError as exc:
+            QMessageBox.critical(self, 'Tracking options', str(exc))
+            self._updating_fields = True
+            try:
+                self._populate_inputs_from_options()
+                self.background_combo.setCurrentText(self._current_options['center_of_mass']['background'])
+                self._update_value_labels()
+                self._sync_fft_enabled_state()
+            finally:
+                self._updating_fields = False
+            return
+        if options == self._current_options:
+            self._populate_inputs_from_options()
+            self._sync_fft_enabled_state()
+            return
+        self._set_options(options)
 
-        options['n auto_conv_multiline_sub_pixel'] = self._coerce_int_value(
-            loaded.get('n auto_conv_multiline_sub_pixel'),
-            name='n auto_conv_multiline_sub_pixel',
-            fallback=options['n auto_conv_multiline_sub_pixel'],
-            minimum=1,
+    def reset_defaults(self) -> None:
+        self._set_options(default_tracking_options(), 'Defaults restored', populate_inputs=True)
+
+
+class PreferencesDialog(QDialog):
+    """Modal dialog for global MagScope preferences."""
+
+    _SIDEBAR_SECTIONS: tuple[tuple[str, str], ...] = (
+        ('tune', 'MagScope'),
+        ('ads_click', 'Tracking'),
+        ('palette', 'Appearance/Layout'),
+    )
+
+    def __init__(self, manager: 'UIManager'):
+        super().__init__(manager.windows[0] if getattr(manager, 'windows', None) else None)
+        self.manager = manager
+        self.setWindowTitle('Preferences')
+        self.setModal(True)
+        self.resize(880, 700)
+
+        self._apply_preferences_style(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- header bar ---
+        header = QWidget(self)
+        header.setObjectName("preferencesHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 8, 20, 8)
+        header_layout.setSpacing(8)
+        header_layout.addWidget(QLabel("Preferences file:"))
+
+        self.load_preferences_button = QPushButton("Import")
+        self.load_preferences_button.clicked.connect(self._on_load_preferences_clicked)  # type: ignore[arg-type]
+        header_layout.addWidget(self.load_preferences_button)
+
+        self.save_preferences_button = QPushButton("Export")
+        self.save_preferences_button.clicked.connect(self._on_save_preferences_clicked)  # type: ignore[arg-type]
+        header_layout.addWidget(self.save_preferences_button)
+
+        self.reset_all_preferences_button = QPushButton("Reset All")
+        self.reset_all_preferences_button.clicked.connect(self._on_reset_all_preferences_clicked)  # type: ignore[arg-type]
+        header_layout.addWidget(self.reset_all_preferences_button)
+
+        self.preferences_file_status = FlashLabel()
+        self.preferences_file_status.setText("")
+        self.preferences_file_status.setVisible(False)
+
+        header_layout.addStretch(1)
+        layout.addWidget(header)
+
+        # --- separator ---
+        separator = QFrame(self)
+        separator.setObjectName("preferencesSeparator")
+        separator.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(separator)
+
+        # --- content: sidebar + stacked pages ---
+        content_row = QHBoxLayout()
+        content_row.setSpacing(0)
+
+        self.settings_panel = MagScopeSettingsPanel(
+            manager,
+            collapsible=False,
+            file_status_label=self.preferences_file_status,
+        )
+        self.settings_scroll = self._scrollable_tab(self.settings_panel)
+
+        self.tracking_options_panel = TrackingOptionsPanel(manager, collapsible=False)
+        self.tracking_scroll = self._scrollable_tab(self.tracking_options_panel)
+
+        self.appearance_layout_tab = self._create_appearance_layout_tab()
+        self.appearance_scroll = self._scrollable_tab(self.appearance_layout_tab)
+
+        self.stack = QStackedWidget(self)
+        self.stack.addWidget(self.settings_scroll)
+        self.stack.addWidget(self.tracking_scroll)
+        self.stack.addWidget(self.appearance_scroll)
+
+        right_panel = QWidget(self)
+        right_panel.setObjectName("preferencesRightPanel")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_layout.addWidget(self.stack, 1)
+
+        footer = QWidget(right_panel)
+        footer.setObjectName("preferencesFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 6, 20, 8)
+        footer_layout.setSpacing(0)
+
+        footer_content = QWidget(footer)
+        footer_content.setMaximumWidth(760)
+        footer_content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        footer_content_layout = QHBoxLayout(footer_content)
+        footer_content_layout.setContentsMargins(0, 0, 0, 0)
+        footer_content_layout.addStretch(1)
+        self.reset_section_button = QPushButton("Reset Current Section")
+        self.reset_section_button.clicked.connect(self._on_reset_current_section)  # type: ignore[arg-type]
+        footer_content_layout.addWidget(self.reset_section_button)
+
+        footer_layout.addWidget(footer_content)
+        right_layout.addWidget(footer)
+
+        self.sidebar = QListWidget(self)
+        self.sidebar.setFixedWidth(210)
+        self.sidebar.setSpacing(0)
+        self.sidebar.currentRowChanged.connect(self._on_sidebar_selection)  # type: ignore[arg-type]
+
+        icon_size = QSize(20, 20)
+        self.sidebar.setIconSize(icon_size)
+        icon_font = type(self.manager)._material_symbols_font(point_size=16)
+        for icon_name, label in self._SIDEBAR_SECTIONS:
+            icon = self._make_material_symbol_icon(icon_font, icon_name, "#888888", icon_size.width())
+            item = QListWidgetItem(icon, label)
+            item.setSizeHint(QSize(0, 48))
+            self.sidebar.addItem(item)
+
+        content_row.addWidget(self.sidebar)
+        content_row.addWidget(right_panel, 1)
+
+        layout.addLayout(content_row, 1)
+
+        self.sidebar.setCurrentRow(0)
+        self._refresh_sidebar_icons()
+
+    @staticmethod
+    def _sidebar_selection_background(accent: str) -> str:
+        color = QColor(accent)
+        if not color.isValid():
+            color = QColor(DEFAULT_GUI_ACCENT_COLOR)
+        base = QColor("#111111")
+        accent_weight = 0.18
+        background = QColor(
+            round(base.red() * (1 - accent_weight) + color.red() * accent_weight),
+            round(base.green() * (1 - accent_weight) + color.green() * accent_weight),
+            round(base.blue() * (1 - accent_weight) + color.blue() * accent_weight),
+        )
+        return background.name()
+
+    def _apply_preferences_style(self, accent: str) -> None:
+        selected_background = self._sidebar_selection_background(accent)
+        self.setStyleSheet(
+            f"""
+            QDialog {{
+                background-color: #111111;
+            }}
+            #preferencesHeader {{
+                background-color: #161616;
+            }}
+            #preferencesHeader QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesHeader QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 4px 12px;
+                color: #cccccc;
+            }}
+            #preferencesHeader QPushButton:hover {{
+                background-color: #333333;
+            }}
+            #preferencesSeparator {{
+                background-color: #2a2a2a;
+                max-height: 1px;
+            }}
+            QListWidget {{
+                background-color: #1b1b1b;
+                border: none;
+                border-right: 1px solid #2a2a2a;
+                padding: 6px 0px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 0px 14px;
+                margin: 0px;
+                border-radius: 0px;
+                border-left: 2px solid transparent;
+                color: #cccccc;
+            }}
+            QListWidget::item:selected {{
+                background-color: {selected_background};
+                border-left: 2px solid {accent};
+                color: #f0f0f0;
+            }}
+            QListWidget::item:hover:!selected {{
+                background-color: #222222;
+                border-left: 2px solid #333333;
+            }}
+            #preferencesRightPanel {{
+                background-color: #111111;
+            }}
+            QStackedWidget {{
+                background-color: #111111;
+            }}
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
+            }}
+            #preferencesGroupPanel {{
+                background-color: #181818;
+                border: 1px solid #2a2a2a;
+                border-radius: 4px;
+            }}
+            #preferencesGroupTitle {{
+                color: #c6c6c6;
+                font-weight: bold;
+            }}
+            QLineEdit {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 2px 6px;
+                color: #e0e0e0;
+                selection-background-color: {accent};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {accent};
+            }}
+            QComboBox {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 3px 6px;
+                color: #e0e0e0;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                color: #e0e0e0;
+                selection-background-color: {selected_background};
+                selection-color: #f0f0f0;
+            }}
+            QLabel {{
+                color: #bbbbbb;
+                background: transparent;
+            }}
+            #preferencesSavedLabel {{
+                color: #777777;
+                font-size: 11px;
+                padding-left: 4px;
+            }}
+            #preferencesDescription {{
+                color: #888888;
+            }}
+            #preferencesFooter {{
+                background-color: #141414;
+                border-top: 1px solid #242424;
+            }}
+            #preferencesFooter QPushButton {{
+                background-color: #242424;
+                border: 1px solid #3a3a3a;
+                border-radius: 3px;
+                padding: 5px 16px;
+                color: #cccccc;
+            }}
+            #preferencesFooter QPushButton:hover {{
+                background-color: #333333;
+            }}
+            """
         )
 
-        auto_conv_multiline = loaded.get('auto_conv_multiline_sub_pixel')
-        if auto_conv_multiline is not None:
-            if not isinstance(auto_conv_multiline, dict):
-                raise ValueError('auto_conv_multiline_sub_pixel must be a mapping')
-            options['auto_conv_multiline_sub_pixel']['line_ratio'] = self._coerce_float_value(
-                auto_conv_multiline.get('line_ratio'),
-                name='auto_conv_multiline_sub_pixel.line_ratio',
-                fallback=options['auto_conv_multiline_sub_pixel']['line_ratio'],
-                minimum=0.0,
-            )
-            options['auto_conv_multiline_sub_pixel']['n_local'] = self._coerce_int_value(
-                auto_conv_multiline.get('n_local'),
-                name='auto_conv_multiline_sub_pixel.n_local',
-                fallback=options['auto_conv_multiline_sub_pixel']['n_local'],
-                minimum=3,
-                enforce_odd=True,
-            )
+    def _refresh_sidebar_icons(self, accent: str | None = None) -> None:
+        if not hasattr(self, 'sidebar'):
+            return
 
-        options['use fft_profile'] = self._coerce_bool_value(
-            loaded.get('use fft_profile'),
-            fallback=options['use fft_profile'],
-        )
+        accent = accent or self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        icon_font = type(self.manager)._material_symbols_font(point_size=16)
+        icon_size = self.sidebar.iconSize().width()
+        selected_row = self.sidebar.currentRow()
+        for row, (icon_name, _label) in enumerate(self._SIDEBAR_SECTIONS):
+            item = self.sidebar.item(row)
+            if item is None:
+                continue
+            color = accent if row == selected_row else "#888888"
+            item.setIcon(self._make_material_symbol_icon(icon_font, icon_name, color, icon_size))
 
-        fft_profile = loaded.get('fft_profile')
-        if fft_profile is not None:
-            if not isinstance(fft_profile, dict):
-                raise ValueError('fft_profile must be a mapping')
-            options['fft_profile']['oversample'] = self._coerce_int_value(
-                fft_profile.get('oversample'),
-                name='fft_profile.oversample',
-                fallback=options['fft_profile']['oversample'],
-                minimum=1,
-            )
-            options['fft_profile']['rmin'] = self._coerce_float_value(
-                fft_profile.get('rmin'),
-                name='fft_profile.rmin',
-                fallback=options['fft_profile']['rmin'],
-                minimum=0.0,
-            )
-            options['fft_profile']['rmax'] = self._coerce_float_value(
-                fft_profile.get('rmax'),
-                name='fft_profile.rmax',
-                fallback=options['fft_profile']['rmax'],
-                minimum=0.0,
-            )
-            options['fft_profile']['gaus_factor'] = self._coerce_float_value(
-                fft_profile.get('gaus_factor'),
-                name='fft_profile.gaus_factor',
-                fallback=options['fft_profile']['gaus_factor'],
-                minimum=0.0,
-            )
-
-        radial_profile = loaded.get('radial_profile')
-        if radial_profile is not None:
-            if not isinstance(radial_profile, dict):
-                raise ValueError('radial_profile must be a mapping')
-            options['radial_profile']['oversample'] = self._coerce_int_value(
-                radial_profile.get('oversample'),
-                name='radial_profile.oversample',
-                fallback=options['radial_profile']['oversample'],
-                minimum=1,
-            )
-
-        lookup_z = loaded.get('lookup_z')
-        if lookup_z is not None:
-            if not isinstance(lookup_z, dict):
-                raise ValueError('lookup_z must be a mapping')
-            options['lookup_z']['n_local'] = self._coerce_int_value(
-                lookup_z.get('n_local'),
-                name='lookup_z.n_local',
-                fallback=options['lookup_z']['n_local'],
-                minimum=3,
-                enforce_odd=True,
-            )
-
-        return options
-
-    def _on_load_clicked(self) -> None:
+    def _on_load_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            'Load tracking options',
+            'Import preferences',
             '',
             'YAML Files (*.yaml);;All Files (*)',
         )
         if not path:
             return
-        try:
-            with open(path, 'r', encoding='utf-8') as file:
-                loaded = yaml.safe_load(file)
-            options = self._load_options_from_mapping(loaded)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, 'Tracking options', str(exc))
-            return
-        self._set_options(options, f'Loaded {os.path.basename(path)}', populate_inputs=True)
 
-    def _on_save_clicked(self) -> None:
+        try:
+            bundle = import_preferences_bundle(path)
+            validate_layout = getattr(self.manager, 'validate_appearance_layout_preferences', None)
+            if callable(validate_layout):
+                validate_layout(bundle['appearance_layout'])
+            import_layout = getattr(self.manager, 'import_appearance_layout_preferences', None)
+            if callable(import_layout):
+                import_layout(bundle['appearance_layout'])
+            self.settings_panel._push_settings(bundle['magscope'])
+            accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+            self._apply_preferences_style(accent_color)
+            self._refresh_sidebar_icons(accent_color)
+            self.accent_color_input.setText(accent_color)
+            self._update_accent_color_swatch(accent_color)
+            self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
+                self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
+            )
+            self.tracking_options_panel._set_options(
+                bundle['tracking'],
+                f'Imported preferences from {os.path.basename(path)}',
+                populate_inputs=True,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Preferences', str(exc))
+            return
+
+        self._set_preferences_file_status(f'Imported preferences from {os.path.basename(path)}')
+
+    def _on_save_preferences_clicked(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            'Save tracking options',
-            'tracking_options.yaml',
+            'Export preferences',
+            'magscope-preferences.yaml',
             'YAML Files (*.yaml);;All Files (*)',
         )
         if not path:
             return
+
+        export_layout = getattr(self.manager, 'export_appearance_layout_preferences', None)
+        appearance_layout = export_layout() if callable(export_layout) else {}
         try:
-            with open(path, 'w', encoding='utf-8') as file:
-                yaml.safe_dump(self._current_options, file)
-        except OSError as exc:
-            QMessageBox.critical(self, 'Tracking options', str(exc))
+            export_preferences_bundle(
+                path,
+                magscope_settings=self.manager.settings.clone(),
+                tracking_options=self.tracking_options_panel._current_options,
+                appearance_layout=appearance_layout,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, 'Preferences', str(exc))
             return
-        self.status_label.setText(f'Saved to {os.path.basename(path)}')
 
-    def apply_options(self) -> None:
-        options = copy.deepcopy(self._current_options)
-        options['center_of_mass']['background'] = self.background_combo.currentText()
+        self._set_preferences_file_status(f'Exported preferences to {os.path.basename(path)}')
 
-        iterations = self._parse_int(self.iterations, options['n auto_conv_multiline_sub_pixel'], minimum=1)
-        options['n auto_conv_multiline_sub_pixel'] = iterations
-
-        line_ratio = self._parse_float(
-            self.line_ratio,
-            options['auto_conv_multiline_sub_pixel']['line_ratio'],
-            minimum=0.0,
+    def _on_reset_all_preferences_clicked(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            'Reset Preferences',
+            'Reset all MagScope, tracking, appearance, and layout preferences to defaults?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        options['auto_conv_multiline_sub_pixel']['line_ratio'] = line_ratio
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
 
-        n_local = self._parse_int(self.n_local, options['auto_conv_multiline_sub_pixel']['n_local'], minimum=3)
-        if n_local % 2 == 0:
-            n_local += 1
-        options['auto_conv_multiline_sub_pixel']['n_local'] = n_local
+        self.settings_panel._push_settings(MagScopeSettings())
+        self.tracking_options_panel.reset_defaults()
+        self._reset_appearance_layout(reset_accent=False)
+        accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        self._apply_preferences_style(accent_color)
+        self._refresh_sidebar_icons(accent_color)
+        self.accent_color_input.setText(accent_color)
+        self._update_accent_color_swatch(accent_color)
+        self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
+            self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
+        )
+        self._set_preferences_file_status('All preferences reset to defaults')
 
-        options['use fft_profile'] = self.use_fft.checkbox.isChecked()
+    def _set_preferences_file_status(self, message: str) -> None:
+        self.preferences_file_status.setText(message)
+        self.preferences_file_status.setVisible(bool(message))
 
-        fft_oversample = self._parse_int(self.fft_oversample, options['fft_profile']['oversample'], minimum=1)
-        fft_rmin = self._parse_float(self.fft_rmin, options['fft_profile']['rmin'], minimum=0.0)
-        fft_rmax = self._parse_float(self.fft_rmax, options['fft_profile']['rmax'], minimum=0.0)
-        fft_gaus_factor = self._parse_float(
-            self.fft_gaus_factor,
-            options['fft_profile']['gaus_factor'],
-            minimum=0.0,
+    def _create_appearance_layout_tab(self) -> QWidget:
+        tab = QWidget(self)
+        tab.setMaximumWidth(760)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 6, 20, 12)
+        layout.setSpacing(6)
+
+        accent_group = QWidget(tab)
+        accent_group_layout = QVBoxLayout(accent_group)
+        accent_group_layout.setContentsMargins(0, 0, 0, 0)
+        accent_group_layout.setSpacing(5)
+
+        accent_title = QLabel("Accent", accent_group)
+        accent_title.setObjectName("preferencesGroupTitle")
+        accent_group_layout.addWidget(accent_title)
+
+        accent_panel = QFrame(accent_group)
+        accent_panel.setObjectName("preferencesGroupPanel")
+        accent_inner = QHBoxLayout(accent_panel)
+        accent_inner.setContentsMargins(14, 10, 14, 10)
+        accent_inner.setSpacing(10)
+
+        accent_label = QLabel("Accent color", accent_panel)
+        accent_label.setFixedWidth(155)
+        accent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        accent_inner.addWidget(accent_label)
+
+        self.accent_color_input = QLineEdit(
+            self.manager.settings[GUI_ACCENT_COLOR_SETTING],
+            accent_panel,
+        )
+        self.accent_color_input.setObjectName("AccentColorInput")
+        self.accent_color_input.setFixedWidth(120)
+        self.accent_color_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.accent_color_input.setToolTip(
+            f"Use #RRGGBB hex format, for example {DEFAULT_GUI_ACCENT_COLOR}."
+        )
+        self.accent_color_input.editingFinished.connect(  # type: ignore[arg-type]
+            self._apply_accent_color_setting
+        )
+        accent_inner.addWidget(self.accent_color_input)
+
+        self.accent_color_swatch = QPushButton("", accent_panel)
+        self.accent_color_swatch.setObjectName("AccentColorSwatch")
+        self.accent_color_swatch.setFixedSize(28, 28)
+        self.accent_color_swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.accent_color_swatch.setToolTip("Choose accent color")
+        self.accent_color_swatch.clicked.connect(  # type: ignore[arg-type]
+            self._choose_accent_color
+        )
+        accent_inner.addWidget(self.accent_color_swatch)
+
+        accent_inner.addStretch(1)
+
+        accent_group_layout.addWidget(accent_panel)
+        layout.addWidget(accent_group)
+        self._update_accent_color_swatch(self.manager.settings[GUI_ACCENT_COLOR_SETTING])
+
+        live_plots_title = QLabel("Live Plots", tab)
+        live_plots_title.setObjectName("preferencesGroupTitle")
+        layout.addWidget(live_plots_title)
+
+        live_plots_panel = QFrame(tab)
+        live_plots_panel.setObjectName("preferencesGroupPanel")
+        live_plots_inner = QVBoxLayout(live_plots_panel)
+        live_plots_inner.setContentsMargins(14, 10, 14, 10)
+        live_plots_inner.setSpacing(6)
+
+        self.live_plot_progress_indicator_checkbox = LabeledCheckbox(
+            label_text="Show live plot loading indicator",
+            widths=(190, 0),
+            default=self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING],
+            callback=self._apply_live_plot_progress_indicator_setting,
+        )
+        self.live_plot_progress_indicator_checkbox.setObjectName("LivePlotProgressIndicatorCheckbox")
+        live_plots_inner.addWidget(self.live_plot_progress_indicator_checkbox)
+        layout.addWidget(live_plots_panel)
+
+        self.appearance_status_label = FlashLabel()
+        self.appearance_status_label.setText("")
+        layout.addWidget(self.appearance_status_label)
+
+        layout.addStretch(1)
+        return tab
+
+    def _choose_accent_color(self) -> None:
+        current_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+        color = QColorDialog.getColor(
+            QColor(current_color),
+            self,
+            'Choose accent color',
+        )
+        if color.isValid():
+            self.accent_color_input.setText(color.name())
+            self._apply_accent_color_setting()
+
+    def _update_accent_color_swatch(self, color: str) -> None:
+        self.accent_color_swatch.setStyleSheet(
+            f"""
+            #AccentColorSwatch {{
+                background-color: {color};
+                border: 1px solid palette(mid);
+                border-radius: 3px;
+            }}
+            #AccentColorSwatch:hover {{
+                border: 1px solid palette(light);
+            }}
+            """
         )
 
-        options['fft_profile'] = {
-            'oversample': fft_oversample,
-            'rmin': fft_rmin,
-            'rmax': fft_rmax,
-            'gaus_factor': fft_gaus_factor,
-        }
+    def _apply_accent_color_setting(self) -> None:
+        settings = self.manager.settings.clone()
+        try:
+            settings[GUI_ACCENT_COLOR_SETTING] = self.accent_color_input.text()
+        except ValueError as exc:
+            QMessageBox.critical(self, 'Accent Color', str(exc))
+            current_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
+            self.accent_color_input.setText(current_color)
+            self._update_accent_color_swatch(current_color)
+            return
 
-        radial_oversample = self._parse_int(self.radial_oversample, options['radial_profile']['oversample'], minimum=1)
-        options['radial_profile']['oversample'] = radial_oversample
+        accent_color = settings[GUI_ACCENT_COLOR_SETTING]
+        if accent_color == self.manager.settings[GUI_ACCENT_COLOR_SETTING]:
+            self._apply_preferences_style(accent_color)
+            self._refresh_sidebar_icons(accent_color)
+            self.accent_color_input.setText(accent_color)
+            self._update_accent_color_swatch(accent_color)
+            return
 
-        lookup_n_local = self._parse_int(self.lookup_n_local, options['lookup_z']['n_local'], minimum=3)
-        if lookup_n_local % 2 == 0:
-            lookup_n_local += 1
-        options['lookup_z']['n_local'] = lookup_n_local
+        self.manager.settings = settings.clone()
+        self.settings_panel._current_settings = settings.clone()
+        apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+        if callable(apply_accent_color):
+            apply_accent_color(accent_color)
+        self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+        self._apply_preferences_style(accent_color)
+        self._refresh_sidebar_icons(accent_color)
+        self.accent_color_input.setText(accent_color)
+        self._update_accent_color_swatch(accent_color)
+        self.settings_panel._refresh_fields()
+        self.appearance_status_label.setText('Accent color updated')
 
-        self._set_options(options)
+    def _apply_live_plot_progress_indicator_setting(self, checked: bool) -> None:
+        settings = self.manager.settings.clone()
+        settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = checked
+        if settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] == self.manager.settings[
+            GUI_LIVE_PLOT_PROGRESS_BAR_SETTING
+        ]:
+            return
 
-    def reset_defaults(self) -> None:
-        self._set_options(copy.deepcopy(self._DEFAULTS), 'Defaults restored', populate_inputs=True)
+        self.manager.settings = settings.clone()
+        self.settings_panel._current_settings = settings.clone()
+        apply_progress_indicator_enabled = getattr(
+            self.manager,
+            '_apply_live_plot_progress_indicator_enabled',
+            None,
+        )
+        if callable(apply_progress_indicator_enabled):
+            apply_progress_indicator_enabled()
+        self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+        self.settings_panel._refresh_fields()
+        self.appearance_status_label.setText(
+            'Live plot loading indicator shown' if checked else 'Live plot loading indicator hidden'
+        )
+
+    def _scrollable_tab(self, widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea(self)
+        widget.setMaximumWidth(760)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(widget)
+        return scroll
+
+    @staticmethod
+    def _make_material_symbol_icon(
+        font: QFont,
+        text: str,
+        color: str = "#888888",
+        size: int = 16,
+    ) -> QIcon:
+        screen = QApplication.primaryScreen()
+        ratio = max(screen.devicePixelRatio() if screen is not None else 1.0, 1.0)
+        pixmap = QPixmap(round(size * ratio), round(size * ratio))
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(font)
+        painter.setPen(QColor(color))
+        painter.drawText(0, 0, size, size, Qt.AlignmentFlag.AlignCenter, text)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _on_sidebar_selection(self, index: int) -> None:
+        if 0 <= index < self.stack.count():
+            self.stack.setCurrentIndex(index)
+            self._refresh_sidebar_icons()
+
+    def _on_reset_current_section(self) -> None:
+        index = self.stack.currentIndex()
+        section_labels = [label for _, label in self._SIDEBAR_SECTIONS]
+        section_name = section_labels[index] if 0 <= index < len(section_labels) else "this section"
+
+        confirmation = QMessageBox.question(
+            self,
+            f"Reset {section_name}",
+            f"Reset {section_name} preferences to defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        if index == 0:
+            self.settings_panel.reset_defaults()
+        elif index == 1:
+            self.tracking_options_panel.reset_defaults()
+        elif index == 2:
+            self._reset_appearance_layout(reset_accent=True)
+
+    def _stack_index_for_scroll(self, scroll: QScrollArea) -> int:
+        if scroll is self.settings_scroll:
+            return 0
+        if scroll is self.tracking_scroll:
+            return 1
+        if scroll is self.appearance_scroll:
+            return 2
+        return -1
+
+    def reveal_setting(self, setting_key: str) -> None:
+        self.reveal_magscope_setting(setting_key)
+
+    def reveal_magscope_setting(self, setting_key: str) -> None:
+        widget = self.settings_panel._setting_inputs.get(setting_key)
+        if widget is None:
+            return
+
+        self._reveal_widget(self.settings_scroll, widget)
+
+    def reveal_tracking_option(self, widget_attr: str) -> None:
+        self.reveal_widget('Tracking', widget_attr)
+
+    def reveal_widget(self, tab_name: str, widget_attr: str) -> None:
+        if tab_name == 'Tracking':
+            scroll = self.tracking_scroll
+            panel = self.tracking_options_panel
+        elif tab_name == 'MagScope':
+            scroll = self.settings_scroll
+            panel = self.settings_panel
+        else:
+            return
+
+        widget = getattr(panel, widget_attr, None)
+        if not isinstance(widget, QWidget):
+            return
+
+        self._reveal_widget(scroll, widget)
+
+    def _reveal_widget(self, scroll: QScrollArea, widget: QWidget) -> None:
+        stack_idx = self._stack_index_for_scroll(scroll)
+        if stack_idx >= 0:
+            self.sidebar.setCurrentRow(stack_idx)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        scroll.ensureWidgetVisible(widget)
+        QTimer.singleShot(0, lambda: scroll.ensureWidgetVisible(widget))
+
+        highlight = getattr(self.manager, '_highlight_search_widget', None)
+        if callable(highlight):
+            highlight(widget)
+        if isinstance(widget, QLineEdit):
+            widget.setFocus()
+            widget.selectAll()
+        else:
+            lineedit = getattr(widget, 'lineedit', None)
+            if isinstance(lineedit, QLineEdit):
+                lineedit.setFocus()
+                lineedit.selectAll()
+
+    def _on_reset_appearance_tab_clicked(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            'Reset Appearance/Layout',
+            'Reset appearance and layout preferences to defaults?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation == QMessageBox.StandardButton.Yes:
+            self._reset_appearance_layout(reset_accent=True)
+
+    def _reset_appearance_layout(self, *, reset_accent: bool) -> None:
+        if reset_accent:
+            settings = self.manager.settings.clone()
+            settings[GUI_ACCENT_COLOR_SETTING] = DEFAULT_GUI_ACCENT_COLOR
+            settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = MagScopeSettings()[
+                GUI_LIVE_PLOT_PROGRESS_BAR_SETTING
+            ]
+            self.manager.settings = settings.clone()
+            self.settings_panel._current_settings = settings.clone()
+            apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
+            if callable(apply_accent_color):
+                apply_accent_color(DEFAULT_GUI_ACCENT_COLOR)
+            apply_progress_indicator_enabled = getattr(
+                self.manager,
+                '_apply_live_plot_progress_indicator_enabled',
+                None,
+            )
+            if callable(apply_progress_indicator_enabled):
+                apply_progress_indicator_enabled()
+            self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
+            self._apply_preferences_style(DEFAULT_GUI_ACCENT_COLOR)
+            self._refresh_sidebar_icons(DEFAULT_GUI_ACCENT_COLOR)
+            self.accent_color_input.setText(DEFAULT_GUI_ACCENT_COLOR)
+            self._update_accent_color_swatch(DEFAULT_GUI_ACCENT_COLOR)
+            self.live_plot_progress_indicator_checkbox.checkbox.setChecked(
+                settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
+            )
+            self.settings_panel._refresh_fields()
+
+        reset_layout = getattr(self.manager, 'reset_appearance_layout_preferences', None)
+        if callable(reset_layout):
+            reset_layout()
+        self.appearance_status_label.setText('Appearance/Layout reset to defaults')
 
 
 class ScriptPanel(ControlPanelBase):
@@ -2171,142 +2966,363 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {timestamp_text}')
 
 
+class _LockInfoButton(QToolButton):
+    """Compact info icon that shows a tooltip on hover."""
+
+    def __init__(self, tooltip_text: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setToolTip(tooltip_text)
+        self.setText('ⓘ')
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.setStyleSheet(
+            'QToolButton { border: none; background: transparent; color: #888; font-size: 15px; }'
+            'QToolButton:hover { color: #ccc; }'
+        )
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+
+class _LockStatusBadge(QLabel):
+    """Compact color-coded status label with rounded background."""
+
+    def __init__(self, text: str = '', parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(20)
+        self.setMinimumWidth(60)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._state = ''
+        self._apply_style()
+
+    def set_state(self, state: str) -> None:
+        self._state = state
+        self.setText(state)
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        if self._state == 'Active':
+            bg, fg = '#1a472a', '#4caf50'
+        elif self._state == 'Inactive':
+            bg, fg = '#2a2a2a', '#888'
+        elif self._state == 'Arming':
+            bg, fg = '#3d3520', '#ffce5a'
+        elif self._state == 'Target not set':
+            bg, fg = '#3d3520', '#ffce5a'
+        else:
+            bg, fg = '#2a2a2a', '#888'
+        self.setStyleSheet(
+            f'QLabel {{ background-color: {bg}; color: {fg}; '
+            f'border: 1px solid #3a3a3a; border-radius: 3px; '
+            f'padding: 0px 6px; font-size: 10px; font-weight: bold; }}'
+        )
+
+
+class _LockActivityIndicator(QWidget):
+    """Small circular ring indicator that fills over the lock interval and resets on correction."""
+
+    _SIZE = 14
+    _RING_WIDTH = 2
+    _BACKGROUND_COLOR = '#666666'
+    _MAXIMUM = 100
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._active = False
+        self._progress = 0
+        self._cycle_seconds = 10.0
+        self._flash_mode = False
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._recalc_interval()
+
+    def set_cycle_duration(self, seconds: float) -> None:
+        self._cycle_seconds = max(0.1, float(seconds))
+        self._recalc_interval()
+        if self._active and not self._flash_mode:
+            self._progress = 0
+            self.update()
+
+    def reset(self) -> None:
+        if not self._active:
+            return
+        self._progress = 0
+        self.update()
+
+    def set_active(self, active: bool) -> None:
+        if active == self._active:
+            return
+        self._active = active
+        self._flash_mode = False
+        if active:
+            self._progress = 0
+            self._recalc_interval()
+            self._timer.start()
+        else:
+            self._timer.stop()
+            self._progress = 0
+        self.update()
+
+    def trigger_once_flash(self) -> None:
+        self._flash_mode = True
+        self._progress = self._MAXIMUM
+        self._timer.setInterval(10)
+        if not self._timer.isActive():
+            self._timer.start()
+        self.update()
+
+    def _recalc_interval(self) -> None:
+        ms = max(10, int(self._cycle_seconds * 1000 / self._MAXIMUM))
+        self._timer.setInterval(ms)
+
+    def _tick(self) -> None:
+        if self._flash_mode:
+            self._progress = max(0, self._progress - 1)
+            self.update()
+            if self._progress <= 0:
+                self._flash_mode = False
+                if not self._active:
+                    self._timer.stop()
+                else:
+                    self._recalc_interval()
+            return
+        self._progress = min(self._MAXIMUM, self._progress + 1)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        ring_w = self._RING_WIDTH
+        margin = ring_w / 2 + 1.0
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+
+        bg_pen = QPen(QColor(self._BACKGROUND_COLOR), ring_w)
+        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawEllipse(rect)
+
+        if self._active or self._flash_mode:
+            fraction = self._progress / self._MAXIMUM
+            accent_pen = QPen(QColor(get_accent_color()), ring_w)
+            accent_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(accent_pen)
+            painter.drawArc(rect, 90 * 16, int(-360 * 16 * fraction))
+
+
+class _LockNumberInput(QWidget):
+    """Compact row: label | spinbox | unit suffix."""
+
+    def __init__(
+        self,
+        label_text: str,
+        default: float | int,
+        unit: str,
+        *,
+        is_int: bool = False,
+        minimum: float = 0.0,
+        maximum: float = 999999.0,
+        decimals: int = 1,
+        callback: callable | None = None,
+        show_unit_label: bool = True,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.label = QLabel(label_text)
+        self.label.setFixedWidth(105)
+        layout.addWidget(self.label)
+
+        if is_int:
+            self.spinbox = QSpinBox()
+            self.spinbox.setRange(int(minimum), int(maximum))
+            self.spinbox.setValue(int(default))
+            self.spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        else:
+            self.spinbox = QDoubleSpinBox()
+            self.spinbox.setRange(minimum, maximum)
+            self.spinbox.setDecimals(decimals)
+            self.spinbox.setValue(float(default))
+            self.spinbox.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.spinbox.setFixedWidth(64)
+        self.spinbox.setAlignment(Qt.AlignmentFlag.AlignRight)
+        if callback:
+            self.spinbox.editingFinished.connect(callback)
+        layout.addWidget(self.spinbox)
+
+        self.unit_label = QLabel(unit)
+        self.unit_label.setFixedWidth(40)
+        self.unit_label.setStyleSheet('color: #999;')
+        layout.addWidget(self.unit_label)
+
+        if not show_unit_label:
+            self.unit_label.hide()
+
+        self.value_label = self.unit_label
+
+    @property
+    def lineedit(self):
+        return self.spinbox.lineEdit()
+
+
 class XYLockPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='XY-Lock', collapsed_by_default=True)
+        super().__init__(manager=manager, title='XY-Lock',
+                         collapsed_by_default=False, collapsible=False)
 
-        # Note
-        note_text = textwrap.dedent(
-            """
-            Periodically moves the bead-boxes to center the bead.
-            """
-        ).strip()
-        note = QLabel(note_text)
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        title_layout = self.groupbox.layout().itemAt(0).widget().layout()
 
-        controls_row = QHBoxLayout()
-        self.layout().addLayout(controls_row)
+        info_btn = _LockInfoButton(
+            'XY-Lock periodically recenters the selected bead in the '
+            'camera frame by applying small XY corrections.'
+        )
+        title_layout.addWidget(info_btn)
+        title_layout.addStretch(1)
 
-        # Enabled
+        self._activity_indicator = _LockActivityIndicator()
+        title_layout.addWidget(self._activity_indicator)
+
+        content = self.layout()
+        content.setContentsMargins(6, 2, 6, 6)
+        content.setSpacing(4)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
+        left_col.addStretch(1)
+
+        self.once_button = QPushButton('Once')
+        self.once_button.clicked.connect(self.once_callback)
+        self.once_button.setFixedHeight(22)
+        left_col.addWidget(self.once_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         self.enabled = LabeledCheckbox(
-            label_text='Enabled',
+            label_text='Timer',
             callback=self.enabled_callback,
         )
-        controls_row.addWidget(self.enabled)
+        left_col.addWidget(self.enabled, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Once
-        once = QPushButton('Once')
-        once.clicked.connect(self.once_callback)
-        controls_row.addWidget(once)
+        left_col.addStretch(1)
+        body.addLayout(left_col)
 
-        # Interval
+        vline = QFrame()
+        vline.setFrameShape(QFrame.Shape.VLine)
+        vline.setFrameShadow(QFrame.Shadow.Sunken)
+        vline.setFixedWidth(1)
+        body.addWidget(vline)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(4)
+
         default_interval = self.manager.settings['xy-lock default interval']
-        self.interval = LabeledLineEditWithValue(
-            label_text='Interval (sec)',
-            default=f'{default_interval} sec',
-            callback=self.interval_callback,
-            widths=(105, 100, 0),
+        self.interval = _LockNumberInput(
+            label_text='Interval (sec)', default=default_interval, unit='sec',
+            callback=self.interval_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.interval)
+        right_col.addWidget(self.interval)
 
-        # Max
         default_max = self.manager.settings['xy-lock default max']
-        self.max = LabeledLineEditWithValue(
-            label_text='Max (pixels)',
-            default=f'{default_max} pixels',
-            callback=self.max_callback,
-            widths=(105, 100, 0),
+        self.max = _LockNumberInput(
+            label_text='Max correction (px)', default=default_max, unit='px',
+            callback=self.max_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.max)
+        right_col.addWidget(self.max)
 
-        # Averaging Window
-        default_window = self.manager.settings.get('xy-lock default window', '')
-        self.window = LabeledLineEditWithValue(
-            label_text='Averaging Window',
-            default=f'{default_window} frames',
-            callback=self.window_callback,
-            widths=(105, 100, 0),
+        default_window = self.manager.settings.get('xy-lock default window', 10)
+        self.window = _LockNumberInput(
+            label_text='Averaging (frames)', default=default_window, unit='frames',
+            is_int=True, minimum=1, callback=self.window_callback,
+            show_unit_label=False,
         )
-        self.layout().addWidget(self.window)
+        right_col.addWidget(self.window)
+        right_col.addStretch(1)
+        body.addLayout(right_col)
+        body.addStretch(1)
+
+        content.addLayout(body)
+
+        self._activity_indicator.set_cycle_duration(default_interval)
+        self._update_badge()
+
+    def notify_correction(self) -> None:
+        self._activity_indicator.reset()
+
+    def _update_badge(self) -> None:
+        self._activity_indicator.set_active(self.enabled.checkbox.isChecked())
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('XY-Lock Enabled', 'XYLockPanel', 'enabled', context='XY-Lock', aliases=('enable xy lock', 'xy lock on')),
+            _panel_control_target('XY-Lock Once', 'XYLockPanel', 'once_button', context='XY-Lock', aliases=('run xy lock once', 'center beads once')),
+            _panel_control_target('XY-Lock Interval', 'XYLockPanel', 'interval', context='XY-Lock', aliases=('xy lock frequency',)),
+            _panel_control_target('XY-Lock Max', 'XYLockPanel', 'max', context='XY-Lock', aliases=('xy lock maximum', 'xy lock max pixels')),
+            _panel_control_target('XY-Lock Averaging Window', 'XYLockPanel', 'window', context='XY-Lock', aliases=('xy lock window', 'xy lock averaging')),
+        ]
 
     def enabled_callback(self):
         is_enabled = self.enabled.checkbox.isChecked()
-
         self.set_highlighted(is_enabled)
+        self._update_badge()
 
-        # Send value
         command = SetXYLockOnCommand(value=is_enabled)
         self.manager.send_ipc(command)
 
     def once_callback(self):
         command = ExecuteXYLockCommand()
         self.manager.send_ipc(command)
+        self._activity_indicator.trigger_once_flash()
 
     def interval_callback(self):
-        # Get value
-        value = self.interval.lineedit.text()
-        self.interval.lineedit.setText('')
-
-        # Check value
-        stripped_value = value.strip()
-        try:
-            interval_seconds = float(stripped_value)
-        except ValueError:
-            return
-        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        interval_seconds = self.interval.spinbox.value()
+        if interval_seconds <= 0:
             return
 
-        # Send value
         command = SetXYLockIntervalCommand(value=interval_seconds)
         self.manager.send_ipc(command)
 
     def max_callback(self):
-        # Get value
-        value = self.max.lineedit.text()
-        self.max.lineedit.setText('')
-
-        # Check value
-        try:
-            max_distance = float(value)
-        except ValueError:
-            return
+        max_distance = self.max.spinbox.value()
         if max_distance < 1:
             return
 
-        # Send value
         command = SetXYLockMaxCommand(value=max_distance)
         self.manager.send_ipc(command)
 
     def window_callback(self):
-        # Get value
-        value = self.window.lineedit.text()
-        self.window.lineedit.setText('')
-
-        # Check value
-        try:
-            window_size = int(value)
-        except ValueError:
-            return
+        window_size = self.window.spinbox.value()
         if window_size <= 0:
             return
 
-        # Send value
         command = SetXYLockWindowCommand(value=window_size)
         self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
-        # Set checkbox
         self.enabled.checkbox.blockSignals(True)
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
-
         self.set_highlighted(value)
+        self._update_badge()
 
     def update_interval(self, value: float):
         if value is None:
             value = ''
         self.interval.value_label.setText(f'{value} sec')
+        if isinstance(value, (int, float)):
+            self._activity_indicator.set_cycle_duration(value)
 
     def update_max(self, value: float):
         if value is None:
@@ -2321,201 +3337,302 @@ class XYLockPanel(ControlPanelBase):
 
 class ZLockPanel(ControlPanelBase):
     def __init__(self, manager: 'UIManager'):
-        super().__init__(manager=manager, title='Z-Lock', collapsed_by_default=True)
+        super().__init__(manager=manager, title='Z-Lock',
+                         collapsed_by_default=False, collapsible=False)
 
-        # Note
-        note_text = textwrap.dedent(
-            """
-            When enabled the Z-Lock overrides the "Z motor" target and adjusts the motor
-            target to maintain the chosen bead at a fixed Z value. Adjustments run on a
-            timer using the configured interval.
-            """
-        ).replace('\n', ' ').strip()
-        note = QLabel(note_text)
-        note.setWordWrap(True)
-        self.layout().addWidget(note)
+        title_layout = self.groupbox.layout().itemAt(0).widget().layout()
 
-        # Enabled
+        info_btn = _LockInfoButton(
+            'Z-Lock maintains the selected bead at a fixed Z position by '
+            'periodically adjusting the Z motor toward a target value.'
+        )
+        title_layout.addWidget(info_btn)
+        title_layout.addStretch(1)
+
+        self._activity_indicator = _LockActivityIndicator()
+        title_layout.addWidget(self._activity_indicator)
+
+        content = self.layout()
+        content.setContentsMargins(6, 2, 6, 6)
+        content.setSpacing(4)
+
+        # Compact warning row
+        self._warning_label = QLabel()
+        self._warning_label.setStyleSheet(
+            'color: #ffce5a; font-size: 10px; padding: 1px 0px;'
+        )
+        self._warning_label.setVisible(False)
+        content.addWidget(self._warning_label)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+
+        left_col = QVBoxLayout()
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(6)
+
+        left_col.addStretch(1)
+
+        self._once_button = QPushButton('Once')
+        self._once_button.setFixedHeight(22)
+        self._once_button.clicked.connect(self._once_callback)
+        left_col.addWidget(self._once_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+
         self.enabled = LabeledCheckbox(
-            label_text='Enabled',
+            label_text='Timer',
             callback=self.enabled_callback,
         )
-        self.layout().addWidget(self.enabled)
+        left_col.addWidget(self.enabled, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Bead
-        self.bead = LabeledLineEditWithValue(
-            label_text='Bead',
-            default='0',
-            callback=self.bead_callback,
-            widths=(75, 100, 0),
+        left_col.addStretch(1)
+        body.addLayout(left_col)
+
+        vline = QFrame()
+        vline.setFrameShape(QFrame.Shape.VLine)
+        vline.setFrameShadow(QFrame.Shadow.Sunken)
+        vline.setFixedWidth(1)
+        body.addWidget(vline)
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(4)
+
+        # Bead row
+        bead_row = QHBoxLayout()
+        bead_row.setContentsMargins(0, 0, 0, 0)
+        bead_row.setSpacing(6)
+        bead_label = QLabel('Bead')
+        bead_label.setFixedWidth(105)
+        bead_row.addWidget(bead_label)
+        self._bead_combo = QComboBox()
+        self._bead_combo.setEditable(True)
+        self._bead_combo.setFixedWidth(64)
+        self._bead_combo.setMinimumContentsLength(1)
+        self._bead_combo.currentTextChanged.connect(self._bead_combo_callback)
+        bead_row.addWidget(self._bead_combo)
+        bead_row.addStretch(1)
+        right_col.addLayout(bead_row)
+
+        self.bead = SimpleNamespace(
+            value_label=self._bead_combo,
+            lineedit=self._bead_combo.lineEdit(),
         )
-        self.layout().addWidget(self.bead)
 
-        # Target
-        self.target = LabeledLineEditWithValue(
-            label_text='Target (nm)',
-            default='Not set',
-            callback=self.target_callback,
-            widths=(75, 100, 0),
+        # Target row
+        target_row = QHBoxLayout()
+        target_row.setContentsMargins(0, 0, 0, 0)
+        target_row.setSpacing(6)
+        target_label = QLabel('Target (nm)')
+        target_label.setFixedWidth(105)
+        target_row.addWidget(target_label)
+        self._target_spinbox = QDoubleSpinBox()
+        self._target_spinbox.setRange(-999999.0, 999999.0)
+        self._target_spinbox.setDecimals(1)
+        self._target_spinbox.setValue(0.0)
+        self._target_spinbox.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self._target_spinbox.setFixedWidth(64)
+        self._target_spinbox.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._target_spinbox.editingFinished.connect(self._target_spinbox_callback)
+        target_row.addWidget(self._target_spinbox)
+
+        self._target_unit_label = QLabel('nm')
+        self._target_unit_label.setStyleSheet('color: #999;')
+
+        self.target = SimpleNamespace(
+            lineedit=self._target_spinbox.lineEdit(),
+            value_label=self._target_unit_label,
         )
-        self.layout().addWidget(self.target)
+        target_row.addStretch(1)
+        right_col.addLayout(target_row)
 
-        # Interval
         default_interval = self.manager.settings['z-lock default interval']
-        self.interval = LabeledLineEditWithValue(
-            label_text='Interval (sec)',
-            default=f'{default_interval} sec',
-            callback=self.interval_callback,
-            widths=(75, 100, 0),
+        self.interval = _LockNumberInput(
+            label_text='Interval (sec)', default=default_interval, unit='sec',
+            callback=self.interval_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.interval)
+        right_col.addWidget(self.interval)
 
-        # Max
         default_max = self.manager.settings['z-lock default max']
-        self.max = LabeledLineEditWithValue(
-            label_text='Max (nm)',
-            default=f'{default_max} nm',
-            callback=self.max_callback,
-            widths=(75, 100, 0),
+        self.max = _LockNumberInput(
+            label_text='Max correction (nm)', default=default_max, unit='nm',
+            callback=self.max_callback, show_unit_label=False,
+            is_int=True,
         )
-        self.layout().addWidget(self.max)
+        right_col.addWidget(self.max)
 
-        # Averaging Window
-        default_window = self.manager.settings.get('z-lock default window', '')
-        self.window = LabeledLineEditWithValue(
-            label_text='Averaging Window',
-            default=f'{default_window} frames',
-            callback=self.window_callback,
-            widths=(75, 100, 0),
+        default_window = self.manager.settings.get('z-lock default window', 10)
+        self.window = _LockNumberInput(
+            label_text='Averaging (frames)', default=default_window, unit='frames',
+            is_int=True, minimum=1, callback=self.window_callback,
+            show_unit_label=False,
         )
-        self.layout().addWidget(self.window)
+        right_col.addWidget(self.window)
+        right_col.addStretch(1)
+        body.addLayout(right_col)
+        body.addStretch(1)
 
-    def enabled_callback(self):
-        is_enabled = self.enabled.checkbox.isChecked()
+        content.addLayout(body)
 
-        self.set_highlighted(is_enabled)
+        self._activity_indicator.set_cycle_duration(default_interval)
+        self._target_is_set = False
+        self._update_badge()
+        self._refresh_bead_combo()
 
-        # Send value
-        command = SetZLockOnCommand(value=is_enabled)
-        self.manager.send_ipc(command)
-
-    def bead_callback(self):
-        # Get value
-        value = self.bead.lineedit.text()
-        self.bead.lineedit.setText('')
-
-        # Check value
+    def _refresh_bead_combo(self) -> None:
+        self._bead_combo.blockSignals(True)
+        current_text = self._bead_combo.currentText()
         try:
-            bead_index = int(value)
+            bead_rois = self.manager._bead_rois
+        except (AttributeError, TypeError):
+            bead_rois = {}
+        self._bead_combo.clear()
+        for bead_id in sorted(bead_rois.keys()):
+            self._bead_combo.addItem(str(bead_id))
+        if current_text:
+            idx = self._bead_combo.findText(current_text)
+            if idx >= 0:
+                self._bead_combo.setCurrentIndex(idx)
+        self._bead_combo.blockSignals(False)
+
+    def _bead_combo_callback(self, text: str) -> None:
+        try:
+            bead_index = int(text)
         except ValueError:
             return
         if bead_index < 0:
             return
 
-        self.update_bead(bead_index)
-
-        # Send value
         command = SetZLockBeadCommand(value=bead_index)
         self.manager.send_ipc(command)
 
-    def target_callback(self):
-        # Get value
-        value = self.target.lineedit.text()
-        self.target.lineedit.setText('')
-
-        # Check value
-        try:
-            target_nm = float(value)
-        except ValueError:
-            return
-
-        self.update_target(target_nm)
-
-        # Send value
+    def _target_spinbox_callback(self) -> None:
+        target_nm = self._target_spinbox.value()
         command = SetZLockTargetCommand(value=target_nm)
         self.manager.send_ipc(command)
 
+    def _once_callback(self) -> None:
+        command = ExecuteZLockCommand()
+        self.manager.send_ipc(command)
+        self._activity_indicator.trigger_once_flash()
+
+    def _update_badge(self) -> None:
+        if not self._has_focus_motor():
+            self._activity_indicator.set_active(False)
+            self._warning_label.setText(
+                'No focus motor hardware registered \u2014 Z-Lock disabled'
+            )
+            self._warning_label.setVisible(True)
+            self._set_controls_enabled(False)
+            return
+
+        self._set_controls_enabled(True)
+        enabled = self.enabled.checkbox.isChecked()
+        self._activity_indicator.set_active(enabled)
+        if not enabled and not self._target_is_set:
+            self._warning_label.setText('Set a target Z before enabling')
+            self._warning_label.setVisible(True)
+        elif enabled and not self._target_is_set:
+            self._warning_label.setText('Target will latch from current bead Z')
+            self._warning_label.setVisible(True)
+        else:
+            self._warning_label.setVisible(False)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Z-Lock Enabled', 'ZLockPanel', 'enabled', context='Z-Lock', aliases=('enable z lock', 'z lock on')),
+            _panel_control_target('Z-Lock Bead', 'ZLockPanel', 'bead', context='Z-Lock', aliases=('focus bead', 'z lock bead roi')),
+            _panel_control_target('Z-Lock Target', 'ZLockPanel', 'target', context='Z-Lock', aliases=('z target', 'focus target')),
+            _panel_control_target('Z-Lock Interval', 'ZLockPanel', 'interval', context='Z-Lock', aliases=('z lock frequency',)),
+            _panel_control_target('Z-Lock Max', 'ZLockPanel', 'max', context='Z-Lock', aliases=('z lock maximum', 'z lock max nm')),
+            _panel_control_target('Z-Lock Averaging Window', 'ZLockPanel', 'window', context='Z-Lock', aliases=('z lock window', 'z lock averaging')),
+        ]
+
+    def enabled_callback(self):
+        is_enabled = self.enabled.checkbox.isChecked()
+        self.set_highlighted(is_enabled)
+        self._update_badge()
+
+        command = SetZLockOnCommand(value=is_enabled)
+        self.manager.send_ipc(command)
+
     def interval_callback(self):
-        # Get value
-        value = self.interval.lineedit.text()
-        self.interval.lineedit.setText('')
-
-        # Check value
-        stripped_value = value.strip()
-        try:
-            interval_seconds = float(stripped_value)
-        except ValueError:
-            return
-        if interval_seconds <= 0 or (interval_seconds == 0 and stripped_value.startswith('-')):
+        interval_seconds = self.interval.spinbox.value()
+        if interval_seconds <= 0:
             return
 
-        self.update_interval(interval_seconds)
-
-        # Send value
         command = SetZLockIntervalCommand(value=interval_seconds)
         self.manager.send_ipc(command)
 
     def max_callback(self):
-        # Get value
-        value = self.max.lineedit.text()
-        self.max.lineedit.setText('')
-
-        # Check value
-        try:
-            max_nm = float(value)
-        except ValueError:
-            return
+        max_nm = self.max.spinbox.value()
         if max_nm <= 1:
             return
 
-        self.update_max(max_nm)
-
-        # Send value
         command = SetZLockMaxCommand(value=max_nm)
         self.manager.send_ipc(command)
 
     def window_callback(self):
-        # Get value
-        value = self.window.lineedit.text()
-        self.window.lineedit.setText('')
-
-        # Check value
-        try:
-            window_size = int(value)
-        except ValueError:
-            return
+        window_size = self.window.spinbox.value()
         if window_size <= 0:
             return
 
-        self.update_window(window_size)
-
-        # Send value
         command = SetZLockWindowCommand(value=window_size)
         self.manager.send_ipc(command)
 
     def update_enabled(self, value: bool):
-        # Set checkbox
         self.enabled.checkbox.blockSignals(True)
         self.enabled.checkbox.setChecked(value)
         self.enabled.checkbox.blockSignals(False)
-
         self.set_highlighted(value)
+        self._update_badge()
 
     def update_bead(self, value: int):
         if value is None:
             value = ''
-        self.bead.value_label.setText(f'{value}')
+        self.bead.value_label.setCurrentText(str(value))
+
+    def _has_focus_motor(self) -> bool:
+        from magscope.hardware import FocusMotorBase
+        try:
+            hardware_types = self.manager.hardware_types
+        except (AttributeError, TypeError):
+            return False
+        for hardware_type in hardware_types.values():
+            try:
+                if issubclass(hardware_type, FocusMotorBase):
+                    return True
+            except TypeError:
+                continue
+        return False
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        self._bead_combo.setEnabled(enabled)
+        self._target_spinbox.setEnabled(enabled)
+        self.enabled.setEnabled(enabled)
+        self._once_button.setEnabled(enabled)
+        self.interval.setEnabled(enabled)
+        self.max.setEnabled(enabled)
+        self.window.setEnabled(enabled)
 
     def update_target(self, value: float):
         if value is None:
-            self.target.value_label.setText('Not set')
+            self._target_is_set = False
+            self._target_unit_label.setText('Not set')
+            self._update_badge()
             return
-        self.target.value_label.setText(f'{value} nm')
+        self._target_is_set = True
+        self._target_unit_label.setText(f'{value} nm')
+        self._activity_indicator.reset()
+        self._update_badge()
 
     def update_interval(self, value: float):
         if value is None:
             value = ''
         self.interval.value_label.setText(f'{value} sec')
+        if isinstance(value, (int, float)):
+            self._activity_indicator.set_cycle_duration(value)
 
     def update_max(self, value: float):
         if value is None:
@@ -2565,6 +3682,15 @@ class ZLUTGenerationPanel(ControlPanelBase):
         self.generate_button = QPushButton('Generate')
         self.generate_button.clicked.connect(self.generate_callback)
         buttons_row.addWidget(self.generate_button)
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Z-LUT Start', 'ZLUTGenerationPanel', 'start_input', context='Z-LUT Generation', aliases=('start nm', 'z lut start')),
+            _panel_control_target('Z-LUT Step', 'ZLUTGenerationPanel', 'step_input', context='Z-LUT Generation', aliases=('step nm', 'z lut step')),
+            _panel_control_target('Z-LUT Stop', 'ZLUTGenerationPanel', 'stop_input', context='Z-LUT Generation', aliases=('stop nm', 'z lut stop')),
+            _panel_control_target('Z-LUT Measurements per Step', 'ZLUTGenerationPanel', 'measurements_input', context='Z-LUT Generation', aliases=('measurements per step', 'captures per step')),
+            _panel_control_target('Generate Z-LUT', 'ZLUTGenerationPanel', 'generate_button', context='Z-LUT Generation', aliases=('generate', 'start z lut generation')),
+        ]
 
     def generate_callback(self):
         # Start
@@ -2626,6 +3752,73 @@ class ZLUTGenerationPanel(ControlPanelBase):
         _ = (current_step, total_steps, capture_count, capture_capacity, motor_z_value)
 
 
+class ZLUTGenerationSetupDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        roi_size: int,
+        default_measurements: int,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle('New Z-LUT')
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        roi_row = QHBoxLayout()
+        roi_row.addWidget(QLabel('Current ROI:'))
+        roi_row.addWidget(QLabel(f'{roi_size} x {roi_size} pixels'))
+        roi_row.addStretch(1)
+        layout.addLayout(roi_row)
+
+        self.start_input = LabeledLineEdit(label_text='Start (nm):')
+        layout.addWidget(self.start_input)
+        self.step_input = LabeledLineEdit(label_text='Step (nm):')
+        layout.addWidget(self.step_input)
+        self.stop_input = LabeledLineEdit(label_text='Stop (nm):')
+        layout.addWidget(self.stop_input)
+        self.measurements_input = LabeledLineEdit(label_text='Measurements per step:')
+        self.measurements_input.lineedit.setText(str(default_measurements))
+        layout.addWidget(self.measurements_input)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.cancel_button = QPushButton('Cancel')
+        self.cancel_button.clicked.connect(self.reject)  # type: ignore
+        button_row.addWidget(self.cancel_button)
+        self.generate_button = QPushButton('Generate')
+        self.generate_button.clicked.connect(self._accept_if_valid)  # type: ignore
+        button_row.addWidget(self.generate_button)
+        layout.addLayout(button_row)
+
+        self._values: tuple[float, float, float, int] | None = None
+
+    @property
+    def values(self) -> tuple[float, float, float, int] | None:
+        return self._values
+
+    def _accept_if_valid(self) -> None:
+        try:
+            start_nm = float(self.start_input.lineedit.text())
+            step_nm = float(self.step_input.lineedit.text())
+            stop_nm = float(self.stop_input.lineedit.text())
+            profiles_per_bead = int(self.measurements_input.lineedit.text())
+        except ValueError:
+            QMessageBox.warning(self, 'Invalid Z-LUT settings', 'Enter numeric Z-LUT settings.')
+            return
+        if profiles_per_bead <= 0:
+            QMessageBox.warning(
+                self,
+                'Invalid Z-LUT settings',
+                'Measurements per step must be greater than zero.',
+            )
+            return
+
+        self._values = (start_nm, step_nm, stop_nm, profiles_per_bead)
+        self.accept()
+
+
 class ZLUTSweepPreviewWidget(MatplotlibCleanupMixin, QWidget):
     _STATE_LABELS = {
         0: 'Absent',
@@ -2649,13 +3842,13 @@ class ZLUTSweepPreviewWidget(MatplotlibCleanupMixin, QWidget):
 
         self._preview_cmap = matplotlib.colormaps['gray'].copy()
 
-        self.figure = Figure(dpi=100, facecolor='#1e1e1e')
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setMinimumHeight(280)
         layout.addWidget(self.canvas, 1)
 
         self.axes = self.figure.subplots(nrows=1, ncols=1)
-        self.axes.set_facecolor('#1e1e1e')
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
         self.axes.set_xlabel('Capture Index')
         self.axes.set_ylabel('Profile Radius (px)')
         self._image = self.axes.imshow(
@@ -2988,6 +4181,146 @@ class ZLUTGenerationDialog(QDialog):
         super().closeEvent(event)
 
 
+class CurrentZLUTDialog(MatplotlibCleanupMixin, QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle('Current Z-LUT')
+        self.resize(720, 560)
+        layout = QVBoxLayout(self)
+
+        self.preview_status_label = QLabel('No Z-LUT loaded')
+        self.preview_status_label.setWordWrap(True)
+        layout.addWidget(self.preview_status_label)
+
+        self.figure = Figure(dpi=100, facecolor=PANEL_BACKGROUND_COLOR)
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setMinimumHeight(280)
+        layout.addWidget(self.canvas, 1)
+        self.axes = self.figure.subplots(nrows=1, ncols=1)
+        self.axes.set_facecolor(PANEL_BACKGROUND_COLOR)
+        self._image = self.axes.imshow(
+            np.zeros((1, 1), dtype=np.float64),
+            cmap=matplotlib.colormaps['gray'].copy(),
+            aspect='auto',
+            interpolation='nearest',
+            origin='lower',
+        )
+        self._clear_preview('No Z-LUT loaded')
+        self._init_matplotlib_cleanup()
+
+        metadata_layout = QVBoxLayout()
+        layout.addLayout(metadata_layout)
+        self.min_value = self._add_metadata_row(metadata_layout, 'Min (nm):')
+        self.max_value = self._add_metadata_row(metadata_layout, 'Max (nm):')
+        self.step_value = self._add_metadata_row(metadata_layout, 'Step (nm):')
+        self.profile_length_value = self._add_metadata_row(metadata_layout, 'Profile Length:')
+
+        self.filepath_label = QLabel('File: No Z-LUT loaded')
+        self.filepath_label.setWordWrap(True)
+        self.filepath_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.filepath_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        close_button = QPushButton('Close')
+        close_button.clicked.connect(self.close)  # type: ignore
+        button_row.addWidget(close_button)
+        layout.addLayout(button_row)
+
+    def _add_metadata_row(self, layout: QVBoxLayout, label_text: str) -> QLabel:
+        row = QHBoxLayout()
+        label = QLabel(label_text)
+        value = QLabel('')
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        row.addWidget(label)
+        row.addStretch(1)
+        row.addWidget(value, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(row)
+        return value
+
+    def update_zlut(
+        self,
+        filepath: str | None,
+        *,
+        z_min: float | None = None,
+        z_max: float | None = None,
+        step_size: float | None = None,
+        profile_length: int | None = None,
+    ) -> None:
+        self.filepath_label.setText(f'File: {filepath}' if filepath else 'File: No Z-LUT loaded')
+        self.min_value.setText(self._format_number(z_min, suffix=' nm'))
+        self.max_value.setText(self._format_number(z_max, suffix=' nm'))
+        self.step_value.setText(self._format_number(step_size, suffix=' nm'))
+        self.profile_length_value.setText('' if profile_length is None else f'{profile_length}')
+        self._update_preview(filepath)
+
+    def _clear_preview(self, message: str) -> None:
+        self.preview_status_label.setText(message)
+        self._image.set_data(np.zeros((1, 1), dtype=np.float64))
+        self._image.set_extent((-0.5, 0.5, -0.5, 0.5))
+        self._image.set_clim(0.0, 1.0)
+        self.axes.set_title('No Z-LUT preview available')
+        self.axes.set_xlabel('Z Position (nm)')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(-0.5, 0.5)
+        self.axes.set_ylim(-0.5, 0.5)
+        self.canvas.draw()
+
+    def _update_preview(self, filepath: str | None) -> None:
+        if not filepath:
+            self._clear_preview('No Z-LUT loaded')
+            return
+        try:
+            zlut_array = np.loadtxt(filepath)
+            if zlut_array.ndim != 2 or zlut_array.shape[0] < 2 or zlut_array.shape[1] < 2:
+                raise ValueError('Z-LUT must be a 2D array with z references and profile rows.')
+        except Exception as exc:
+            reason = str(exc).strip() or repr(exc)
+            self._clear_preview(f'Could not load Z-LUT preview: {reason}')
+            return
+
+        z_references = np.asarray(zlut_array[0, :], dtype=np.float64)
+        profiles = np.asarray(zlut_array[1:, :], dtype=np.float64)
+        finite_z_references = z_references[np.isfinite(z_references)]
+        if finite_z_references.size == 0:
+            self._clear_preview('No finite Z-LUT reference positions available')
+            return
+        finite_mask = np.isfinite(profiles)
+        if not np.any(finite_mask):
+            self._clear_preview('No finite Z-LUT profile values available')
+            return
+
+        finite_values = profiles[finite_mask]
+        vmin = float(np.min(finite_values))
+        vmax = float(np.max(finite_values))
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1.0
+
+        x_min = float(np.min(finite_z_references))
+        x_max = float(np.max(finite_z_references))
+        if np.isclose(x_min, x_max):
+            x_min -= 0.5
+            x_max += 0.5
+        self.preview_status_label.setText('')
+        self._image.set_data(np.ma.masked_invalid(profiles))
+        self._image.set_extent((x_min, x_max, -0.5, profiles.shape[0] - 0.5))
+        self._image.set_clim(vmin, vmax)
+        self.axes.set_title('Current Z-LUT')
+        self.axes.set_xlabel('Z Position (nm)')
+        self.axes.set_ylabel('Profile Radius (px)')
+        self.axes.set_xlim(x_min, x_max)
+        self.axes.set_ylim(-0.5, profiles.shape[0] - 0.5)
+        self.canvas.draw()
+
+    @staticmethod
+    def _format_number(value: float | int | None, suffix: str = '') -> str:
+        if value is None:
+            return ''
+        if isinstance(value, float):
+            return f'{int(value):d}{suffix}'
+        return f'{value}{suffix}'
+
+
 class ZLUTPanel(ControlPanelBase):
     zlut_file_selected = pyqtSignal(str)
     zlut_clear_requested = pyqtSignal()
@@ -3028,6 +4361,12 @@ class ZLUTPanel(ControlPanelBase):
         self.max_value = self._add_metadata_row('Max (nm):')
         self.step_value = self._add_metadata_row('Step (nm):')
         self.profile_length_value = self._add_metadata_row('Profile Length:')
+
+    def search_targets(self) -> list[SearchTarget]:
+        return [
+            _panel_control_target('Select Z-LUT File', 'ZLUTPanel', 'select_button', context='Z-LUT', aliases=('load z lut', 'choose z-lut file')),
+            _panel_control_target('Clear Z-LUT', 'ZLUTPanel', 'clear_button', context='Z-LUT', aliases=('remove z lut', 'reset z lut')),
+        ]
 
     def _add_metadata_row(self, label_text: str) -> QLabel:
         row = QHBoxLayout()

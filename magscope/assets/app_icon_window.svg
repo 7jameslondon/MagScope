@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">MagScope window icon</title>
+  <defs>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00316f" />
+      <stop offset="1" stop-color="#001640" />
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#006dff" />
+      <stop offset="1" stop-color="#0054f0" />
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#13bddb" />
+      <stop offset="1" stop-color="#10d2e9" />
+    </linearGradient>
+  </defs>
+  <path fill="url(#dark)" d="M390 210h244c16 0 26 8 31 24l14 38v48c0 6-3 9-9 9H354c-6 0-9-3-9-9v-48l14-38c5-16 15-24 31-24z" />
+  <rect width="362" height="58" x="331" y="350" fill="url(#blue)" rx="12" />
+  <path fill="url(#dark)" d="M348 430h328c18 0 29 11 29 29v205c0 15-5 27-15 38l-33 35c-8 8-18 12-30 12H397c-12 0-22-4-30-12l-33-35c-10-11-15-23-15-38V459c0-18 11-29 29-29z" />
+  <path fill="#ffffff" d="M384 474h47v198h-47zM489 474h47v198h-47zM594 474h47v198h-47z" />
+  <rect width="258" height="48" x="383" y="770" fill="url(#cyan)" rx="9" />
+  <path fill="url(#dark)" d="M413 842h198v29c0 13-4 25-12 35l-19 44c-6 13-17 19-33 19h-70c-16 0-27-6-33-19l-19-44c-8-10-12-22-12-35v-29z" />
+  <path fill="url(#dark)" d="M456 950h112v27c0 13-5 23-15 31-7 5-16 8-27 8h-28c-11 0-20-3-27-8-10-8-15-18-15-31v-27z" />
+</svg>

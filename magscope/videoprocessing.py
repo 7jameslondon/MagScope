@@ -945,13 +945,13 @@ class VideoWorker(Process):
         match acquisition_mode:
             case AcquisitionMode.TRACK:
                 process_mode_tracks()
-            case AcquisitionMode.TRACK_AND_CROP_VIDEO:
+            case AcquisitionMode.TRACK_AND_VIDEO_ROIS:
                 process_mode_track_and_crop_video()
-            case AcquisitionMode.TRACK_AND_FULL_VIDEO:
+            case AcquisitionMode.TRACK_AND_VIDEO_FULL:
                 process_mode_track_and_full_video()
-            case AcquisitionMode.CROP_VIDEO:
+            case AcquisitionMode.VIDEO_ROIS:
                 process_mode_crop_video()
-            case AcquisitionMode.FULL_VIDEO:
+            case AcquisitionMode.VIDEO_FULL:
                 process_mode_full_video()
 
     def _notify_lookup_profile_warning(self, warning_records: list[warnings.WarningMessage]) -> None:

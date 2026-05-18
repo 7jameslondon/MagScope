@@ -48,8 +48,8 @@ class GeneratedZLUTResult:
 class ZLUTGenerationManager(ManagerProcessBase):
     _TRACKING_ACQUISITION_MODES = {
         AcquisitionMode.TRACK,
-        AcquisitionMode.TRACK_AND_CROP_VIDEO,
-        AcquisitionMode.TRACK_AND_FULL_VIDEO,
+        AcquisitionMode.TRACK_AND_VIDEO_ROIS,
+        AcquisitionMode.TRACK_AND_VIDEO_FULL,
     }
 
     def __init__(self):
@@ -123,7 +123,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
             if self._acquisition_mode not in self._TRACKING_ACQUISITION_MODES:
                 raise RuntimeError(
                     'Z-LUT generation requires a tracking acquisition mode. '
-                    'Switch to track, track & video (cropped), or track & video (full).'
+                    'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
                 )
             self._build_steps(start_nm, step_nm, stop_nm)
             if int(profiles_per_bead) <= 0:
@@ -360,7 +360,7 @@ class ZLUTGenerationManager(ManagerProcessBase):
         if self._acquisition_mode not in self._TRACKING_ACQUISITION_MODES:
             raise RuntimeError(
                 'Z-LUT generation requires a tracking acquisition mode. '
-                'Switch to track, track & video (cropped), or track & video (full).'
+                'Switch to Track, Track and Video (ROIs), or Track and Video (Full).'
             )
         self._focus_motor_name = self._focus_motor_name or self._discover_focus_motor_name()
         if self._focus_motor_name is None:

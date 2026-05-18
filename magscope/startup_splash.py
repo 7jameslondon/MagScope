@@ -1,8 +1,19 @@
 from importlib import resources
 
+from magscope.app_icon import (
+    apply_windows_native_window_icon,
+    load_app_icon,
+    set_windows_app_user_model_id,
+)
+
+
+_STARTUP_SPLASH_LOGO_SIZE = (568, 288)
+
 
 def _load_logo_pixmap():
+    from PyQt6.QtCore import QSize, Qt
     from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QApplication
 
     logo_resource = resources.files("magscope").joinpath("assets/logo.png")
     if not logo_resource.is_file():
@@ -13,6 +24,22 @@ def _load_logo_pixmap():
 
     if pixmap.isNull():
         return None
+
+    device_pixel_ratio = 1.0
+    app = QApplication.instance()
+    if app is not None and (screen := app.primaryScreen()):
+        device_pixel_ratio = screen.devicePixelRatio()
+
+    target_size = QSize(
+        round(_STARTUP_SPLASH_LOGO_SIZE[0] * device_pixel_ratio),
+        round(_STARTUP_SPLASH_LOGO_SIZE[1] * device_pixel_ratio),
+    )
+    pixmap = pixmap.scaled(
+        target_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    pixmap.setDevicePixelRatio(device_pixel_ratio)
 
     return pixmap
 
@@ -54,20 +81,15 @@ def _build_startup_splash_window():
 
     content = QWidget()
     content_layout = QVBoxLayout(content)
-    content_layout.setContentsMargins(36, 36, 36, 20)
+    content_layout.setContentsMargins(15, 15, 15, 15)
     content_layout.setSpacing(0)
 
     logo = QLabel()
+    logo.setObjectName("startupSplashLogo")
     logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
     if pixmap := _load_logo_pixmap():
-        logo.setPixmap(
-            pixmap.scaled(
-                568,
-                288,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        logo.setFixedSize(*_STARTUP_SPLASH_LOGO_SIZE)
+        logo.setPixmap(pixmap)
     content_layout.addWidget(logo)
     layout.addWidget(content, 1)
 
@@ -90,7 +112,7 @@ def _build_startup_splash_window():
 
     layout.addWidget(progress_container)
 
-    window.resize(640, 360)
+    window.resize(window.sizeHint())
     return window
 
 
@@ -100,12 +122,20 @@ def run_startup_splash(close_event) -> None:
     from PyQt6.QtCore import QTimer
     from PyQt6.QtWidgets import QApplication
 
+    set_windows_app_user_model_id()
     app = QApplication.instance()
     if app is None:
         app = QApplication(["MagScope Splash"])
+    app_icon = load_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
 
     window = _build_startup_splash_window()
+    if not app_icon.isNull():
+        window.setWindowIcon(app_icon)
     window.show()
+    apply_windows_native_window_icon(window)
+    QTimer.singleShot(0, lambda w=window: apply_windows_native_window_icon(w))
 
     if screen := app.primaryScreen():
         geometry = screen.availableGeometry()

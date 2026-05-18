@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">MagScope desktop app icon</title>
+  <defs>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00316f" />
+      <stop offset="1" stop-color="#001640" />
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#006dff" />
+      <stop offset="1" stop-color="#0054f0" />
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#13bddb" />
+      <stop offset="1" stop-color="#10d2e9" />
+    </linearGradient>
+  </defs>
+  <path fill="url(#dark)" d="M360 126h304c18 0 29 9 34 27l17 42v52c0 6-3 9-9 9H318c-6 0-9-3-9-9v-52l17-42c5-18 16-27 34-27z" />
+  <rect width="440" height="58" x="292" y="272" fill="url(#blue)" rx="12" />
+  <path fill="url(#dark)" d="M303 360h418c21 0 34 13 34 34v244c0 21-13 34-34 34H303c-21 0-34-13-34-34V394c0-21 13-34 34-34z" />
+  <path fill="#ffffff" d="M319 402h30v222h-30zM379 402h30v222h-30zM439 402h30v222h-30zM499 402h30v222h-30zM559 402h30v222h-30zM619 402h30v222h-30zM679 402h30v222h-30z" />
+  <path fill="url(#dark)" d="M291 690h442c6 0 9 3 9 9v45c0 17-6 31-18 43l-36 36c-8 8-18 12-30 12H366c-12 0-22-4-30-12l-36-36c-12-12-18-26-18-43v-45c0-6 3-9 9-9z" />
+  <rect width="300" height="50" x="362" y="860" fill="url(#cyan)" rx="10" />
+  <path fill="url(#dark)" d="M422 934h180v34c0 12-4 23-12 32l-21 23c-7 8-17 12-30 12h-54c-13 0-23-4-30-12l-21-23c-8-9-12-20-12-32v-34z" />
+  <path fill="url(#dark)" d="M467 978h90v21c0 9-3 16-9 21-6 5-14 7-25 7h-22c-11 0-19-2-25-7-6-5-9-12-9-21v-21z" />
+</svg>

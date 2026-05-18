@@ -6,6 +6,7 @@ from PyQt6.QtGui import QBrush, QColor, QCursor, QFontMetricsF, QImage, QPainter
 from PyQt6.QtWidgets import (QFrame, QGraphicsPixmapItem, QGraphicsScene,
                              QGraphicsView, QLabel, QPushButton)
 
+from magscope.ui.theme import PANEL_BACKGROUND_RGB
 from magscope.ui.widgets import BeadGraphic
 
 
@@ -39,7 +40,7 @@ class VideoViewer(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
+        self.setBackgroundBrush(QBrush(QColor(*PANEL_BACKGROUND_RGB)))
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
@@ -455,7 +456,8 @@ class VideoViewer(QGraphicsView):
 
         zoom_percent = self._current_zoom_percent()
         if zoom_percent is not None:
-            self._minimap_zoom_label.setText(f"{zoom_percent:.0f}%")
+            zoom_multiplier = int((zoom_percent + 1e-9) / 10 + 0.5) / 10
+            self._minimap_zoom_label.setText(f"{zoom_multiplier:.1f}x")
             self._minimap_zoom_label.show()
             self._minimap_reset_button.show()
         else:
@@ -469,7 +471,7 @@ class VideoViewer(QGraphicsView):
 
         size = min(
             max(
-                min(viewport_size.width(), viewport_size.height()) // 4,
+                min(viewport_size.width(), viewport_size.height()) // 3,
                 self._MINIMAP_MIN_SIZE,
             ),
             self._MINIMAP_MAX_SIZE,
