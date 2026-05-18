@@ -671,10 +671,13 @@ def test_grip_splitter_handle_released_persists_sizes(qtbot):
 def test_grip_splitter_handle_released_without_name_is_noop(qtbot):
     splitter = GripSplitter(Qt.Orientation.Horizontal)
     qtbot.addWidget(splitter)
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setFallbacksEnabled(False)
+    keys_before = settings.allKeys()
 
     splitter.handle_released()
 
-    assert QSettings('MagScope', 'MagScope').allKeys() == []
+    assert settings.allKeys() == keys_before
 
 
 # ---------------------------------------------------------------------------
