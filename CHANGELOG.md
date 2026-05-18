@@ -27,8 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MagScope now uses one main window with dockable viewer panes instead of the previous multi-window viewer layout.
 - Bead selection, Z-LUT, layout reset, and settings controls were moved from the main control rail into toolbar, menu, and Preferences workflows.
 - Acquisition labels, acquisition mode display names, histogram/profile panels, dock styling, and live zoom display were refined for clarity and consistency.
-- AcquisitionMode string values now use the new display labels, for example `"Video (Full)"` instead of `"video (full)"`.
-  Scripts using enum members keep working via aliases, but scripts that pass or compare raw strings should update them to the new labels.
+- **Breaking**: AcquisitionMode enum values are renamed to match display labels (e.g. `"Video (Full)"` instead of `"video (full)"`).
+  Old member names (`FULL_VIDEO`, `TRACK_AND_CROP_VIDEO`, `CROP_VIDEO`) remain as aliases so
+  `AcquisitionMode.FULL_VIDEO` still resolves correctly, but any code that compares against or
+  passes raw strings like `"video (full)"` must be updated to the new values like `"Video (Full)"`.
 - PyPI and TestPyPI publish workflows now use newer artifact actions to avoid GitHub Actions Node 20 deprecation warnings.
 - Dock viewer controls now use Material Symbols icons (pin, float, close).
 - Live plot rendering and layout tightened with reduced padding.
