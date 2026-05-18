@@ -1004,6 +1004,75 @@ def test_startup_ready_window_schedules_callback_once_when_ready(qtbot, monkeypa
     assert ready_calls == ['ready']
 
 
+def test_startup_ready_window_schedules_fallback_and_ready(qtbot, monkeypatch):
+    ready_calls = []
+    timer_calls = []
+    window = _StartupReadyWindow(lambda: ready_calls.append('ready'))
+    qtbot.addWidget(window)
+    window._startup_shown = True
+    monkeypatch.setattr(window, 'isVisible', lambda: True)
+    monkeypatch.setattr(window, 'windowHandle', lambda: None)
+    monkeypatch.setattr(
+        ui_module.QTimer,
+        'singleShot',
+        staticmethod(lambda delay_ms, callback: timer_calls.append(delay_ms) or callback()),
+    )
+
+    window._schedule_startup_ready_fallback()
+    window._maybe_schedule_startup_ready(after_paint=True)
+
+    assert ui_module.STARTUP_READY_FALLBACK_DELAY_MS in timer_calls
+    assert 0 in timer_calls
+    assert ready_calls == ['ready']
+
+
+def test_startup_ready_window_fallback_ignores_deleted_window(qtbot, monkeypatch):
+    window = _StartupReadyWindow(lambda: None)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(
+        window,
+        '_maybe_schedule_startup_ready',
+        lambda after_paint: (_ for _ in ()).throw(RuntimeError('deleted')),
+    )
+
+    window._run_startup_ready_fallback()
+
+
+def test_startup_ready_window_waits_for_exposure_on_regular_platform(qtbot, monkeypatch):
+    ready_calls = []
+    timer_calls = []
+    window = _StartupReadyWindow(lambda: ready_calls.append('ready'))
+    qtbot.addWidget(window)
+    window._startup_shown = True
+    monkeypatch.setattr(window, 'isVisible', lambda: True)
+    monkeypatch.setattr(window, 'windowHandle', lambda: SimpleNamespace(isExposed=lambda: False))
+    monkeypatch.setattr(ui_module.QGuiApplication, 'platformName', staticmethod(lambda: 'windows'))
+    monkeypatch.setattr(
+        ui_module.QTimer,
+        'singleShot',
+        staticmethod(lambda delay_ms, callback: timer_calls.append(delay_ms) or callback()),
+    )
+
+    window._maybe_schedule_startup_ready(after_paint=False)
+    assert timer_calls == []
+    assert ready_calls == []
+
+    window._maybe_schedule_startup_ready(after_paint=True)
+    assert timer_calls == [0]
+    assert ready_calls == ['ready']
+
+
+def test_dock_separator_hover_filter_resets_on_leave(qtbot):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    hover_filter = ui_module._DockSeparatorHoverDelayFilter(window)
+    window.setProperty(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY, True)
+
+    hover_filter.eventFilter(window, QEvent(QEvent.Type.Leave))
+
+    assert window.property(VIEWER_DOCK_SEPARATOR_HOVER_READY_PROPERTY) is False
+
+
 def test_notify_startup_ready_sends_command_once(ui_manager, monkeypatch):
     commands = []
     ui_manager._command_registry = object()
@@ -1706,6 +1775,169 @@ def test_caption_state_filter_updates_restore_icon_on_window_state_change(qtbot)
     assert maximize_restore_button.toolTip() == 'Restore'
 
 
+def test_caption_state_filter_ignores_deleted_button(monkeypatch, qtbot):
+    window = QMainWindow()
+    button = QToolButton()
+    qtbot.addWidget(window)
+    qtbot.addWidget(button)
+    state_filter = ui_module._CaptionButtonStateFilter(window, button)
+    monkeypatch.setattr(
+        ui_module,
+        '_update_maximize_restore_button',
+        lambda *_args: (_ for _ in ()).throw(RuntimeError('deleted')),
+    )
+
+    state_filter._update()
+
+
+def test_unified_top_bar_toggle_and_drag_with_fake_events(qtbot):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    top_bar = _UnifiedTopBar(window)
+    qtbot.addWidget(top_bar)
+
+    top_bar.toggle_maximized()
+    assert window.isMaximized()
+    top_bar.toggle_maximized()
+    assert not window.isMaximized()
+
+    class FakeGlobalPosition:
+        def __init__(self, point):
+            self._point = point
+
+        def toPoint(self):
+            return self._point
+
+    class FakeMouseEvent:
+        def __init__(self, *, point=QPoint(20, 30), buttons=Qt.MouseButton.LeftButton):
+            self.accepted = False
+            self._point = point
+            self._buttons = buttons
+
+        def button(self):
+            return Qt.MouseButton.LeftButton
+
+        def buttons(self):
+            return self._buttons
+
+        def globalPosition(self):
+            return FakeGlobalPosition(self._point)
+
+        def accept(self):
+            self.accepted = True
+
+    double_click = FakeMouseEvent()
+    top_bar.mouseDoubleClickEvent(double_click)
+    assert double_click.accepted is True
+
+    class FakeMoveWindow:
+        def __init__(self):
+            self.moves = []
+
+        def isMaximized(self):
+            return False
+
+        def move(self, point):
+            self.moves.append(point)
+
+    fake_window = FakeMoveWindow()
+    drag_bar = _UnifiedTopBar(fake_window)
+    qtbot.addWidget(drag_bar)
+    drag_bar._drag_start_global_pos = QPoint(10, 10)
+    drag_bar._drag_start_window_pos = QPoint(100, 200)
+
+    move_event = FakeMouseEvent(point=QPoint(15, 25))
+    drag_bar.mouseMoveEvent(move_event)
+
+    assert move_event.accepted is True
+    assert fake_window.moves == [QPoint(105, 215)]
+
+
+def test_top_bar_compact_mode_filter_schedules_once_and_handles_runtime_error(monkeypatch):
+    callbacks = []
+    run_calls = []
+    monkeypatch.setattr(
+        ui_module.QTimer,
+        'singleShot',
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+    compact_filter = ui_module._TopBarCompactModeFilter(lambda: run_calls.append('updated'))
+
+    compact_filter._schedule_update()
+    compact_filter._schedule_update()
+
+    assert len(callbacks) == 1
+    assert compact_filter._pending_update is True
+
+    callbacks[0]()
+    assert run_calls == ['updated']
+    assert compact_filter._pending_update is False
+
+    failing_filter = ui_module._TopBarCompactModeFilter(
+        lambda: (_ for _ in ()).throw(RuntimeError('deleted')),
+    )
+    failing_filter._pending_update = True
+    failing_filter._run_update()
+    assert failing_filter._pending_update is False
+
+
+def test_top_bar_action_button_no_menu_and_cached_width(qtbot):
+    action = ui_module.QAction('&Run')
+    triggered = []
+    action.triggered.connect(lambda: triggered.append(True))
+    action.setToolTip('Run now')
+    button = ui_module._TopBarActionButton(action)
+    qtbot.addWidget(button)
+    button._full_width_hint = 42
+
+    assert button.action() is action
+    assert button.toolTip() == 'Run now'
+    assert button.full_width_hint() == 42
+    assert button.show_action_menu() is False
+
+    button.click()
+    assert triggered == [True]
+
+    button.set_icon_only(True)
+    button.set_icon_only(True)
+    assert button.property('topBarCompact') is True
+
+
+def test_top_menu_bar_action_lookup_skips_invisible_separator(qtbot):
+    menu_bar = _UnifiedTopMenuBar()
+    qtbot.addWidget(menu_bar)
+    visible_action = menu_bar.addAction('Visible')
+    separator = menu_bar.addSeparator()
+    hidden_action = menu_bar.addAction('Hidden')
+    hidden_action.setVisible(False)
+    menu_bar.resize(200, 30)
+    menu_bar.show()
+    qtbot.wait(0)
+
+    menu_bar._set_hovered_action(visible_action)
+    menu_bar._set_hovered_action(visible_action)
+    assert menu_bar._hovered_action is visible_action
+    menu_bar._set_hovered_action(None)
+    assert menu_bar._hovered_action is None
+
+    assert menu_bar._action_at_full_height(QPoint(0, -1)) is None
+    assert menu_bar._action_at_full_height(QPoint(menu_bar.actionGeometry(separator).center())) is None
+    assert menu_bar._action_at_full_height(QPoint(menu_bar.actionGeometry(hidden_action).center())) is None
+    assert menu_bar._action_at_full_height(QPoint(menu_bar.actionGeometry(visible_action).center())) is visible_action
+    full_height_rect = menu_bar._full_height_action_rect(visible_action)
+    assert full_height_rect.top() == 0
+    assert full_height_rect.height() == menu_bar.height()
+
+
+def test_inject_snap_styles_ignores_non_windows_and_bad_handles(monkeypatch):
+    monkeypatch.setattr(ui_module.sys, 'platform', 'linux')
+    ui_module._inject_snap_styles(SimpleNamespace(winId=lambda: 123))
+
+    monkeypatch.setattr(ui_module.sys, 'platform', 'win32')
+    ui_module._inject_snap_styles(SimpleNamespace(winId=lambda: (_ for _ in ()).throw(RuntimeError('gone'))))
+    ui_module._inject_snap_styles(SimpleNamespace(winId=lambda: 0))
+
+
 def test_top_bar_menu_buttons_reuse_tools_and_zlut_menus(qtbot, monkeypatch):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1925,6 +2157,59 @@ def test_default_restored_main_window_geometry_is_smaller_than_screen(qtbot):
     assert geometry == QRect(150, 240, 900, 720)
     assert not _is_fullscreenish_geometry(geometry, available_geometry)
     assert _is_fullscreenish_geometry(QRect(100, 200, 1000, 800), available_geometry)
+
+
+def test_default_restored_geometry_uses_window_screen(qtbot):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    window.setMinimumSize(1, 1)
+
+    geometry = _default_restored_window_geometry(window)
+
+    assert geometry.width() > 0
+    assert geometry.height() > 0
+    assert not geometry.isNull()
+
+
+def test_restore_default_geometry_if_fullscreenish_handles_missing_screen(monkeypatch):
+    class FakeWindow:
+        def screen(self):
+            return None
+
+    monkeypatch.setattr(ui_module.QGuiApplication, 'primaryScreen', staticmethod(lambda: None))
+
+    ui_module._restore_default_geometry_if_fullscreenish(FakeWindow())
+
+
+def test_restore_default_geometry_if_fullscreenish_applies_restored_size():
+    class FakeScreen:
+        def availableGeometry(self):
+            return QRect(100, 200, 1000, 800)
+
+    class FakeWindow:
+        def __init__(self):
+            self.applied_geometry = None
+
+        def screen(self):
+            return FakeScreen()
+
+        def geometry(self):
+            return QRect(100, 200, 1000, 800)
+
+        def minimumWidth(self):
+            return 300
+
+        def minimumHeight(self):
+            return 300
+
+        def setGeometry(self, geometry):
+            self.applied_geometry = geometry
+
+    window = FakeWindow()
+
+    ui_module._restore_default_geometry_if_fullscreenish(window)
+
+    assert window.applied_geometry == QRect(150, 240, 900, 720)
 
 
 def test_search_registry_ranks_exact_alias_and_fuzzy_matches():
@@ -2561,6 +2846,206 @@ def test_controls_reveal_panel_expands_and_scrolls(qtbot):
     assert scrolled_widgets == [wrapper]
 
 
+def test_search_target_widget_falls_back_for_missing_paths(qtbot, ui_manager):
+    toolbar = QWidget()
+    qtbot.addWidget(toolbar)
+    ui_manager.bead_toolbar = toolbar
+
+    live_target = PanelControlTarget(
+        label='Live Toolbar',
+        context='Live Camera',
+        panel_id='LiveBeadToolbar',
+    )
+    assert ui_manager._search_target_widget(live_target) is toolbar
+
+    missing_live_target = PanelControlTarget(
+        label='Missing Live Button',
+        context='Live Camera',
+        panel_id='LiveBeadToolbar',
+        widget_path=('missing_button',),
+    )
+    assert ui_manager._search_target_widget(missing_live_target) is toolbar
+
+    ui_manager.bead_instructions_button = object()
+    non_widget_live_target = PanelControlTarget(
+        label='Non Widget Live Button',
+        context='Live Camera',
+        panel_id='LiveBeadToolbar',
+        widget_path=('bead_instructions_button',),
+    )
+    assert ui_manager._search_target_widget(non_widget_live_target) is None
+
+    panel = QWidget()
+    panel.groupbox = CollapsibleGroupBox('Panel')
+    qtbot.addWidget(panel)
+    qtbot.addWidget(panel.groupbox)
+    ui_manager.controls = SimpleNamespace(panels={'DemoPanel': panel})
+    panel_target = PanelControlTarget(label='Demo', context='Panel', panel_id='DemoPanel')
+    assert ui_manager._search_target_widget(panel_target) is panel.groupbox
+
+    missing_child_target = PanelControlTarget(
+        label='Missing Child',
+        context='Panel',
+        panel_id='DemoPanel',
+        widget_path=('missing_child',),
+    )
+    assert ui_manager._search_target_widget(missing_child_target) is panel
+
+
+def test_search_status_handles_deleted_label_and_timer_errors(ui_manager):
+    class DeletedLabel:
+        def setText(self, _text):
+            raise RuntimeError('deleted')
+
+        def setVisible(self, _visible):
+            raise AssertionError('should not be called')
+
+    ui_manager._search_status_label = DeletedLabel()
+    ui_manager._search_status_timer = object()
+    ui_manager._set_search_status('Showing: Demo')
+    assert ui_manager._search_status_label is None
+    assert ui_manager._search_status_timer is None
+
+    class FakeLabel:
+        def __init__(self):
+            self.calls = []
+
+        def setText(self, text):
+            self.calls.append(('text', text))
+
+        def setVisible(self, visible):
+            self.calls.append(('visible', visible))
+
+    class DeletedTimer:
+        def start(self):
+            raise RuntimeError('deleted')
+
+        def stop(self):
+            raise RuntimeError('deleted')
+
+    label = FakeLabel()
+    ui_manager._search_status_label = label
+    ui_manager._search_status_timer = DeletedTimer()
+    ui_manager._set_search_status('Showing: Demo')
+
+    assert label.calls == [('text', 'Showing: Demo'), ('visible', True)]
+    assert ui_manager._search_status_timer is None
+
+
+def test_clear_and_focus_search_helpers(qtbot, ui_manager):
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    search_box = QLineEdit(window)
+    popup_box = QLineEdit(window)
+    popup = QWidget(window)
+    search_box.setText('find beads')
+    popup_box.setText('find beads')
+    popup.show()
+    ui_manager._search_box = search_box
+    ui_manager._search_popup_box = popup_box
+    ui_manager._search_popup = popup
+    ui_manager._search_status_label = QLabel(window)
+
+    ui_manager._clear_search_popup_box()
+    assert search_box.text() == ''
+    assert popup_box.text() == ''
+    assert not popup.isVisible()
+
+    search_box.setText('find beads')
+    search_box.show()
+    ui_manager._focus_search_box(search_box)
+    assert search_box.selectedText() == 'find beads'
+
+    ui_manager._clear_search_box(search_box)
+    assert search_box.text() == ''
+
+
+def test_reveal_menu_action_logs_missing_menu_and_action(ui_manager, caplog):
+    missing_menu_target = ui_module.MenuActionTarget(
+        label='Missing Menu',
+        context='Missing',
+        menu_name='Missing',
+        action_text='Run',
+    )
+    with caplog.at_level(logging.WARNING):
+        ui_manager._reveal_menu_action(missing_menu_target)
+    assert 'Search target menu could not be found' in caplog.text
+
+    menu = ui_module.QMenu('Tools')
+    ui_manager._menus['Tools'] = menu
+    missing_action_target = ui_module.MenuActionTarget(
+        label='Missing Action',
+        context='Tools',
+        menu_name='Tools',
+        action_text='Run',
+    )
+    with caplog.at_level(logging.WARNING):
+        ui_manager._reveal_menu_action(missing_action_target)
+    assert 'Search target menu action could not be found' in caplog.text
+
+
+def test_add_column_drop_target_accepts_and_rejects_fake_drop_events(qtbot):
+    class FakeManager:
+        def __init__(self):
+            self.wrapper = object()
+
+        def wrapper_for_id(self, panel_id):
+            return self.wrapper if panel_id == 'PanelA' else None
+
+    class FakeControlsForDrop:
+        def __init__(self):
+            self.layout_manager = FakeManager()
+            self.room = True
+            self.created = []
+
+        def has_room_for_new_column(self):
+            return self.room
+
+        def create_new_column_with_panel(self, wrapper):
+            self.created.append(wrapper)
+
+    class FakeDropEvent:
+        def __init__(self, mime_data):
+            self._mime_data = mime_data
+            self.accepted = False
+            self.ignored = False
+
+        def mimeData(self):
+            return self._mime_data
+
+        def acceptProposedAction(self):
+            self.accepted = True
+
+        def ignore(self):
+            self.ignored = True
+
+    controls = FakeControlsForDrop()
+    target = ui_module.AddColumnDropTarget(controls)
+    qtbot.addWidget(target)
+    target.set_drag_active(True)
+    assert target.isVisible() is True
+
+    empty_mime = ui_module.QMimeData()
+    rejected_event = FakeDropEvent(empty_mime)
+    target.dragEnterEvent(rejected_event)
+    assert rejected_event.ignored is True
+
+    mime = ui_module.QMimeData()
+    mime.setData(ui_module.PANEL_MIME_TYPE, b'PanelA')
+    accepted_event = FakeDropEvent(mime)
+    target.dragMoveEvent(accepted_event)
+    assert accepted_event.accepted is True
+
+    drop_event = FakeDropEvent(mime)
+    target.dropEvent(drop_event)
+    assert drop_event.accepted is True
+    assert controls.created == [controls.layout_manager.wrapper]
+
+    controls.room = False
+    target.refresh_visibility()
+    assert target.isVisible() is False
+
+
 def test_viewer_layout_save_restore_and_reset(qtbot):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -2859,6 +3344,128 @@ def test_validate_appearance_layout_rejects_non_integer_splitter_size():
         )
 
     clear_ui_manager_singleton()
+
+
+@pytest.mark.parametrize(
+    ('preferences', 'message'),
+    [
+        ([], 'appearance_layout must be a mapping'),
+        ({'viewer_geometry': 123}, 'viewer_geometry must be a string'),
+        ({'viewer_dock_state': 123}, 'viewer_dock_state must be a string'),
+        ({'splitter_sizes': []}, 'splitter_sizes must be a mapping'),
+        ({'splitter_sizes': {'Main': '1,2'}}, 'splitter_sizes.Main must be a list'),
+    ],
+)
+def test_validate_appearance_layout_rejects_invalid_shapes(preferences, message):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+
+    with pytest.raises(ValueError, match=message):
+        manager.validate_appearance_layout_preferences(preferences)
+
+    clear_ui_manager_singleton()
+
+
+def test_export_appearance_layout_skips_bad_splitter_sizes(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue('Main Grip Splitter Sizes', [100, '200'])
+    settings.setValue('Bad Grip Splitter Sizes', [None])
+    settings.setValue('Unrelated', [1, 2])
+    manager.controls = SimpleNamespace(export_preferences=lambda: {'panels': True})
+
+    preferences = manager.export_appearance_layout_preferences()
+
+    assert preferences['controls'] == {'panels': True}
+    assert preferences['splitter_sizes'] == {'Main Grip Splitter Sizes': [100, 200]}
+
+    clear_ui_manager_singleton()
+
+
+def test_import_appearance_layout_saves_splitter_sizes_and_controls(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    imported_controls = []
+    manager.controls = SimpleNamespace(import_preferences=lambda value: imported_controls.append(value))
+
+    manager.import_appearance_layout_preferences(
+        {
+            'controls': {'panels': True},
+            'splitter_sizes': {'Main Grip Splitter Sizes': ['1', 2]},
+        },
+    )
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert imported_controls == [{'panels': True}]
+    assert list(map(int, settings.value('Main Grip Splitter Sizes', [], list))) == [1, 2]
+
+    clear_ui_manager_singleton()
+
+
+def test_controls_load_saved_layout_normalizes_aliases_and_missing_tabs():
+    class FakeSettings:
+        def value(self, _key, _default='', type=str):
+            return '[ ["Run", "Custom", "Run"], "bad", ["Unknown"] ]'
+
+    controls = SimpleNamespace(
+        _settings=FakeSettings(),
+        WORKFLOW_COLUMNS_SETTINGS_KEY=Controls.WORKFLOW_COLUMNS_SETTINGS_KEY,
+        WORKFLOW_ORDER=Controls.WORKFLOW_ORDER,
+        _canonical_workflow_tab_id=lambda tab_id: Controls._canonical_workflow_tab_id(tab_id),
+    )
+
+    layout = Controls._load_saved_layout(controls)
+
+    assert layout == [['Run', 'Motors'], ['Analysis', 'Locking']]
+
+
+def test_controls_layout_for_column_count_merges_and_expands_saved_layout():
+    controls = SimpleNamespace(DEFAULT_LAYOUTS=Controls.DEFAULT_LAYOUTS, MAX_COLUMNS=Controls.MAX_COLUMNS)
+    controls._default_layout_for_count = MethodType(Controls._default_layout_for_count, controls)
+    controls._fill_empty_columns = MethodType(Controls._fill_empty_columns, controls)
+    controls._tabs_for_empty_column = MethodType(Controls._tabs_for_empty_column, controls)
+    controls._expand_layout_to_count = MethodType(Controls._expand_layout_to_count, controls)
+
+    controls._load_saved_layout = lambda: [['Run'], ['Analysis'], ['Locking'], ['Motors']]
+    assert Controls._layout_for_column_count(controls, 2) == [['Run'], ['Analysis', 'Locking', 'Motors']]
+
+    controls._load_saved_layout = lambda: [['Run', 'Motors', 'Analysis', 'Locking']]
+    assert Controls._layout_for_column_count(controls, 3) == [['Run', 'Motors'], ['Analysis'], ['Locking']]
+
+
+def test_controls_tabs_for_empty_column_falls_back_to_largest_source():
+    columns = [['Run', 'Analysis', 'Locking'], [], ['Motors']]
+    moved = Controls._tabs_for_empty_column(
+        Controls,
+        columns,
+        [[], ['Z-LUT'], []],
+        1,
+    )
+
+    assert moved == ['Locking']
+    assert columns == [['Run', 'Analysis'], [], ['Motors']]
+
+
+@pytest.mark.parametrize(
+    ('preferences', 'message'),
+    [
+        ([], 'appearance_layout.controls must be a mapping'),
+        ({'workflow_columns': 'Run'}, 'workflow_columns must be a list'),
+        ({'workflow_columns': ['Run']}, 'workflow_columns columns must be lists'),
+        ({'panel_collapsed': []}, 'panel_collapsed must be a mapping'),
+    ],
+)
+def test_controls_preferences_reject_invalid_shapes(preferences, message):
+    controls = SimpleNamespace(
+        MAX_COLUMNS=Controls.MAX_COLUMNS,
+        WORKFLOW_ORDER=Controls.WORKFLOW_ORDER,
+        _canonical_workflow_tab_id=lambda tab_id: Controls._canonical_workflow_tab_id(tab_id),
+    )
+    controls._normalise_workflow_layout = MethodType(Controls._normalise_workflow_layout, controls)
+
+    with pytest.raises(ValueError, match=message):
+        Controls.validate_preferences(controls, preferences)
 
 
 def test_controls_preferences_reject_string_panel_collapsed():
@@ -3197,6 +3804,158 @@ def test_live_plot_progress_indicator_setting_hides_indicator_and_stops_timer(qt
     ui_manager._stop_timer(ui_manager._plot_progress_timer)
     ui_manager._plot_progress_timer = None
     ui_manager.plots_progress_indicator = None
+
+
+def test_current_accent_color_falls_back_for_missing_settings(ui_manager):
+    ui_manager.settings = None
+    assert ui_manager._current_accent_color() == ACCENT_COLOR
+
+    ui_manager.settings = {}
+    assert ui_manager._current_accent_color() == ACCENT_COLOR
+
+
+def test_apply_accent_color_updates_app_palette_and_main_windows(qtbot, ui_manager):
+    app = QApplication.instance()
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    style_calls = []
+    ui_manager.qt_app = app
+    ui_manager.windows = [window, QWidget()]
+    ui_manager._apply_viewer_dock_separator_style = lambda target: style_calls.append(target)
+
+    ui_manager._apply_accent_color('#336699')
+
+    assert app.palette().color(ui_module.QPalette.ColorRole.Highlight).name() == '#336699'
+    assert style_calls == [window]
+
+
+def test_plot_image_and_progress_helpers_handle_empty_state(ui_manager, monkeypatch):
+    ui_manager.plot_worker = None
+    ui_manager.plots_widget = None
+    ui_manager.plots_progress_indicator = None
+    ui_manager._plot_progress_started_at = None
+    monkeypatch.setattr(ui_module, 'time', lambda: 12.0)
+
+    ui_manager.update_plot_figure_size(10, 20)
+    ui_manager._set_plot_image(QImage(1, 1, QImage.Format.Format_RGBA8888))
+    ui_manager._update_plot_progress()
+
+    progress_indicator = LivePlotProgressIndicator()
+    ui_manager.plots_progress_indicator = progress_indicator
+    try:
+        ui_manager._update_plot_progress()
+        assert ui_manager._plot_progress_started_at == pytest.approx(12.0)
+        assert progress_indicator.value() == 0
+    finally:
+        ui_manager.plots_progress_indicator = None
+
+
+def test_disconnect_stop_and_close_helpers_ignore_deleted_qobjects(ui_manager):
+    class FailingSignal:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def disconnect(self, _callback):
+            raise self.exc
+
+    class FailingTimer:
+        def __init__(self):
+            self.stop_calls = 0
+            self.delete_calls = 0
+
+        def stop(self):
+            self.stop_calls += 1
+            raise RuntimeError('deleted')
+
+        def deleteLater(self):
+            self.delete_calls += 1
+            raise RuntimeError('deleted')
+
+    class FailingWidget:
+        def __init__(self):
+            self.close_calls = 0
+            self.delete_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            raise RuntimeError('deleted')
+
+        def deleteLater(self):
+            self.delete_calls += 1
+            raise RuntimeError('deleted')
+
+    UIManager._disconnect_signal(FailingSignal(RuntimeError('deleted')), lambda: None)
+    UIManager._disconnect_signal(FailingSignal(TypeError('missing')), lambda: None)
+
+    timer = FailingTimer()
+    UIManager._stop_timer(timer)
+    assert timer.stop_calls == 1
+    assert timer.delete_calls == 1
+
+    widget = FailingWidget()
+    UIManager._close_widget(widget)
+    assert widget.close_calls == 1
+    assert widget.delete_calls == 1
+
+
+def test_shutdown_plot_worker_disconnects_and_disposes_resources(ui_manager):
+    class FakeDisconnectSignal:
+        def __init__(self):
+            self.disconnected = []
+
+        def disconnect(self, callback):
+            self.disconnected.append(callback)
+
+    class FakePlotWorker:
+        def __init__(self):
+            self.image_signal = FakeDisconnectSignal()
+            self.stopped = False
+            self.disposed = False
+
+        def _stop(self):
+            self.stopped = True
+
+        def dispose(self):
+            self.disposed = True
+
+    class FakePlotWidget:
+        def __init__(self):
+            self.resized = FakeDisconnectSignal()
+
+    class FakeThread:
+        def __init__(self):
+            self.calls = []
+
+        def quit(self):
+            self.calls.append('quit')
+
+        def wait(self):
+            self.calls.append('wait')
+
+        def deleteLater(self):
+            self.calls.append('delete')
+
+    worker = FakePlotWorker()
+    widget = FakePlotWidget()
+    thread = FakeThread()
+    ui_manager.plot_worker = worker
+    ui_manager.plots_widget = widget
+    ui_manager.plots_thread = thread
+
+    ui_manager._shutdown_plot_worker()
+
+    assert worker.image_signal.disconnected == [ui_manager._set_plot_image]
+    assert widget.resized.disconnected == [ui_manager.update_plot_figure_size]
+    assert worker.stopped is True
+    assert worker.disposed is True
+    assert thread.calls == ['quit', 'wait', 'delete']
+    assert ui_manager.plot_worker is None
+    assert ui_manager.plots_thread is None
+
+
+def test_shutdown_plot_worker_handles_missing_worker(ui_manager):
+    ui_manager.plot_worker = None
+    ui_manager._shutdown_plot_worker()
 
 
 @pytest.mark.skipif(
@@ -4457,6 +5216,140 @@ def test_callback_view_clicked_right_click_removes_existing_bead(ui_manager, mon
     ui_manager.callback_view_clicked(pos, Qt.MouseButton.RightButton)
 
     assert removed == [4]
+
+
+def test_scene_rect_helpers_cover_viewer_fallbacks(ui_manager):
+    ui_manager.video_viewer = None
+    assert ui_manager._current_scene_rect().isNull()
+
+    ui_manager.video_viewer = SimpleNamespace(scene=SimpleNamespace(sceneRect=lambda: QRectF(1, 2, 30, 40)))
+    assert ui_manager._current_scene_rect() == QRectF(1, 2, 30, 40)
+
+    ui_manager.video_viewer = SimpleNamespace(
+        image_scene_rect=lambda: QRectF(),
+        scene=SimpleNamespace(sceneRect=lambda: QRectF(0, 0, 100, 100)),
+        viewport=lambda: None,
+    )
+    assert ui_manager._current_visible_scene_rect() == QRectF(0, 0, 100, 100)
+
+    ui_manager.video_viewer = SimpleNamespace(
+        image_scene_rect=lambda: QRectF(0, 0, 100, 100),
+        viewport=lambda: SimpleNamespace(rect=lambda: QRect()),
+    )
+    assert ui_manager._current_visible_scene_rect() == QRectF(0, 0, 100, 100)
+
+    ui_manager.video_viewer = SimpleNamespace(
+        image_scene_rect=lambda: QRectF(0, 0, 100, 100),
+        viewport=lambda: SimpleNamespace(rect=lambda: QRect(0, 0, 10, 10)),
+        mapToScene=lambda _rect: SimpleNamespace(boundingRect=lambda: QRectF(200, 200, 5, 5)),
+    )
+    assert ui_manager._current_visible_scene_rect() == QRectF(0, 0, 100, 100)
+
+
+def test_snapshot_and_image_scale_helpers(ui_manager):
+    assert ui_manager._snapshot_recent_image() is None
+    assert ui_manager._current_image_display_scale() == 1
+
+    image = np.asarray([[1, 2], [3, 4]], dtype=np.uint16)
+    ui_manager.video_buffer = SimpleNamespace(
+        peak_image=lambda: (7, image.tobytes()),
+        image_shape=(2, 2),
+        dtype=np.dtype(np.uint16),
+    )
+    ui_manager.camera_type = SimpleNamespace(bits=12)
+
+    np.testing.assert_array_equal(ui_manager._snapshot_recent_image(), image)
+    assert ui_manager._current_image_display_scale() == 16
+
+
+def test_next_random_bead_roi_handles_missing_settings_and_tiny_view(ui_manager):
+    rng = np.random.default_rng(1)
+    ui_manager.settings = None
+    assert ui_manager._next_random_bead_roi(rng, QRectF(0, 0, 100, 100)) is None
+
+    ui_manager.settings = {'ROI': 50}
+    ui_manager.video_viewer = FakeVideoViewer()
+    assert ui_manager._next_random_bead_roi(rng, QRectF(0, 0, 10, 10)) is None
+
+
+def test_hit_test_bead_prioritizes_active_selected_reference_then_highest_id(ui_manager):
+    pos = SimpleNamespace(x=lambda: 15, y=lambda: 15)
+    ui_manager._bead_rois = {
+        1: (0, 30, 0, 30),
+        2: (0, 30, 0, 30),
+        3: (0, 30, 0, 30),
+        4: (0, 30, 0, 30),
+    }
+    ui_manager.selected_bead = 2
+    ui_manager.reference_bead = 3
+    ui_manager._active_bead_id = 1
+    assert ui_manager._hit_test_bead(pos) == 1
+
+    ui_manager._active_bead_id = None
+    assert ui_manager._hit_test_bead(pos) == 2
+
+    ui_manager.selected_bead = -1
+    assert ui_manager._hit_test_bead(pos) == 3
+
+    ui_manager.reference_bead = None
+    assert ui_manager._hit_test_bead(pos) == 4
+    assert ui_manager._hit_test_bead(SimpleNamespace(x=lambda: 200, y=lambda: 200)) is None
+
+
+def test_write_bead_rois_to_local_cache_handles_empty_and_sorted_values(ui_manager):
+    ui_manager.bead_roi_buffer = None
+
+    ui_manager._write_bead_rois_to_buffer({})
+    assert ui_manager._bead_roi_ids.shape == (0,)
+    assert ui_manager._bead_roi_values.shape == (0, 4)
+
+    ui_manager._write_bead_rois_to_buffer({5: (50, 60, 70, 80), 2: (20, 30, 40, 50)})
+    np.testing.assert_array_equal(ui_manager._bead_roi_ids, np.asarray([2, 5], dtype=np.uint32))
+    np.testing.assert_array_equal(
+        ui_manager._bead_roi_values,
+        np.asarray([[20, 30, 40, 50], [50, 60, 70, 80]], dtype=np.uint32),
+    )
+
+
+def test_broadcast_and_live_profile_helpers_noop_without_resources(ui_manager):
+    commands = []
+    ui_manager.send_ipc = commands.append
+    ui_manager._command_registry = None
+    ui_manager._broadcast_bead_roi_update()
+    assert commands == []
+
+    ui_manager._command_registry = object()
+    ui_manager._pipe = object()
+    ui_manager._magscope_quitting = object()
+    ui_manager._broadcast_bead_roi_update()
+    assert commands == [UpdateBeadRoisCommand()]
+
+    cleared = []
+    ui_manager.live_profile_buffer = SimpleNamespace(clear=lambda: cleared.append(True))
+    ui_manager._clear_live_profile_buffer()
+    assert cleared == [True]
+
+
+def test_add_random_beads_handles_non_positive_and_missing_visible_area(ui_manager, monkeypatch):
+    errors = []
+    monkeypatch.setattr(ui_manager, 'show_error', lambda text, details: errors.append((text, details)))
+    ui_manager._current_visible_scene_rect = lambda: QRectF()
+
+    ui_manager.add_random_beads(0, seed=1)
+    assert errors == []
+
+    ui_manager.add_random_beads(2, seed=1)
+    assert errors[0][0] == 'No visible field of view'
+
+
+def test_on_active_bead_move_completed_ignores_unknown_id(ui_manager):
+    ui_manager._bead_rois = {1: (0, 10, 0, 10)}
+    updates = []
+    ui_manager._update_bead_roi = lambda bead_id, roi: updates.append((bead_id, roi))
+
+    ui_manager.on_active_bead_move_completed(99, (1, 11, 1, 11))
+
+    assert updates == []
 
 
 def test_add_random_beads_adds_requested_count_inside_visible_view(ui_manager):
