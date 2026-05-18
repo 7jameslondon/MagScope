@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Live camera bead toolbar controls for bead editing, ROI settings, ID reassignment, and bead counts.
 - Adaptive workflow tabs for Run, Analysis, Locking, and Custom controls.
 - Packaged Material Symbols icons and refreshed SVG/logo assets for the UI and startup splash.
+- Unified main window top bar with custom title label, window controls, compact mode, and reorganized menus.
+- Redesigned XY-Lock and Z-Lock panels with compact two-column card layout, activity indicators, and focus motor detection.
+- Desktop app icons for the taskbar and main window.
+- Damped Z-Lock corrections for smoother focus adjustments.
+- Motors tab hardware placeholder panel shown when no hardware managers are registered.
+- Unified preferences import and export for appearance and layout settings.
+- Live plot loading bar preference and ring indicator for loading state.
 
 ### Changed
 - MagScope now uses one main window with dockable viewer panes instead of the previous multi-window viewer layout.
@@ -23,11 +30,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - AcquisitionMode string values now use the new display labels, for example `"Video (Full)"` instead of `"video (full)"`.
   Scripts using enum members keep working via aliases, but scripts that pass or compare raw strings should update them to the new labels.
 - PyPI and TestPyPI publish workflows now use newer artifact actions to avoid GitHub Actions Node 20 deprecation warnings.
+- Dock viewer controls now use Material Symbols icons (pin, float, close).
+- Live plot rendering and layout tightened with reduced padding.
+- Preferences dialog redesigned with sidebar navigation and grouped settings.
+- Workflow columns now use drag-and-drop movable tabs with responsive layout.
 
 ### Fixed
 - Invalid saved viewer dock geometry is cleared and replaced with the default layout instead of restoring a broken layout.
 - UI control search now handles empty and missing queries without stale status feedback or unintended menu action execution.
 - Minimap zoom labels now round consistently as one-decimal multipliers.
+- Restored native window caption buttons to fix Aero Snap on Windows.
+- Bead ROI dragging no longer breaks under CustomizeWindowHint window flags.
+- Help button hover state behaves correctly across themes.
+- Startup splash renders correctly across display configurations.
+- Windows taskbar icon displays correctly.
 
 ## [0.3.0] - 2026-04-14
 
