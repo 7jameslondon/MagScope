@@ -256,9 +256,7 @@ class PlotWorker(QObject):
             return
 
         if self.time_mode == "relative":
-            formatter = mticker.FuncFormatter(
-                lambda seconds, _pos: datetime.utcfromtimestamp(seconds).strftime('%H:%M:%S')
-            )
+            formatter = mticker.FuncFormatter(self._format_relative_seconds)
             xlabel = 'Time (relative h:m:s)'
         else:
             formatter = mdates.DateFormatter('%H:%M:%S')
@@ -267,6 +265,13 @@ class PlotWorker(QObject):
         for ax in self.axes:
             ax.xaxis.set_major_formatter(formatter)
         self.axes[-1].set_xlabel(xlabel)
+
+    @staticmethod
+    def _format_relative_seconds(seconds: float, _pos: float) -> str:
+        total_seconds = max(0, int(round(abs(seconds))))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds_value = divmod(remainder, 60)
+        return f'{hours:02d}:{minutes:02d}:{seconds_value:02d}'
 
 
 class TimeSeriesPlotBase(metaclass=ABCMeta):
@@ -403,10 +408,9 @@ class TracksTimeSeriesPlot(TimeSeriesPlotBase):
             t = t[selection]
             v = v[selection]
 
-            t_relative = t - xmin_value
-            xmin = 0
-            xmax = window if window else None
-            xdata = t_relative
+            xdata = t - t_max
+            xmin = -window if window else (np.min(xdata) if xdata.size else None)
+            xmax = 0 if window or xdata.size else None
         else:
             xmin = self.parent.limits.get('Time', (None, None))[0]
             xmax = self.parent.limits.get('Time', (None, None))[1]
