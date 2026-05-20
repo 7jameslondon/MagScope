@@ -1,4 +1,4 @@
-from fishel_lab_commands import *
+from fishel_lab_custom_commands import *
 
 script = Script()
 
