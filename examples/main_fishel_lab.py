@@ -1,4 +1,4 @@
-""" 
+"""
 The main file for the Fishel Lab MagScope setup. This includes an EGrabber camera, a Zaber LSQ linear magnet motor, and a Zaber NMS rotary magnet motor. 
 
 For PI and Zaber motor support, make sure to install the following packages:
@@ -8,12 +8,24 @@ For the camera install the wheel package from the EGrabber website: https://www.
 pip install GrabberCamera-1.0.0-py3-none-any.whl
 """
 
+from pathlib import Path
+import sys
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
 import magscope
 
-from cameras.camera_egrabber import EGrabberCamera
-from motors.zaber_lsq import ZaberLsqMotor, ZaberLsqControls, ZaberLsqPositionPlot
-from motors.zaber_nms import ZaberNmsMotor, ZaberNmsControls, ZaberNmsPositionPlot
-from focus.pi_e709 import PiE709FocusMotor, PiE709Controls, PiE709FocusPlot
+from examples.cameras.camera_egrabber import EGrabberCamera
+from examples.focus.pi_e709 import PiE709Controls, PiE709FocusPlot
+from examples.motors.zaber_lsq import ZaberLsqControls, ZaberLsqPositionPlot
+from examples.motors.zaber_nms import ZaberNmsControls, ZaberNmsPositionPlot
+from examples.scripts.fishel_lab_scriptable_hardware import (
+    ScriptableFocusMotor,
+    ScriptableLsqMotor,
+    ScriptableNmsMotor,
+)
 
 if __name__ == "__main__":
     scope = magscope.MagScope(verbose=True)
@@ -22,17 +34,17 @@ if __name__ == "__main__":
     scope.camera_manager.camera = EGrabberCamera()
 
     # Fishel Lab Zaber LSQ Motor (Linear Magnet Motor)
-    scope.add_hardware(ZaberLsqMotor())
+    scope.add_hardware(ScriptableLsqMotor())
     scope.add_control(ZaberLsqControls, column=3)
     scope.add_timeplot(ZaberLsqPositionPlot())
 
     # Fishel Lab Zaber NMS Motor (Rotary Magnet Motor)
-    scope.add_hardware(ZaberNmsMotor())
+    scope.add_hardware(ScriptableNmsMotor())
     scope.add_control(ZaberNmsControls, column=3)
     scope.add_timeplot(ZaberNmsPositionPlot())
 
     # Fishel Lab PI E709 Focus (Objective Focus)
-    scope.add_hardware(PiE709FocusMotor())
+    scope.add_hardware(ScriptableFocusMotor())
     scope.add_control(PiE709Controls, column=3)
     scope.add_timeplot(PiE709FocusPlot())
 
