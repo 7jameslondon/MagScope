@@ -28,7 +28,8 @@ import magscope
 from magscope.datatypes import MatrixBuffer
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command
+from magscope.ipc_commands import Command, ScriptMoveErrorCommand, UpdateWaitingCommand
+from magscope.utils import register_script_command
 from zaber_motion import MotionLibException, Units
 from zaber_motion.ascii import Axis, Connection
 from zaber_motion.ascii.setting_constants import SettingConstants
@@ -152,6 +153,26 @@ class UseDefaultZaberLsqMaxLimitCommand(Command):
     pass
 
 
+@dataclass(frozen=True)
+class LinearMoveCommand(Command):
+    target_mm: float
+    speed_mm_s: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class LinearJogCommand(Command):
+    delta_mm: float
+    speed_mm_s: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class LinearHomeCommand(Command):
+    speed_mm_s: float
+    wait_until_done: bool = False
+
+
 def get_serial_ports() -> list[str]:
     ports: set[str] = set()
 
@@ -250,6 +271,7 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._last_fetch = 0.0
         self._command_error = COMMAND_ERROR_NONE
         self._last_state: tuple[float, ...] | None = None
+        self._script_move_pending: bool = False
 
         self._limit_max_mm = np.nan
         self._speed_max_mm_s = np.nan
@@ -317,6 +339,14 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._reset_metadata()
 
     def fetch(self):
+        if self._script_move_pending and self._is_connected and self._axis is not None:
+            try:
+                if not self._axis.is_busy():
+                    self.send_ipc(UpdateWaitingCommand())
+                    self._script_move_pending = False
+            except MotionLibException:
+                pass
+
         now = time()
         if not self._is_connected:
             if (now - self._last_fetch) >= self.fetch_interval:
@@ -553,6 +583,71 @@ class ZaberLsqMotor(HardwareManagerBase):
             self._command_error = COMMAND_ERROR_NONE
         except MotionLibException:
             self._command_error = COMMAND_ERROR_SET_LIMIT
+        self._write_state(force=True)
+
+    @register_ipc_command(LinearMoveCommand)
+    @register_script_command(LinearMoveCommand)
+    def handle_linear_move(self, target_mm: float, speed_mm_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            self._target_mm = float(np.clip(target_mm, 0.0, self._limit_max_mm))
+            self._speed_mm_s = clipped_speed
+            self._axis.move_absolute(
+                self._target_mm,
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=self._speed_mm_s,
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_MOVE
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Linear move to {target_mm} mm failed"))
+        self._write_state(force=True)
+
+    @register_ipc_command(LinearJogCommand)
+    @register_script_command(LinearJogCommand)
+    def handle_linear_jog(self, delta_mm: float, speed_mm_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            current_position = float(self._axis.get_position(POSITION_UNIT))
+            self._target_mm = float(np.clip(current_position + delta_mm, 0.0, self._limit_max_mm))
+            self._speed_mm_s = clipped_speed
+            self._axis.move_relative(
+                delta_mm,
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=self._speed_mm_s,
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_JOG
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Linear jog by {delta_mm} mm failed"))
+        self._write_state(force=True)
+
+    @register_ipc_command(LinearHomeCommand)
+    @register_script_command(LinearHomeCommand)
+    def handle_linear_home(self, speed_mm_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            self._speed_mm_s = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            self._axis.home(wait_until_idle=False)
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_HOME
+            self.send_ipc(ScriptMoveErrorCommand(text="Linear home failed"))
         self._write_state(force=True)
 
 

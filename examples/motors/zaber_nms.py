@@ -25,7 +25,8 @@ import magscope
 from magscope.datatypes import MatrixBuffer
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command
+from magscope.ipc_commands import Command, ScriptMoveErrorCommand, UpdateWaitingCommand
+from magscope.utils import register_script_command
 from zaber_motion import MotionLibException, Units
 from zaber_motion.ascii import Axis, Connection
 from zaber_motion.ascii.setting_constants import SettingConstants
@@ -156,6 +157,20 @@ class ZeroZaberNmsPositionCommand(Command):
     pass
 
 
+@dataclass(frozen=True)
+class RotaryMoveCommand(Command):
+    target_turns: float
+    speed_turns_s: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class RotaryJogCommand(Command):
+    delta_turns: float
+    speed_turns_s: float
+    wait_until_done: bool = False
+
+
 def get_serial_ports() -> list[str]:
     ports: set[str] = set()
 
@@ -243,6 +258,7 @@ class ZaberNmsMotor(HardwareManagerBase):
         self._last_fetch = 0.0
         self._command_error = COMMAND_ERROR_NONE
         self._last_state: tuple[float, ...] | None = None
+        self._script_move_pending: bool = False
 
         self._limit_max_turns = np.nan
         self._speed_max_turns_s = np.nan
@@ -311,6 +327,14 @@ class ZaberNmsMotor(HardwareManagerBase):
         self._reset_metadata()
 
     def fetch(self):
+        if self._script_move_pending and self._is_connected and self._axis is not None:
+            try:
+                if not self._axis.is_busy():
+                    self.send_ipc(UpdateWaitingCommand())
+                    self._script_move_pending = False
+            except MotionLibException:
+                pass
+
         now = time()
         if not self._is_connected:
             if (now - self._last_fetch) >= self.fetch_interval:
@@ -525,6 +549,55 @@ class ZaberNmsMotor(HardwareManagerBase):
             self._refresh_metadata()
         except MotionLibException:
             self._command_error = COMMAND_ERROR_SET_LIMIT
+        self._write_state(force=True)
+
+    @register_ipc_command(RotaryMoveCommand)
+    @register_script_command(RotaryMoveCommand)
+    def handle_rotary_move(self, target_turns: float, speed_turns_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_turns_s, 0.001, self._speed_max_turns_s))
+            self._target_turns = float(np.clip(target_turns, 0.0, self._limit_max_turns))
+            self._speed_turns_s = clipped_speed
+            self._axis.move_absolute(
+                turns_to_degrees(self._target_turns),
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=turns_to_degrees(self._speed_turns_s),
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_MOVE
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Rotary move to {target_turns} turns failed"))
+        self._write_state(force=True)
+
+    @register_ipc_command(RotaryJogCommand)
+    @register_script_command(RotaryJogCommand)
+    def handle_rotary_jog(self, delta_turns: float, speed_turns_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_turns_s, 0.001, self._speed_max_turns_s))
+            current_turns = degrees_to_turns(float(self._axis.get_position(POSITION_UNIT)))
+            self._target_turns = float(np.clip(current_turns + delta_turns, 0.0, self._limit_max_turns))
+            self._speed_turns_s = clipped_speed
+            self._axis.move_relative(
+                turns_to_degrees(delta_turns),
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=turns_to_degrees(self._speed_turns_s),
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_JOG
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Rotary jog by {delta_turns} turns failed"))
         self._write_state(force=True)
 
 

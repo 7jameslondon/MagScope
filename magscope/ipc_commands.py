@@ -429,3 +429,9 @@ class SleepCommand(Command):
 @dataclass(frozen=True)
 class UpdateWaitingCommand(Command):
     """Signal that a wait condition has been satisfied."""
+
+
+@dataclass(frozen=True)
+class ScriptMoveErrorCommand(Command):
+    """Report a motor move failure during script execution."""
+    text: str
