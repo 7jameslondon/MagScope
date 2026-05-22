@@ -13,6 +13,7 @@ import magscope
 from cameras.camera_egrabber import EGrabberCamera
 from motors.zaber_lsq import ZaberLsqMotor, ZaberLsqControls, ZaberLsqPositionPlot
 from motors.zaber_nms import ZaberNmsMotor, ZaberNmsControls, ZaberNmsPositionPlot
+from motors.force_calibration import ForceCalibrationControlPanel, ForcePlot
 from focus.pi_e709 import PiE709FocusMotor, PiE709Controls, PiE709FocusPlot
 
 if __name__ == "__main__":
@@ -24,6 +25,8 @@ if __name__ == "__main__":
     # Fishel Lab Zaber LSQ Motor (Linear Magnet Motor)
     scope.add_hardware(ZaberLsqMotor())
     scope.add_control(ZaberLsqControls, column=3)
+    scope.add_control(ForceCalibrationControlPanel, column=3)
+    scope.add_timeplot(ForcePlot("ZaberLsqMotor"))
     scope.add_timeplot(ZaberLsqPositionPlot())
 
     # Fishel Lab Zaber NMS Motor (Rotary Magnet Motor)

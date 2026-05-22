@@ -26,9 +26,20 @@ from PyQt6.QtWidgets import (
 
 import magscope
 from magscope.datatypes import MatrixBuffer
+from magscope.force_calibration import ForceCalibrantModel
+from magscope.force_calibration.commands import (
+    ForceMoveCommand,
+    ForceRampCommand,
+    LoadForceCalibrantCommand,
+    MoveLinearToForceCommand,
+    RunLinearForceRampCommand,
+    UnloadForceCalibrantCommand,
+    UpdateForceCalibrantStatusCommand,
+)
 from magscope.hardware import HardwareManagerBase
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command
+from magscope.ipc_commands import Command, ScriptMoveErrorCommand, UpdateWaitingCommand
+from magscope.utils import register_script_command
 from zaber_motion import MotionLibException, Units
 from zaber_motion.ascii import Axis, Connection
 from zaber_motion.ascii.setting_constants import SettingConstants
@@ -94,6 +105,8 @@ COMMAND_ERROR_LABELS = {
     COMMAND_ERROR_POLL: "Hardware poll failed",
 }
 
+_force_calibrant = ForceCalibrantModel()
+
 STOP_BUTTON_STYLE = (
     "QPushButton { background: #4a2b2f; }"
     "QPushButton:hover { background: #563238; }"
@@ -150,6 +163,26 @@ class SetZaberLsqMaxLimitCommand(Command):
 @dataclass(frozen=True)
 class UseDefaultZaberLsqMaxLimitCommand(Command):
     pass
+
+
+@dataclass(frozen=True)
+class LinearMoveCommand(Command):
+    target_mm: float
+    speed_mm_s: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class LinearJogCommand(Command):
+    delta_mm: float
+    speed_mm_s: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class LinearHomeCommand(Command):
+    speed_mm_s: float
+    wait_until_done: bool = False
 
 
 def get_serial_ports() -> list[str]:
@@ -250,6 +283,12 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._last_fetch = 0.0
         self._command_error = COMMAND_ERROR_NONE
         self._last_state: tuple[float, ...] | None = None
+        self._script_move_pending: bool = False
+        self._move_callback = None
+        self._pending_ramp_profile = None
+        self._force_profile_segments: list[tuple[float, float]] = []
+        self._force_profile_index: int = 0
+        self._force_profile_wait: bool = False
 
         self._limit_max_mm = np.nan
         self._speed_max_mm_s = np.nan
@@ -317,6 +356,23 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._reset_metadata()
 
     def fetch(self):
+        if self._script_move_pending and self._is_connected and self._axis is not None:
+            try:
+                if not self._axis.is_busy():
+                    self.send_ipc(UpdateWaitingCommand())
+                    self._script_move_pending = False
+            except MotionLibException:
+                pass
+
+        if self._move_callback and self._is_connected and self._axis is not None:
+            try:
+                if not self._axis.is_busy():
+                    cb = self._move_callback
+                    self._move_callback = None
+                    cb()
+            except MotionLibException:
+                pass
+
         now = time()
         if not self._is_connected:
             if (now - self._last_fetch) >= self.fetch_interval:
@@ -554,6 +610,244 @@ class ZaberLsqMotor(HardwareManagerBase):
         except MotionLibException:
             self._command_error = COMMAND_ERROR_SET_LIMIT
         self._write_state(force=True)
+
+    @register_ipc_command(LinearMoveCommand)
+    @register_script_command(LinearMoveCommand)
+    def handle_linear_move(self, target_mm: float, speed_mm_s: float,
+                           wait_until_done: bool = False, callback=None) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            self._target_mm = float(np.clip(target_mm, 0.0, self._limit_max_mm))
+            self._speed_mm_s = clipped_speed
+            self._axis.move_absolute(
+                self._target_mm,
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=self._speed_mm_s,
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            self._move_callback = callback
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_MOVE
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Linear move to {target_mm} mm failed"))
+        self._write_state(force=True)
+
+    @register_ipc_command(LinearJogCommand)
+    @register_script_command(LinearJogCommand)
+    def handle_linear_jog(self, delta_mm: float, speed_mm_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            clipped_speed = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            current_position = float(self._axis.get_position(POSITION_UNIT))
+            self._target_mm = float(np.clip(current_position + delta_mm, 0.0, self._limit_max_mm))
+            self._speed_mm_s = clipped_speed
+            self._axis.move_relative(
+                delta_mm,
+                POSITION_UNIT,
+                wait_until_idle=False,
+                velocity=self._speed_mm_s,
+                velocity_unit=VELOCITY_UNIT,
+            )
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_JOG
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Linear jog by {delta_mm} mm failed"))
+        self._write_state(force=True)
+
+    @register_ipc_command(LinearHomeCommand)
+    @register_script_command(LinearHomeCommand)
+    def handle_linear_home(self, speed_mm_s: float, wait_until_done: bool = False) -> None:
+        if self._axis is None:
+            return
+        try:
+            self._speed_mm_s = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            self._axis.home(wait_until_idle=False)
+            self._command_error = COMMAND_ERROR_NONE
+            if wait_until_done:
+                self._script_move_pending = True
+        except MotionLibException:
+            self._command_error = COMMAND_ERROR_HOME
+            self.send_ipc(ScriptMoveErrorCommand(text="Linear home failed"))
+        self._write_state(force=True)
+
+    def _get_current_position(self) -> float:
+        if self._axis is None:
+            return np.nan
+        try:
+            return float(self._axis.get_position(POSITION_UNIT))
+        except MotionLibException:
+            return np.nan
+
+    @register_ipc_command(LoadForceCalibrantCommand)
+    def load_force_calibrant(self, path: str, source: str = "ui") -> None:
+        try:
+            _force_calibrant.load(path)
+            fr = _force_calibrant.get_force_range()
+            self.send_ipc(UpdateForceCalibrantStatusCommand(
+                loaded=True, path=path,
+                message=f"Loaded {_force_calibrant.get_n_rows()} rows",
+                force_min_pn=fr[0] if fr else None,
+                force_max_pn=fr[1] if fr else None,
+            ))
+        except Exception as exc:
+            self.send_ipc(UpdateForceCalibrantStatusCommand(
+                loaded=False, path=path, message=str(exc),
+            ))
+
+    @register_ipc_command(UnloadForceCalibrantCommand)
+    def unload_force_calibrant(self, source: str = "ui") -> None:
+        _force_calibrant.unload()
+        self.send_ipc(UpdateForceCalibrantStatusCommand(
+            loaded=False, message="Calibrant unloaded",
+        ))
+
+    @register_ipc_command(MoveLinearToForceCommand)
+    def move_linear_to_force(self, force_pn: float, rate_pn_s: float | None = None,
+                             source: str = "ui") -> None:
+        if not _force_calibrant.is_loaded():
+            return
+        target_mm = _force_calibrant.force_to_motor(float(force_pn))
+        if target_mm is None:
+            return
+
+        if rate_pn_s is not None and rate_pn_s > 0:
+            current_mm = self._get_current_position()
+            current_pn = _force_calibrant.motor_to_force(current_mm)
+            if current_pn is not None and abs(current_pn - float(force_pn)) > 1e-6:
+                profile = _force_calibrant.build_force_ramp(
+                    start_pn=current_pn, stop_pn=float(force_pn),
+                    rate_pn_s=float(rate_pn_s),
+                )
+                if profile is not None:
+                    self._execute_force_profile(profile, wait_until_done=False)
+                    return
+        self.handle_move_absolute(target_mm=target_mm, speed_mm_s=None)
+
+    @register_ipc_command(RunLinearForceRampCommand)
+    def run_linear_force_ramp(self, start_pn: float, stop_pn: float, rate_pn_s: float,
+                              source: str = "ui") -> None:
+        if not _force_calibrant.is_loaded() or rate_pn_s <= 0:
+            return
+        start_f = float(start_pn)
+        stop_f = float(stop_pn)
+        start_mm = _force_calibrant.force_to_motor(start_f)
+        stop_mm = _force_calibrant.force_to_motor(stop_f)
+        if start_mm is None or stop_mm is None:
+            return
+        profile = _force_calibrant.build_force_ramp(
+            start_pn=start_f, stop_pn=stop_f, rate_pn_s=float(rate_pn_s),
+        )
+        if profile is None:
+            return
+        current_mm = self._get_current_position()
+        if abs(current_mm - start_mm) > 1e-6:
+            self._pending_ramp_profile = profile
+            self.handle_linear_move(target_mm=start_mm, speed_mm_s=None,
+                                    wait_until_done=False,
+                                    callback=self._dispatch_pending_ramp)
+        else:
+            self._execute_force_profile(profile, wait_until_done=False)
+
+    @register_ipc_command(UpdateForceCalibrantStatusCommand)
+    def update_force_calibrant_status(self, loaded: bool, path: str | None = None,
+                                      message: str = "",
+                                      force_min_pn: float | None = None,
+                                      force_max_pn: float | None = None) -> None:
+        pass
+
+    @register_ipc_command(ForceMoveCommand)
+    @register_script_command(ForceMoveCommand)
+    def handle_linear_force_move(self, force_pn: float, rate_pn_s: float | None = None,
+                                 wait_until_done: bool = False) -> None:
+        if not _force_calibrant.is_loaded():
+            self.send_ipc(ScriptMoveErrorCommand(text="Force calibrant not loaded"))
+            return
+        target_mm = _force_calibrant.force_to_motor(float(force_pn))
+        if target_mm is None:
+            self.send_ipc(ScriptMoveErrorCommand(
+                text=f"Force {force_pn} pN outside calibrant range"))
+            return
+        if rate_pn_s is not None and rate_pn_s > 0:
+            current_mm = self._get_current_position()
+            current_pn = _force_calibrant.motor_to_force(current_mm)
+            if current_pn is not None and abs(current_pn - float(force_pn)) > 1e-6:
+                profile = _force_calibrant.build_force_ramp(
+                    start_pn=current_pn, stop_pn=float(force_pn),
+                    rate_pn_s=float(rate_pn_s),
+                )
+                if profile is not None:
+                    self._execute_force_profile(profile, wait_until_done=wait_until_done)
+                    return
+        self.handle_linear_move(target_mm=target_mm, speed_mm_s=None,
+                                wait_until_done=wait_until_done)
+
+    @register_ipc_command(ForceRampCommand)
+    @register_script_command(ForceRampCommand)
+    def handle_linear_force_ramp(self, start_pn: float, stop_pn: float, rate_pn_s: float,
+                                 wait_until_done: bool = True) -> None:
+        if not _force_calibrant.is_loaded():
+            self.send_ipc(ScriptMoveErrorCommand(text="Force calibrant not loaded"))
+            return
+        start_f = float(start_pn)
+        stop_f = float(stop_pn)
+        start_mm = _force_calibrant.force_to_motor(start_f)
+        stop_mm = _force_calibrant.force_to_motor(stop_f)
+        if start_mm is None or stop_mm is None:
+            self.send_ipc(ScriptMoveErrorCommand(
+                text="Force range outside calibrant bounds"))
+            return
+        profile = _force_calibrant.build_force_ramp(
+            start_pn=start_f, stop_pn=stop_f, rate_pn_s=float(rate_pn_s),
+        )
+        if profile is None:
+            self.send_ipc(ScriptMoveErrorCommand(
+                text="Failed to build force ramp profile"))
+            return
+        current_mm = self._get_current_position()
+        if abs(current_mm - start_mm) > 1e-6:
+            self._pending_ramp_profile = profile
+            self.handle_linear_move(target_mm=start_mm, speed_mm_s=None,
+                                    wait_until_done=False,
+                                    callback=self._dispatch_pending_ramp)
+        else:
+            self._execute_force_profile(profile, wait_until_done=wait_until_done)
+
+    def _dispatch_pending_ramp(self) -> None:
+        profile = self._pending_ramp_profile
+        self._pending_ramp_profile = None
+        if profile is not None:
+            self._execute_force_profile(profile, wait_until_done=True)
+
+    def _execute_force_profile(self, profile, wait_until_done: bool = False) -> None:
+        if profile.velocities_mm_s.size < 2:
+            return
+        self._force_profile_segments = list(zip(
+            profile.positions_mm[1:], profile.velocities_mm_s[1:],
+        ))
+        self._force_profile_index = 0
+        self._force_profile_wait = wait_until_done
+        self._dispatch_next_profile_segment()
+
+    def _dispatch_next_profile_segment(self) -> None:
+        if self._force_profile_index >= len(self._force_profile_segments):
+            return
+        target_mm, speed_mm_s = self._force_profile_segments[self._force_profile_index]
+        self._force_profile_index += 1
+        if np.isfinite(self._speed_max_mm_s):
+            speed_mm_s = min(speed_mm_s, float(self._speed_max_mm_s))
+        self.handle_linear_move(
+            target_mm=target_mm, speed_mm_s=speed_mm_s,
+            wait_until_done=False,
+            callback=self._dispatch_next_profile_segment,
+        )
 
 
 class DeviceInfoDialog(QDialog):
