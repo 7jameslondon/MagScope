@@ -734,7 +734,12 @@ class ZaberLsqMotor(HardwareManagerBase):
     @register_ipc_command(RunLinearForceRampCommand)
     def run_linear_force_ramp(self, start_pn: float, stop_pn: float, rate_pn_s: float,
                               source: str = "ui") -> None:
-        if not _force_calibrant.is_loaded() or rate_pn_s <= 0:
+        if rate_pn_s <= 0:
+            return
+        if not _force_calibrant.is_loaded():
+            self.send_ipc(UpdateForceCalibrantStatusCommand(
+                loaded=False, message="Force calibrant not loaded",
+            ))
             return
         start_f = float(start_pn)
         stop_f = float(stop_pn)

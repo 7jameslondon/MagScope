@@ -125,8 +125,7 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
 
         rate_row = QHBoxLayout()
         rate_row.addWidget(QLabel("Rate (pN/s)"))
-        self.rate_input = QLineEdit("")
-        self.rate_input.setPlaceholderText("(default speed)")
+        self.rate_input = QLineEdit("1.0")
         rate_row.addWidget(self.rate_input)
         ramp_section.addLayout(rate_row)
 
@@ -195,6 +194,12 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         self.manager.send_ipc(MoveLinearToForceCommand(force_pn=target, rate_pn_s=rate))
 
     def _run_ramp(self, forward: bool = True) -> None:
+        if not _force_calibrant_model.is_loaded():
+            QMessageBox.warning(
+                self, "Force Ramp",
+                "Load a force calibrant first.",
+            )
+            return
         a = _parse_float(self.ramp_a_input.text())
         b = _parse_float(self.ramp_b_input.text())
         rate = _parse_float(self.rate_input.text())
