@@ -840,6 +840,7 @@ class ZaberLsqMotor(HardwareManagerBase):
         if self._force_profile_index >= len(self._force_profile_segments):
             return
         target_mm, speed_mm_s = self._force_profile_segments[self._force_profile_index]
+        speed_mm_s = abs(speed_mm_s)
         self._force_profile_index += 1
         if np.isfinite(self._speed_max_mm_s):
             speed_mm_s = min(speed_mm_s, float(self._speed_max_mm_s))
