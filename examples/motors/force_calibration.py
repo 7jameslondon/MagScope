@@ -248,7 +248,7 @@ class ForcePlot(magscope.TimeSeriesPlotBase):
     def update(self):
         if not _force_calibrant_model.is_loaded():
             return
-        data = self.buffer.peak_unsorted()
+        data = self.buffer.peak_sorted()
         if data.size == 0:
             return
         t = data[:, COL_TIMESTAMP]
@@ -272,10 +272,8 @@ class ForcePlot(magscope.TimeSeriesPlotBase):
         t = t[selection]
         force = force[selection]
         target_force = target_force[selection]
-        valid = np.isfinite(force)
-        t = t[valid]
-        force = force[valid]
-        target_force = target_force[valid]
+        if t.size == 0:
+            return
         timepoints = [datetime.fromtimestamp(t_) for t_ in t]
         self.force_line.set_xdata(timepoints)
         self.force_line.set_ydata(force)

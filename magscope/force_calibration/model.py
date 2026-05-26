@@ -29,6 +29,7 @@ class ForceCalibrantModel:
     """
 
     MIN_ROWS = 10
+    _POSITION_EPS = 1e-9
 
     def __init__(self):
         self._force_pchip: PchipInterpolator | None = None
@@ -95,7 +96,7 @@ class ForceCalibrantModel:
     def motor_to_force(self, position_mm: float) -> float | None:
         if self._force_pchip is None:
             return None
-        if position_mm < self._position_min or position_mm > self._position_max:
+        if position_mm < self._position_min - self._POSITION_EPS or position_mm > self._position_max + self._POSITION_EPS:
             return None
         return float(self._force_pchip(position_mm))
 
@@ -103,13 +104,13 @@ class ForceCalibrantModel:
         if self._force_pchip is None:
             return np.full_like(positions_mm, np.nan)
         result = self._force_pchip(positions_mm)
-        result[(positions_mm < self._position_min) | (positions_mm > self._position_max)] = np.nan
+        result[(positions_mm < self._position_min - self._POSITION_EPS) | (positions_mm > self._position_max + self._POSITION_EPS)] = np.nan
         return result
 
     def force_to_motor(self, force_pn: float) -> float | None:
         if self._position_pchip is None:
             return None
-        if force_pn < self._force_min or force_pn > self._force_max:
+        if force_pn < self._force_min - self._POSITION_EPS or force_pn > self._force_max + self._POSITION_EPS:
             return None
         return float(self._position_pchip(force_pn))
 
@@ -117,7 +118,7 @@ class ForceCalibrantModel:
         if self._position_pchip is None:
             return np.full_like(forces_pn, np.nan)
         result = self._position_pchip(forces_pn)
-        result[(forces_pn < self._force_min) | (forces_pn > self._force_max)] = np.nan
+        result[(forces_pn < self._force_min - self._POSITION_EPS) | (forces_pn > self._force_max + self._POSITION_EPS)] = np.nan
         return result
 
     def get_path(self) -> str | None:
