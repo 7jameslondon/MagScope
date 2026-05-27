@@ -82,12 +82,15 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         target_section = QVBoxLayout()
 
         target_row = QHBoxLayout()
+        target_row.addStretch(1)
         target_row.addWidget(QLabel("Target (pN)"))
-        self.target_input = QLineEdit("0.0")
+        self.target_input = QLineEdit("1")
+        self.target_input.setMaximumWidth(160)
         target_row.addWidget(self.target_input)
-        self.move_to_force_button = QPushButton("Move to Force")
+        self.move_to_force_button = QPushButton("Move")
         self.move_to_force_button.clicked.connect(self._move_to_force)
         target_row.addWidget(self.move_to_force_button)
+        target_row.addStretch(1)
         target_section.addLayout(target_row)
 
         outer.addLayout(target_section)
@@ -96,28 +99,35 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         # 3. Force Ramp section
         ramp_section = QVBoxLayout()
 
+        ramp_buttons = QHBoxLayout()
+        ramp_buttons.addStretch(1)
+        self.ramp_ab_button = QPushButton("Ramp A \u2192 B")
+        self.ramp_ab_button.setFixedWidth(120)
+        self.ramp_ab_button.clicked.connect(lambda: self._run_ramp(forward=True))
+        ramp_buttons.addWidget(self.ramp_ab_button)
+        self.ramp_ba_button = QPushButton("Ramp B \u2192 A")
+        self.ramp_ba_button.setFixedWidth(120)
+        self.ramp_ba_button.clicked.connect(lambda: self._run_ramp(forward=False))
+        ramp_buttons.addWidget(self.ramp_ba_button)
+        ramp_buttons.addStretch(1)
+        ramp_section.addLayout(ramp_buttons)
+
         ramp_a_row = QHBoxLayout()
         ramp_a_row.addWidget(QLabel("A (pN)"))
-        self.ramp_a_input = QLineEdit("0.0")
+        self.ramp_a_input = QLineEdit("1")
         ramp_a_row.addWidget(self.ramp_a_input)
         ramp_a_row.addWidget(QLabel("B (pN)"))
         self.ramp_b_input = QLineEdit("10.0")
         ramp_a_row.addWidget(self.ramp_b_input)
         ramp_section.addLayout(ramp_a_row)
 
-        ramp_buttons = QHBoxLayout()
-        self.ramp_ab_button = QPushButton("Ramp A \u2192 B")
-        self.ramp_ab_button.clicked.connect(lambda: self._run_ramp(forward=True))
-        ramp_buttons.addWidget(self.ramp_ab_button)
-        self.ramp_ba_button = QPushButton("Ramp A \u2190 B")
-        self.ramp_ba_button.clicked.connect(lambda: self._run_ramp(forward=False))
-        ramp_buttons.addWidget(self.ramp_ba_button)
-        ramp_section.addLayout(ramp_buttons)
-
         rate_row = QHBoxLayout()
+        rate_row.addStretch(1)
         rate_row.addWidget(QLabel("Rate (pN/s)"))
         self.rate_input = QLineEdit("1.0")
+        self.rate_input.setMaximumWidth(160)
         rate_row.addWidget(self.rate_input)
+        rate_row.addStretch(1)
         ramp_section.addLayout(rate_row)
 
         outer.addLayout(ramp_section)
@@ -130,6 +140,7 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
 
         self.fault_label = QLabel("")
         self.fault_label.setStyleSheet("color: #ff6666;")
+        self.fault_label.setVisible(False)
         outer.addWidget(self.fault_label)
 
         self._timer = QTimer()
@@ -249,8 +260,10 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         error_text = COMMAND_ERROR_LABELS.get(error_code)
         if error_text:
             self.fault_label.setText(f"Linear motor: {error_text}")
+            self.fault_label.setVisible(True)
         else:
             self.fault_label.setText("")
+            self.fault_label.setVisible(False)
 
 
 class ForcePlot(magscope.TimeSeriesPlotBase):
