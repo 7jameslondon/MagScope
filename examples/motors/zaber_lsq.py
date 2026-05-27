@@ -613,14 +613,14 @@ class ZaberLsqMotor(HardwareManagerBase):
 
     @register_ipc_command(LinearMoveCommand)
     @register_script_command(LinearMoveCommand)
-    def handle_linear_move(self, target_mm: float, speed_mm_s: float,
+    def handle_linear_move(self, target_mm: float, speed_mm_s: float | None,
                            wait_until_done: bool = False, callback=None) -> None:
         if self._axis is None:
             return
         try:
-            clipped_speed = float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
+            clipped_speed = None if speed_mm_s is None else float(np.clip(speed_mm_s, 0.001, self._speed_max_mm_s))
             self._target_mm = float(np.clip(target_mm, 0.0, self._limit_max_mm))
-            self._speed_mm_s = clipped_speed
+            self._speed_mm_s = clipped_speed if clipped_speed is not None else self._speed_mm_s
             self._axis.move_absolute(
                 self._target_mm,
                 POSITION_UNIT,
@@ -755,7 +755,12 @@ class ZaberLsqMotor(HardwareManagerBase):
         current_mm = self._get_current_position()
         if abs(current_mm - start_mm) > 1e-6:
             self._pending_ramp_profile = profile
-            self.handle_linear_move(target_mm=start_mm, speed_mm_s=None,
+            force_range = abs(stop_f - start_f)
+            if force_range > 0:
+                prep_speed = abs(stop_mm - start_mm) * float(rate_pn_s) / force_range
+            else:
+                prep_speed = None
+            self.handle_linear_move(target_mm=start_mm, speed_mm_s=prep_speed,
                                     wait_until_done=False,
                                     callback=self._dispatch_pending_ramp)
         else:
@@ -819,7 +824,12 @@ class ZaberLsqMotor(HardwareManagerBase):
         current_mm = self._get_current_position()
         if abs(current_mm - start_mm) > 1e-6:
             self._pending_ramp_profile = profile
-            self.handle_linear_move(target_mm=start_mm, speed_mm_s=None,
+            force_range = abs(stop_f - start_f)
+            if force_range > 0:
+                prep_speed = abs(stop_mm - start_mm) * float(rate_pn_s) / force_range
+            else:
+                prep_speed = None
+            self.handle_linear_move(target_mm=start_mm, speed_mm_s=prep_speed,
                                     wait_until_done=False,
                                     callback=self._dispatch_pending_ramp)
         else:

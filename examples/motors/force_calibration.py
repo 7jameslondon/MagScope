@@ -117,14 +117,14 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         self.ramp_a_input = QLineEdit("1")
         ramp_a_row.addWidget(self.ramp_a_input)
         ramp_a_row.addWidget(QLabel("B (pN)"))
-        self.ramp_b_input = QLineEdit("10.0")
+        self.ramp_b_input = QLineEdit("10")
         ramp_a_row.addWidget(self.ramp_b_input)
         ramp_section.addLayout(ramp_a_row)
 
         rate_row = QHBoxLayout()
         rate_row.addStretch(1)
         rate_row.addWidget(QLabel("Rate (pN/s)"))
-        self.rate_input = QLineEdit("1.0")
+        self.rate_input = QLineEdit("1")
         self.rate_input.setMaximumWidth(160)
         rate_row.addWidget(self.rate_input)
         rate_row.addStretch(1)
@@ -243,6 +243,28 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
             if reply == QMessageBox.StandardButton.Yes:
                 return
         start_pn, stop_pn = (a, b) if forward else (b, a)
+
+        # Warn if already at the target (stop) position
+        data = self._buffer.peak_sorted()
+        if data.size > 0:
+            finite_rows = np.isfinite(data[:, COL_TIMESTAMP])
+            if np.any(finite_rows):
+                current_mm = data[finite_rows][-1, COL_POSITION]
+                if np.isfinite(current_mm):
+                    current_pn = _force_calibrant_model.motor_to_force(current_mm)
+                    if current_pn is not None and abs(current_pn - stop_pn) < 0.5:
+                        label_a = "A" if forward else "B"
+                        label_b = "B" if forward else "A"
+                        reply = QMessageBox.question(
+                            self, "Force Ramp",
+                            f"You are already at position {label_b} ({stop_pn:.3f} pN).\n"
+                            f"The ramp will first move to position {label_a} ({start_pn:.3f} pN) "
+                            f"before ramping back.\n\nProceed anyway?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        )
+                        if reply != QMessageBox.StandardButton.Yes:
+                            return
+
         self.manager.send_ipc(RunLinearForceRampCommand(
             start_pn=start_pn, stop_pn=stop_pn, rate_pn_s=rate,
         ))
