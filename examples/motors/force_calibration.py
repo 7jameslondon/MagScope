@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 
 import numpy as np
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -61,9 +61,6 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
 
         # 1. Load Calibrant section
         load_section = QVBoxLayout()
-        load_label = QLabel("Load Calibrant")
-        load_label.setStyleSheet("font-weight: bold;")
-        load_section.addWidget(load_label)
 
         self.load_button = QPushButton("Load Force Calibrant")
         self.load_button.clicked.connect(self._load_calibrant)
@@ -83,9 +80,6 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
 
         # 2. Target Force section
         target_section = QVBoxLayout()
-        target_label = QLabel("Target Force")
-        target_label.setStyleSheet("font-weight: bold;")
-        target_section.addWidget(target_label)
 
         target_row = QHBoxLayout()
         target_row.addWidget(QLabel("Target (pN)"))
@@ -101,9 +95,6 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
 
         # 3. Force Ramp section
         ramp_section = QVBoxLayout()
-        ramp_label = QLabel("Force Ramp")
-        ramp_label.setStyleSheet("font-weight: bold;")
-        ramp_section.addWidget(ramp_label)
 
         ramp_a_row = QHBoxLayout()
         ramp_a_row.addWidget(QLabel("A (pN)"))
@@ -132,19 +123,14 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         outer.addLayout(ramp_section)
         outer.addWidget(self._divider())
 
-        # 4. Status section
-        status_label = QLabel("Status")
-        status_label.setStyleSheet("font-weight: bold;")
-        outer.addWidget(status_label)
-
-        self.status_label = QLabel("No calibrant loaded")
-        outer.addWidget(self.status_label)
+        # 4. Force range readout
+        self.force_range_label = QLabel("Force range: no calibrant loaded")
+        self.force_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self.force_range_label)
 
         self.fault_label = QLabel("")
         self.fault_label.setStyleSheet("color: #ff6666;")
         outer.addWidget(self.fault_label)
-
-        outer.addStretch(1)
 
         self._timer = QTimer()
         self._timer.timeout.connect(self._update_values)
@@ -169,13 +155,10 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
             self.file_path_label.setText(path)
             self.plot_button.setEnabled(True)
             if fr is not None:
-                self.status_label.setText(
-                    f"Loaded {_force_calibrant_model.get_n_rows()} rows | "
-                    f"Force range: {fr[0]:.3f} \u2192 {fr[1]:.3f} pN"
-                )
+                self.force_range_label.setText(f"Force range: {fr[0]:.3f} \u2192 {fr[1]:.3f} pN")
             self.manager.send_ipc(LoadForceCalibrantCommand(path=path))
         except Exception as exc:
-            self.status_label.setText(f"Error: {exc}")
+            self.force_range_label.setText(f"Force range: unavailable ({exc})")
 
     def _plot_calibrant(self) -> None:
         if not _force_calibrant_model.is_loaded():
@@ -185,9 +168,31 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         plt.show()
 
     def _move_to_force(self) -> None:
+        if not _force_calibrant_model.is_loaded():
+            QMessageBox.warning(
+                self, "Move to Force",
+                "Load a force calibrant first.",
+            )
+            return
+
         target = _parse_float(self.target_input.text())
         if target is None:
             return
+
+        force_range = _force_calibrant_model.get_force_range()
+        if force_range is not None:
+            force_min_pn, force_max_pn = force_range
+            if not (force_min_pn <= target <= force_max_pn):
+                QMessageBox.warning(
+                    self,
+                    "Move to Force",
+                    (
+                        f"Target force {target:.3f} pN is outside the loaded calibrant range "
+                        f"({force_min_pn:.3f} to {force_max_pn:.3f} pN)."
+                    ),
+                )
+                return
+
         rate = _parse_float(self.rate_input.text())
         if rate is not None and rate <= 0:
             rate = None
@@ -205,6 +210,19 @@ class ForceCalibrationControlPanel(magscope.ControlPanelBase):
         rate = _parse_float(self.rate_input.text())
         if a is None or b is None or rate is None or rate <= 0:
             return
+        force_range = _force_calibrant_model.get_force_range()
+        if force_range is not None:
+            force_min_pn, force_max_pn = force_range
+            if not (force_min_pn <= a <= force_max_pn) or not (force_min_pn <= b <= force_max_pn):
+                QMessageBox.warning(
+                    self,
+                    "Force Ramp",
+                    (
+                        f"Force value A ({a:.3f} pN) or B ({b:.3f} pN) is outside the "
+                        f"loaded calibrant range ({force_min_pn:.3f} to {force_max_pn:.3f} pN)."
+                    ),
+                )
+                return
         if abs(a - b) < 1e-3:
             reply = QMessageBox.question(
                 self, "Force Ramp",
