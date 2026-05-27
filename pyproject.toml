@@ -29,7 +29,7 @@ dependencies = [
     "matplotlib",
     "tifffile",
     "PyYAML",
-    "magtrack>=0.7",
+    "magtrack>=0.7.7",
     "PyQt6",
 ]
 

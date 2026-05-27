@@ -30,6 +30,7 @@ def _install_zaber_motion_stubs() -> None:
     class Units:
         LENGTH_MILLIMETRES = object()
         VELOCITY_MILLIMETRES_PER_SECOND = object()
+        ACCELERATION_MILLIMETRES_PER_SECOND_SQUARED = object()
 
     zaber_motion_module.MotionLibException = MotionLibException
     zaber_motion_module.Units = Units
@@ -44,7 +45,7 @@ def _install_zaber_motion_stubs() -> None:
     setting_constants_module.SettingConstants = type(
         "SettingConstants",
         (),
-        {"LIMIT_MAX": object(), "MAXSPEED_MAX": object()},
+        {"LIMIT_MAX": object(), "MAXSPEED_MAX": object(), "ACCEL": object()},
     )
     sys.modules["zaber_motion.ascii.setting_constants"] = setting_constants_module
 
@@ -77,6 +78,7 @@ class FakeAxis:
     def __init__(self, position_mm: float = 0.0):
         self.position_mm = position_mm
         self.move_absolute_calls: list[dict[str, object]] = []
+        self.move_velocity_calls: list[dict[str, object]] = []
 
     def move_absolute(self, target_mm, position_unit, *, wait_until_idle, velocity, velocity_unit):
         self.move_absolute_calls.append(
@@ -89,6 +91,17 @@ class FakeAxis:
             }
         )
         self.position_mm = target_mm
+
+    def move_velocity(self, velocity, velocity_unit):
+        self.move_velocity_calls.append(
+            {
+                "velocity": velocity,
+                "velocity_unit": velocity_unit,
+            }
+        )
+
+    def stop(self, wait_until_idle=False):
+        pass
 
     def get_position(self, _unit) -> float:
         return self.position_mm
@@ -109,6 +122,9 @@ class FakeForceCalibrant:
 
     def motor_to_force(self, motor_mm: float) -> float:
         return motor_mm * 2.0
+
+    def velocity_for_force_rate(self, position_mm: float, rate_pn_s: float) -> float:
+        return rate_pn_s / 2.0
 
     def build_force_ramp(self, *, start_pn, stop_pn, rate_pn_s):
         return SimpleNamespace(
@@ -145,49 +161,73 @@ def test_handle_linear_move_preserves_current_speed_when_speed_is_none():
     assert motor._axis.move_absolute_calls[-1]["velocity"] == 1.75
 
 
-def test_run_linear_force_ramp_pre_move_uses_rate_derived_speed(monkeypatch):
+def test_run_linear_force_ramp_starts_velocity_mode(monkeypatch):
     motor = make_motor(position_mm=0.0)
     monkeypatch.setattr(zaber_lsq, "_force_calibrant", FakeForceCalibrant())
 
     motor.run_linear_force_ramp(start_pn=4.0, stop_pn=10.0, rate_pn_s=5.0)
 
-    assert motor._pending_ramp_profile is not None
-    assert motor._move_callback == motor._dispatch_pending_ramp
-    assert motor._target_mm == 2.0
-    # prep_speed = abs(profile.velocities_mm_s[1]) = abs(2.5) = 2.5
+    assert motor._velocity_ramp_active
+    assert motor._velocity_ramp_phase == "pre"
+    assert motor._velocity_ramp_start_mm == 2.0
+    assert motor._velocity_ramp_stop_mm == 5.0
+    assert motor._velocity_ramp_rate_pn_s == 5.0
+    assert motor._velocity_ramp_direction == 1
     assert motor._speed_mm_s == 2.5
-    assert motor._axis.move_absolute_calls[-1]["target_mm"] == 2.0
-    assert motor._axis.move_absolute_calls[-1]["velocity"] == 2.5
+    assert len(motor._axis.move_velocity_calls) == 1
+    assert motor._axis.move_velocity_calls[0]["velocity"] == 2.5
 
 
-def test_run_linear_force_ramp_reverse_pre_move_uses_rate_derived_speed(monkeypatch):
-    """B->A direction: same rate-derived speed should be used."""
+def test_run_linear_force_ramp_reverse_starts_velocity_mode(monkeypatch):
+    """B->A direction: velocity mode with negative direction."""
     motor = make_motor(position_mm=10.0)
     monkeypatch.setattr(zaber_lsq, "_force_calibrant", FakeForceCalibrant())
 
     motor.run_linear_force_ramp(start_pn=10.0, stop_pn=4.0, rate_pn_s=5.0)
 
-    assert motor._pending_ramp_profile is not None
-    assert motor._move_callback == motor._dispatch_pending_ramp
-    assert motor._target_mm == 5.0
+    assert motor._velocity_ramp_active
+    assert motor._velocity_ramp_phase == "pre"
+    assert motor._velocity_ramp_start_mm == 5.0
+    assert motor._velocity_ramp_stop_mm == 2.0
+    assert motor._velocity_ramp_rate_pn_s == 5.0
+    assert motor._velocity_ramp_direction == -1
+    assert motor._speed_mm_s == -2.5
+    assert len(motor._axis.move_velocity_calls) == 1
+    assert motor._axis.move_velocity_calls[0]["velocity"] == -2.5
+
+
+def test_run_linear_force_ramp_already_at_start_direct_ramp(monkeypatch):
+    """When already at start position, skip pre phase and go directly to ramp."""
+    motor = make_motor(position_mm=2.0)
+    monkeypatch.setattr(zaber_lsq, "_force_calibrant", FakeForceCalibrant())
+
+    motor.run_linear_force_ramp(start_pn=4.0, stop_pn=10.0, rate_pn_s=5.0)
+
+    assert motor._velocity_ramp_active
+    assert motor._velocity_ramp_phase == "ramp"
+    assert motor._velocity_ramp_start_mm == 2.0
+    assert motor._velocity_ramp_stop_mm == 5.0
+    assert motor._velocity_ramp_direction == 1
     assert motor._speed_mm_s == 2.5
-    assert motor._axis.move_absolute_calls[-1]["target_mm"] == 5.0
-    assert motor._axis.move_absolute_calls[-1]["velocity"] == 2.5
+    assert len(motor._axis.move_velocity_calls) == 1
 
 
-def test_handle_linear_force_ramp_pre_move_uses_rate_derived_speed(monkeypatch):
-    """Script force ramp: pre-position should also use rate-derived speed."""
+def test_handle_linear_force_ramp_starts_velocity_mode(monkeypatch):
+    """Script force ramp: should start velocity mode."""
     motor = make_motor(position_mm=0.0)
     monkeypatch.setattr(zaber_lsq, "_force_calibrant", FakeForceCalibrant())
 
     motor.handle_linear_force_ramp(start_pn=4.0, stop_pn=10.0, rate_pn_s=5.0)
 
-    assert motor._pending_ramp_profile is not None
-    assert motor._move_callback == motor._dispatch_pending_ramp
-    assert motor._target_mm == 2.0
+    assert motor._velocity_ramp_active
+    assert motor._velocity_ramp_phase == "pre"
+    assert motor._velocity_ramp_start_mm == 2.0
+    assert motor._velocity_ramp_stop_mm == 5.0
+    assert motor._velocity_ramp_rate_pn_s == 5.0
+    assert motor._velocity_ramp_direction == 1
     assert motor._speed_mm_s == 2.5
-    assert motor._axis.move_absolute_calls[-1]["target_mm"] == 2.0
-    assert motor._axis.move_absolute_calls[-1]["velocity"] == 2.5
+    assert len(motor._axis.move_velocity_calls) == 1
+    assert motor._axis.move_velocity_calls[0]["velocity"] == 2.5
 
 
 def test_force_move_without_explicit_speed_reuses_existing_speed(monkeypatch):

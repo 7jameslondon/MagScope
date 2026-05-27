@@ -23,9 +23,10 @@ class ForceCalibrantModel:
     """Bidirectional PCHIP interpolation between motor position (mm) and force (pN).
 
     Calibration data is loaded from a two-column text file: ``position_mm  force_pn``.
-    Once loaded, the model can convert motor position to force (and vice versa) and
-    build force-ramp profiles that maintain a constant pN/s rate across the non-linear
-    force curve.
+    Once loaded, the model can convert motor position to force (and vice versa),
+    compute the instantaneous velocity needed to maintain a constant force rate,
+    and build force-ramp profiles that maintain a constant pN/s rate across the
+    non-linear force curve.
     """
 
     MIN_ROWS = 10
@@ -120,6 +121,16 @@ class ForceCalibrantModel:
         result = self._position_pchip(forces_pn)
         result[(forces_pn < self._force_min - self._POSITION_EPS) | (forces_pn > self._force_max + self._POSITION_EPS)] = np.nan
         return result
+
+    def velocity_for_force_rate(self, position_mm: float, rate_pn_s: float) -> float | None:
+        if self._force_pchip is None:
+            return None
+        if position_mm < self._position_min - self._POSITION_EPS or position_mm > self._position_max + self._POSITION_EPS:
+            return None
+        dF_dp = float(self._force_pchip.derivative()(position_mm))
+        if dF_dp <= 0:
+            return float("inf")
+        return rate_pn_s / dF_dp
 
     def get_path(self) -> str | None:
         return self._path

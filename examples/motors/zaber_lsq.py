@@ -50,7 +50,10 @@ from zaber_motion.dto.ascii.device_identity import DeviceIdentity
 EXPECTED_MODEL = "X-LSQ075A-E01"
 POSITION_UNIT = Units.LENGTH_MILLIMETRES
 VELOCITY_UNIT = Units.VELOCITY_MILLIMETRES_PER_SECOND
+ACCELERATION_UNIT = Units.ACCELERATION_MILLIMETRES_PER_SECOND_SQUARED
 FETCH_INTERVAL_S = 0.05
+POSITION_TOLERANCE = 0.001
+RAMP_DECEL_MM_S2 = 100.0
 DEFAULT_POSITION_UI_MAX = 1_000_000.0
 DEFAULT_SPEED_UI_MAX = 1_000_000.0
 
@@ -285,10 +288,16 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._last_state: tuple[float, ...] | None = None
         self._script_move_pending: bool = False
         self._move_callback = None
-        self._pending_ramp_profile = None
-        self._force_profile_segments: list[tuple[float, float]] = []
-        self._force_profile_index: int = 0
-        self._force_profile_wait: bool = False
+
+        self._velocity_ramp_active: bool = False
+        self._velocity_ramp_phase: str = "pre"
+        self._velocity_ramp_start_mm: float = np.nan
+        self._velocity_ramp_stop_mm: float = np.nan
+        self._velocity_ramp_rate_pn_s: float = 0.0
+        self._velocity_ramp_direction: int = 1
+        self._velocity_ramp_wait: bool = False
+        self._velocity_ramp_dwell_until: float = 0.0
+        self._ramp_decel_mm_s2: float = RAMP_DECEL_MM_S2
 
         self._limit_max_mm = np.nan
         self._speed_max_mm_s = np.nan
@@ -373,6 +382,84 @@ class ZaberLsqMotor(HardwareManagerBase):
             except MotionLibException:
                 pass
 
+        if self._velocity_ramp_active and self._axis is not None:
+            try:
+                current_mm = self._get_current_position()
+
+                if self._velocity_ramp_phase == "pre_dwell":
+                    if not np.isnan(current_mm) and time() >= self._velocity_ramp_dwell_until:
+                        self._velocity_ramp_phase = "ramp"
+                        v = _force_calibrant.velocity_for_force_rate(current_mm, self._velocity_ramp_rate_pn_s)
+                        if v is not None:
+                            v *= self._velocity_ramp_direction
+                            v = float(np.clip(v, -self._speed_max_mm_s, self._speed_max_mm_s))
+                            self._axis.move_velocity(v, VELOCITY_UNIT)
+                            self._speed_mm_s = v
+                        else:
+                            self._axis.stop(wait_until_idle=False)
+                            self._velocity_ramp_active = False
+                elif not np.isnan(current_mm):
+                    v = _force_calibrant.velocity_for_force_rate(current_mm, self._velocity_ramp_rate_pn_s)
+                    if v is not None:
+                        v *= self._velocity_ramp_direction
+                        v = float(np.clip(v, -self._speed_max_mm_s, self._speed_max_mm_s))
+
+                        if self._velocity_ramp_phase == "pre":
+                            self._axis.move_velocity(v, VELOCITY_UNIT)
+                            self._speed_mm_s = v
+                            crossed = (
+                                (self._velocity_ramp_direction > 0 and current_mm >= self._velocity_ramp_start_mm)
+                                or (self._velocity_ramp_direction < 0 and current_mm <= self._velocity_ramp_start_mm)
+                            )
+                            if crossed:
+                                self._axis.stop(wait_until_idle=False)
+                                self._velocity_ramp_phase = "pre_dwell"
+                                self._velocity_ramp_dwell_until = time() + 1.0
+                                self._velocity_ramp_direction = 1 if self._velocity_ramp_stop_mm >= self._velocity_ramp_start_mm else -1
+                        else:
+                            v_abs = abs(v)
+                            crossed = (
+                                (self._velocity_ramp_direction > 0 and current_mm >= self._velocity_ramp_stop_mm)
+                                or (self._velocity_ramp_direction < 0 and current_mm <= self._velocity_ramp_stop_mm)
+                            )
+                            if crossed:
+                                self._axis.move_absolute(
+                                    self._velocity_ramp_stop_mm,
+                                    POSITION_UNIT,
+                                    wait_until_idle=False,
+                                    velocity=max(v_abs, 0.001),
+                                    velocity_unit=VELOCITY_UNIT,
+                                )
+                                self._velocity_ramp_active = False
+                                if self._velocity_ramp_wait:
+                                    self._script_move_pending = True
+                            else:
+                                remaining = abs(self._velocity_ramp_stop_mm - current_mm)
+                                actual_speed = abs(self._speed_mm_s)
+                                lookahead = actual_speed * self.fetch_interval + (v_abs ** 2) / (2 * self._ramp_decel_mm_s2) + POSITION_TOLERANCE
+                                if remaining < lookahead:
+                                    final_speed = max(v_abs, 0.001)
+                                    self._axis.move_absolute(
+                                        self._velocity_ramp_stop_mm,
+                                        POSITION_UNIT,
+                                        wait_until_idle=False,
+                                        velocity=final_speed,
+                                        velocity_unit=VELOCITY_UNIT,
+                                    )
+                                    self._velocity_ramp_active = False
+                                    if self._velocity_ramp_wait:
+                                        self._script_move_pending = True
+                                else:
+                                    self._axis.move_velocity(v, VELOCITY_UNIT)
+                                    self._speed_mm_s = v
+                    else:
+                        self._axis.stop(wait_until_idle=False)
+                        self._velocity_ramp_active = False
+                        return
+            except MotionLibException:
+                self._command_error = COMMAND_ERROR_MOVE
+                self._velocity_ramp_active = False
+
         now = time()
         if not self._is_connected:
             if (now - self._last_fetch) >= self.fetch_interval:
@@ -406,6 +493,7 @@ class ZaberLsqMotor(HardwareManagerBase):
 
         self._limit_max_mm = float(self._axis.settings.get(SettingConstants.LIMIT_MAX, POSITION_UNIT))
         self._speed_max_mm_s = float(self._axis.settings.get(SettingConstants.MAXSPEED_MAX, VELOCITY_UNIT))
+        self._ramp_decel_mm_s2 = float(self._axis.settings.get(SettingConstants.ACCEL, ACCELERATION_UNIT))
         warning_flags = self._axis.warnings.get_flags() | self._axis.device.warnings.get_flags()
         self._warning_mask = encode_warning_mask(warning_flags)
 
@@ -508,6 +596,7 @@ class ZaberLsqMotor(HardwareManagerBase):
 
     @register_ipc_command(StopZaberLsqCommand)
     def handle_stop(self) -> None:
+        self._velocity_ramp_active = False
         if self._axis is None:
             return
         try:
@@ -722,13 +811,11 @@ class ZaberLsqMotor(HardwareManagerBase):
             current_mm = self._get_current_position()
             current_pn = _force_calibrant.motor_to_force(current_mm)
             if current_pn is not None and abs(current_pn - float(force_pn)) > 1e-6:
-                profile = _force_calibrant.build_force_ramp(
-                    start_pn=current_pn, stop_pn=float(force_pn),
-                    rate_pn_s=float(rate_pn_s),
+                self._start_velocity_ramp(
+                    start_mm=current_mm, stop_mm=target_mm,
+                    rate_pn_s=float(rate_pn_s), wait_until_done=False,
                 )
-                if profile is not None:
-                    self._execute_force_profile(profile, wait_until_done=False)
-                    return
+                return
         self.handle_move_absolute(target_mm=target_mm, speed_mm_s=None)
 
     @register_ipc_command(RunLinearForceRampCommand)
@@ -747,24 +834,10 @@ class ZaberLsqMotor(HardwareManagerBase):
         stop_mm = _force_calibrant.force_to_motor(stop_f)
         if start_mm is None or stop_mm is None:
             return
-        profile = _force_calibrant.build_force_ramp(
-            start_pn=start_f, stop_pn=stop_f, rate_pn_s=float(rate_pn_s),
+        self._start_velocity_ramp(
+            start_mm=start_mm, stop_mm=stop_mm,
+            rate_pn_s=float(rate_pn_s), wait_until_done=False,
         )
-        if profile is None:
-            return
-        current_mm = self._get_current_position()
-        if abs(current_mm - start_mm) > 1e-6:
-            self._pending_ramp_profile = profile
-            force_range = abs(stop_f - start_f)
-            if force_range > 0:
-                prep_speed = abs(stop_mm - start_mm) * float(rate_pn_s) / force_range
-            else:
-                prep_speed = None
-            self.handle_linear_move(target_mm=start_mm, speed_mm_s=prep_speed,
-                                    wait_until_done=False,
-                                    callback=self._dispatch_pending_ramp)
-        else:
-            self._execute_force_profile(profile, wait_until_done=False)
 
     @register_ipc_command(UpdateForceCalibrantStatusCommand)
     def update_force_calibrant_status(self, loaded: bool, path: str | None = None,
@@ -789,13 +862,11 @@ class ZaberLsqMotor(HardwareManagerBase):
             current_mm = self._get_current_position()
             current_pn = _force_calibrant.motor_to_force(current_mm)
             if current_pn is not None and abs(current_pn - float(force_pn)) > 1e-6:
-                profile = _force_calibrant.build_force_ramp(
-                    start_pn=current_pn, stop_pn=float(force_pn),
-                    rate_pn_s=float(rate_pn_s),
+                self._start_velocity_ramp(
+                    start_mm=current_mm, stop_mm=target_mm,
+                    rate_pn_s=float(rate_pn_s), wait_until_done=wait_until_done,
                 )
-                if profile is not None:
-                    self._execute_force_profile(profile, wait_until_done=wait_until_done)
-                    return
+                return
         self.handle_linear_move(target_mm=target_mm, speed_mm_s=None,
                                 wait_until_done=wait_until_done)
 
@@ -814,56 +885,68 @@ class ZaberLsqMotor(HardwareManagerBase):
             self.send_ipc(ScriptMoveErrorCommand(
                 text="Force range outside calibrant bounds"))
             return
-        profile = _force_calibrant.build_force_ramp(
-            start_pn=start_f, stop_pn=stop_f, rate_pn_s=float(rate_pn_s),
+        self._start_velocity_ramp(
+            start_mm=start_mm, stop_mm=stop_mm,
+            rate_pn_s=float(rate_pn_s), wait_until_done=wait_until_done,
         )
-        if profile is None:
-            self.send_ipc(ScriptMoveErrorCommand(
-                text="Failed to build force ramp profile"))
+
+    def _start_velocity_ramp(self, start_mm: float, stop_mm: float,
+                              rate_pn_s: float, wait_until_done: bool) -> None:
+        if self._axis is None:
             return
+
+        if self._velocity_ramp_active:
+            try:
+                self._axis.stop(wait_until_idle=False)
+            except MotionLibException:
+                pass
+            self._velocity_ramp_active = False
+
         current_mm = self._get_current_position()
-        if abs(current_mm - start_mm) > 1e-6:
-            self._pending_ramp_profile = profile
-            force_range = abs(stop_f - start_f)
-            if force_range > 0:
-                prep_speed = abs(stop_mm - start_mm) * float(rate_pn_s) / force_range
-            else:
-                prep_speed = None
-            self.handle_linear_move(target_mm=start_mm, speed_mm_s=prep_speed,
-                                    wait_until_done=False,
-                                    callback=self._dispatch_pending_ramp)
+        if np.isnan(current_mm):
+            return
+
+        if abs(current_mm - start_mm) > POSITION_TOLERANCE:
+            direction = 1 if start_mm >= current_mm else -1
+            phase = "pre"
         else:
-            self._execute_force_profile(profile, wait_until_done=wait_until_done)
+            direction = 1 if stop_mm >= start_mm else -1
+            phase = "ramp"
 
-    def _dispatch_pending_ramp(self) -> None:
-        profile = self._pending_ramp_profile
-        self._pending_ramp_profile = None
-        if profile is not None:
-            self._execute_force_profile(profile, wait_until_done=True)
+        self._velocity_ramp_active = True
+        self._velocity_ramp_phase = phase
+        self._velocity_ramp_start_mm = float(np.clip(start_mm, 0.0, self._limit_max_mm))
+        self._velocity_ramp_stop_mm = float(np.clip(stop_mm, 0.0, self._limit_max_mm))
+        self._velocity_ramp_rate_pn_s = rate_pn_s
+        self._velocity_ramp_direction = direction
+        self._velocity_ramp_wait = wait_until_done
 
-    def _execute_force_profile(self, profile, wait_until_done: bool = False) -> None:
-        if profile.velocities_mm_s.size < 2:
-            return
-        self._force_profile_segments = list(zip(
-            profile.positions_mm[1:], profile.velocities_mm_s[1:],
-        ))
-        self._force_profile_index = 0
-        self._force_profile_wait = wait_until_done
-        self._dispatch_next_profile_segment()
+        initial_v = _force_calibrant.velocity_for_force_rate(current_mm, rate_pn_s)
+        if initial_v is not None:
+            initial_v *= direction
+            initial_v = float(np.clip(initial_v, -self._speed_max_mm_s, self._speed_max_mm_s))
 
-    def _dispatch_next_profile_segment(self) -> None:
-        if self._force_profile_index >= len(self._force_profile_segments):
-            return
-        target_mm, speed_mm_s = self._force_profile_segments[self._force_profile_index]
-        speed_mm_s = abs(speed_mm_s)
-        self._force_profile_index += 1
-        if np.isfinite(self._speed_max_mm_s):
-            speed_mm_s = min(speed_mm_s, float(self._speed_max_mm_s))
-        self.handle_linear_move(
-            target_mm=target_mm, speed_mm_s=speed_mm_s,
-            wait_until_done=False,
-            callback=self._dispatch_next_profile_segment,
-        )
+            if phase == "ramp":
+                remaining = abs(self._velocity_ramp_stop_mm - current_mm)
+                v_abs = abs(initial_v)
+                actual_speed = abs(self._speed_mm_s)
+                lookahead = actual_speed * self.fetch_interval + (v_abs ** 2) / (2 * self._ramp_decel_mm_s2) + POSITION_TOLERANCE
+                if remaining < lookahead:
+                    self._axis.move_absolute(
+                        self._velocity_ramp_stop_mm,
+                        POSITION_UNIT,
+                        wait_until_idle=False,
+                        velocity=max(v_abs, 0.001),
+                        velocity_unit=VELOCITY_UNIT,
+                    )
+                    self._velocity_ramp_active = False
+                    self._speed_mm_s = v_abs
+                    if self._velocity_ramp_wait:
+                        self._script_move_pending = True
+                    return
+
+            self._axis.move_velocity(initial_v, VELOCITY_UNIT)
+            self._speed_mm_s = initial_v
 
 
 class DeviceInfoDialog(QDialog):
