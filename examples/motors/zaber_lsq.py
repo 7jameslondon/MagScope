@@ -917,6 +917,7 @@ class ZaberLsqMotor(HardwareManagerBase):
         self._velocity_ramp_phase = phase
         self._velocity_ramp_start_mm = float(np.clip(start_mm, 0.0, self._limit_max_mm))
         self._velocity_ramp_stop_mm = float(np.clip(stop_mm, 0.0, self._limit_max_mm))
+        self._target_mm = self._velocity_ramp_stop_mm
         self._velocity_ramp_rate_pn_s = rate_pn_s
         self._velocity_ramp_direction = direction
         self._velocity_ramp_wait = wait_until_done
