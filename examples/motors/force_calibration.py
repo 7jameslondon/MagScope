@@ -296,7 +296,7 @@ class ForcePlot(magscope.TimeSeriesPlotBase):
 
     def setup(self):
         super().setup()
-        self.force_line, self.target_line = self.axes.plot([], [], "r", [], [], "g")
+        self.force_line, self.target_line = self.axes.plot([], [], "c", [], [], "y")
 
     def update(self):
         if not _force_calibrant_model.is_loaded():
