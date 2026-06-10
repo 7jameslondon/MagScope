@@ -319,22 +319,77 @@ class ForcePlot(magscope.TimeSeriesPlotBase):
         t = t[sort_idx]
         force = force[sort_idx]
         target_force = target_force[sort_idx]
-        xmin, xmax = self.parent.limits.get("Time", (None, None))
         ymin, ymax = self.parent.limits.get(self.ylabel, (None, None))
-        selection = ((xmin or -np.inf) <= t) & (t <= (xmax or np.inf))
-        t = t[selection]
-        force = force[selection]
-        target_force = target_force[selection]
-        if t.size == 0:
-            return
-        timepoints = [datetime.fromtimestamp(t_) for t_ in t]
-        self.force_line.set_xdata(timepoints)
+        ymin_limit = ymin if ymin is not None else -np.inf
+        ymax_limit = ymax if ymax is not None else np.inf
+
+        if self.parent.time_mode == "relative":
+            window = self.parent.relative_window_seconds
+            t_max = np.max(t)
+            xmin_value = t_max - window if window else np.min(t)
+            selection = t >= xmin_value
+            t = t[selection]
+            force = force[selection]
+            target_force = target_force[selection]
+
+            selection = (ymin_limit <= force) & (force <= ymax_limit)
+            selection &= (ymin_limit <= target_force) & (target_force <= ymax_limit)
+            t = t[selection]
+            force = force[selection]
+            target_force = target_force[selection]
+
+            if t.size == 0:
+                self.force_line.set_xdata([])
+                self.force_line.set_ydata([])
+                self.target_line.set_xdata([])
+                self.target_line.set_ydata([])
+                self.axes.relim()
+                self.axes.autoscale_view()
+                return
+
+            t_relative = t - xmin_value
+            xdata = t_relative
+            xmin = 0
+            xmax = window if window else None
+        else:
+            xmin, xmax = self.parent.limits.get("Time", (None, None))
+            xmin_limit = xmin if xmin is not None else -np.inf
+            xmax_limit = xmax if xmax is not None else np.inf
+            selection = ((xmin_limit <= t) & (t <= xmax_limit))
+            selection &= (ymin_limit <= force) & (force <= ymax_limit)
+            selection &= (ymin_limit <= target_force) & (target_force <= ymax_limit)
+            t = t[selection]
+            force = force[selection]
+            target_force = target_force[selection]
+
+            if t.size == 0:
+                self.force_line.set_xdata([])
+                self.force_line.set_ydata([])
+                self.target_line.set_xdata([])
+                self.target_line.set_ydata([])
+                self.axes.relim()
+                self.axes.autoscale_view()
+                return
+
+            xdata = [datetime.fromtimestamp(t_) for t_ in t]
+            xmin, xmax = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
+
+        self.force_line.set_xdata(xdata)
         self.force_line.set_ydata(force)
-        self.target_line.set_xdata(timepoints)
+        self.target_line.set_xdata(xdata)
         self.target_line.set_ydata(target_force)
-        xmin_dt, xmax_dt = [datetime.fromtimestamp(t_) if t_ else None for t_ in (xmin, xmax)]
+
+        if xmin is not None and xmin == xmax:
+            xmax = xmin + 1
+        if ymin is not None and ymin == ymax:
+            ymax = ymin + 1
+        if xmin is None or xmax is None:
+            self.axes.xaxis.set_inverted(False)
+        if ymin is None or ymax is None:
+            self.axes.yaxis.set_inverted(False)
+
         self.axes.autoscale()
         self.axes.autoscale_view()
-        self.axes.set_xlim(xmin=xmin_dt, xmax=xmax_dt)
+        self.axes.set_xlim(xmin=xmin, xmax=xmax)
         self.axes.set_ylim(ymin=ymin, ymax=ymax)
         self.axes.relim()
