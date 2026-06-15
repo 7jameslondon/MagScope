@@ -1665,31 +1665,13 @@ def capture_assets(
                 )
             )
 
-        _set_panel_expanded(manager, "AcquisitionPanel", True)
-        _set_panel_expanded(manager, "CameraPanel", True)
+        for panel_id in ("AcquisitionPanel", "CameraPanel"):
+            _set_panel_expanded(manager, panel_id, True)
         _process_events(app)
-        if manager.controls is not None:
-            results.append(
-                _save_widget(
-                    manager.controls,
-                    screenshot_root / "controls" / "run-controls.png",
-                    dry_run,
-                    visible_capture=visible_capture,
-                )
-            )
 
-        _set_panel_expanded(manager, "PlotSettingsPanel", True)
-        _set_panel_expanded(manager, "HistogramPanel", True)
+        for panel_id in ("PlotSettingsPanel", "HistogramPanel"):
+            _set_panel_expanded(manager, panel_id, True)
         _process_events(app)
-        if manager.controls is not None:
-            results.append(
-                _save_widget(
-                    manager.controls,
-                    screenshot_root / "controls" / "analysis-controls.png",
-                    dry_run,
-                    visible_capture=visible_capture,
-                )
-            )
 
         tab_scenarios = [
             ("StatusPanel", screenshot_root / "controls" / "run-tab.png"),

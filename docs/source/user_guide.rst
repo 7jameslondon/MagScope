@@ -456,7 +456,8 @@ Live Plots and Analysis
 
 The ``Live Plots`` viewer displays bead tracking values and optional hardware
 data. At startup, or before track data has reached the plot buffer, it may show
-settled axes with no red traces. That is normal.
+settled axes with no red traces. That is normal. It can take tens of seconds
+for the first processed stack to reach the plots and for the axes to settle.
 
 .. image:: ../../assets/doc_capture/screenshots/live-view/live-plots.png
    :alt: Live plots dock in a no-data startup state.
@@ -1164,9 +1165,10 @@ box is off center, drag it or remove it and add it again.
 Live plots stay blank
 ^^^^^^^^^^^^^^^^^^^^^
 
-Wait briefly for processing to populate the plot buffer. Then check that
-``Acquire`` is enabled, at least one ROI exists, and the selected bead ID exists.
-If a reference bead is set, confirm that reference bead ID also exists.
+Wait up to about 30 seconds for processing to populate the plot buffer. Then
+check that ``Acquire`` is enabled, at least one ROI exists, and the selected
+bead ID exists. If a reference bead is set, confirm that reference bead ID also
+exists.
 
 Saving is enabled but files are not appearing
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
