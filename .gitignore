@@ -13,3 +13,4 @@ __pycache__
 *.ipynb*
 .codex-tmp/
 .venv/
+assets/doc_capture/gif_frames/
