@@ -117,7 +117,7 @@ top-level `assets/` convention.
 | Search box with ROI results dropdown | `screenshots/navigation/search-box-roi.png` | Control Panels and Navigation |
 | Preferences dialog | `screenshots/preferences/preferences-dialog.png` | Preferences and Settings |
 | Bead selection workflow | `screenshots/workflows/bead-selection-workflow.png` | Live Camera and Bead ROIs |
-| Bead selection cursor frames | `gif_frames/workflows/bead-selection-workflow/frame-01.png` through `frame-41.png` | Live Camera and Bead ROIs |
+| Bead selection cursor frames | `gif_frames/workflows/bead-selection-workflow/frame-01.png` through `frame-41.png` | Local intermediate artifacts, not committed |
 | Bead selection workflow GIF | `gifs/workflows/bead-selection-workflow.gif` | Live Camera and Bead ROIs |
 | Auto Bead Selection dialog | `screenshots/workflows/auto-bead-selection-dialog.png` | Live Camera and Bead ROIs |
 | Accepted auto-selected beads | `screenshots/workflows/auto-bead-selection-accepted.png` | Live Camera and Bead ROIs |
@@ -130,7 +130,8 @@ top-level `assets/` convention.
 
 The bead-selection cursor frames are produced from real Qt click, drag, and right-click events in
 the documentation `VideoViewer`, then annotated with a synthetic cursor so the GIF shows where the
-user action happened.
+user action happened. The frame folder is ignored by Git because the committed GIF and capture
+script are enough for the guide and for regeneration.
 
 ## Later Capture Candidates
 

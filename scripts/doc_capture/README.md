@@ -83,7 +83,9 @@ Use `--resize`, `--max-width`, `--max-height`, and `--optimize` for doc-friendly
 ```
 
 The assembler reads the PNG frames and writes the GIF. It does not delete, move, or rewrite the
-source PNG frames, so the frame sequence remains available for review and regeneration.
+source PNG frames, so the frame sequence remains available locally for review and regeneration.
+The default `assets/doc_capture/gif_frames/` folder is ignored by Git; commit the final GIF, not
+the intermediate frame PNGs.
 
 ## Cursor-Overlay Workflow GIFs
 
@@ -118,7 +120,8 @@ Current outputs include:
 - search box screenshot with the completion results dropdown
 - Preferences dialog screenshot
 
-If Pillow is not installed, the PNG frame sequence is still written and can be converted later.
+If Pillow is not installed, the PNG frame sequence is still written locally and can be converted
+later.
 The capture harness uses the same GIF assembler internally when GIF output is enabled.
 
 See `asset_map.md` for the first beginner-guide outline and the mapping between guide sections
