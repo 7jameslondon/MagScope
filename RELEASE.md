@@ -6,9 +6,10 @@ PyPI publication is handled by GitHub Actions after a GitHub Release is publishe
 
 1. Prepare the version and changelog.
 2. Run validation locally.
-3. Optionally publish to TestPyPI and smoke test the package.
-4. Publish a GitHub Release tagged as `vX.Y.Z`.
-5. Verify the PyPI release and related project pages.
+3. Commit and push the release-prep changes.
+4. Publish to TestPyPI and smoke test the package.
+5. Publish a GitHub Release tagged as `vX.Y.Z`.
+6. Verify the PyPI release and related project pages.
 
 ## Checklist
 
@@ -62,7 +63,13 @@ python -m build
 
 - Confirm `dist/` contains both a wheel and source distribution.
 
-### 5. Optional: publish to TestPyPI first
+### 5. Commit release-prep changes
+
+- Commit the version, changelog, and any other release-prep changes.
+- Push the release-prep commit to the branch or ref that will be used for TestPyPI validation.
+- Do not create the final `vX.Y.Z` release tag until after TestPyPI validation passes.
+
+### 6. Publish to TestPyPI
 
 - Trigger `.github/workflows/publish-to-testpypi.yml` with GitHub Actions.
 - After it completes, verify that the package can be installed from TestPyPI in a clean environment.
@@ -72,16 +79,15 @@ python -m build
 python -c "import magscope; print(magscope.__file__)"
 ```
 
-### 6. Publish the real release
+### 7. Publish the real release
 
-- Commit the release-prep changes.
 - Create and push the release tag as `vX.Y.Z` if needed.
 - Create a GitHub Release for tag `vX.Y.Z`.
 - Use the finalized changelog entry as the GitHub Release notes.
 - Publish the GitHub Release.
 - Confirm `.github/workflows/publish-to-pypi.yml` starts and completes successfully.
 
-### 7. Post-release verification
+### 8. Post-release verification
 
 - Verify the new version appears on PyPI:
   - `https://pypi.org/project/magscope/`

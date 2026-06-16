@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-16
+
 ### Added
 - Dockable Live Camera and Live Plots panes with a Layout menu for showing, redocking, and resetting viewer panes.
 - Persistent single-window viewer layouts, including floating and maximized dock states.
@@ -18,14 +20,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Unified main window top bar with custom title label, window controls, compact mode, and reorganized menus.
 - Redesigned XY-Lock and Z-Lock panels with compact two-column card layout, activity indicators, and focus motor detection.
 - Desktop app icons for the taskbar and main window.
-- Damped Z-Lock corrections for smoother focus adjustments.
 - Motors tab hardware placeholder panel shown when no hardware managers are registered.
 - Unified preferences import and export for appearance and layout settings.
 - Live plot loading bar preference and ring indicator for loading state.
+- Expanded user guide screenshots and workflow GIFs for the redesigned UI.
 
 ### Changed
 - MagScope now uses one main window with dockable viewer panes instead of the previous multi-window viewer layout.
 - Bead selection, Z-LUT, layout reset, and settings controls were moved from the main control rail into toolbar, menu, and Preferences workflows.
+- Z-Lock corrections are now damped for smoother focus adjustments.
 - Acquisition labels, acquisition mode display names, histogram/profile panels, dock styling, and live zoom display were refined for clarity and consistency.
 - **Breaking**: AcquisitionMode enum values are renamed to match display labels (e.g. `"Video (Full)"` instead of `"video (full)"`).
   Old member names (`FULL_VIDEO`, `TRACK_AND_CROP_VIDEO`, `CROP_VIDEO`) remain as aliases so
@@ -102,7 +105,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dummy camera frame sequencing issues.
 - Duplicate starts of a `MagScope` instance are now blocked.
 
-[Unreleased]: https://github.com/7jameslondon/MagScope/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/7jameslondon/MagScope/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/7jameslondon/MagScope/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/7jameslondon/MagScope/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/7jameslondon/MagScope/compare/v0.1.4...v0.2.1
 [0.1.4]: https://github.com/7jameslondon/MagScope/releases/tag/v0.1.4
