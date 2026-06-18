@@ -4403,6 +4403,7 @@ class UIManager(ManagerProcessBase):
         running: bool = False,
         can_cancel: bool = False,
         phase: str = 'idle',
+        generated_zlut_saved: bool = False,
         z_axis_min_nm: float | None = None,
         z_axis_max_nm: float | None = None,
         z_axis_descending: bool = False,
@@ -4427,6 +4428,7 @@ class UIManager(ManagerProcessBase):
                 running=running,
                 can_cancel=can_cancel,
                 phase=phase,
+                generated_zlut_saved=generated_zlut_saved,
             )
 
     @register_ipc_command(UpdateZLUTGenerationEvaluationCommand)

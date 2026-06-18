@@ -383,11 +383,12 @@ class FakeZLutGenerationDialog:
         running=False,
         can_cancel=False,
         phase='idle',
+        generated_zlut_saved=False,
         z_axis_min_nm=None,
         z_axis_max_nm=None,
         z_axis_descending=False,
     ) -> None:
-        self.state_calls.append((status, detail, running, can_cancel))
+        self.state_calls.append((status, detail, running, can_cancel, generated_zlut_saved))
 
     def update_progress(
         self,
@@ -792,11 +793,57 @@ def test_zlut_generation_dialog_close_discards_during_evaluation(zlut_dialog_fac
 
     discard_calls = []
     dialog.set_close_callback(lambda: discard_calls.append('discard'))
-    dialog.update_state('Review', running=False, can_cancel=False, phase='evaluating')
+    dialog.update_state(
+        'Review',
+        running=False,
+        can_cancel=False,
+        phase='evaluating',
+        generated_zlut_saved=False,
+    )
 
-    dialog.close()
+    original_exec = QMessageBox.exec
+
+    def fake_exec(message_box):
+        assert message_box.text() == (
+            'A Z-LUT must be saved and then loaded before it can be used. '
+            'Closing this window will discard the Z-LUT without saving.'
+        )
+        return QMessageBox.StandardButton.Close
+
+    QMessageBox.exec = fake_exec
+
+    try:
+        dialog.close()
+    finally:
+        QMessageBox.exec = original_exec
 
     assert discard_calls == ['discard']
+
+
+def test_zlut_generation_dialog_close_cancel_keeps_unsaved_evaluation_open(zlut_dialog_factory):
+    dialog = zlut_dialog_factory()
+
+    discard_calls = []
+    dialog.set_close_callback(lambda: discard_calls.append('discard'))
+    dialog.show()
+    dialog.update_state(
+        'Review',
+        running=False,
+        can_cancel=False,
+        phase='evaluating',
+        generated_zlut_saved=False,
+    )
+
+    original_exec = QMessageBox.exec
+    QMessageBox.exec = lambda _message_box: QMessageBox.StandardButton.Cancel
+
+    try:
+        dialog.close()
+    finally:
+        QMessageBox.exec = original_exec
+
+    assert discard_calls == []
+    assert dialog.isVisible()
 
 
 def test_zlut_generation_dialog_force_close_skips_discard_callback(zlut_dialog_factory):
@@ -5756,13 +5803,14 @@ def test_update_zlut_generation_state_forwards_to_dialog(ui_manager):
         running=True,
         can_cancel=True,
         phase='capturing',
+        generated_zlut_saved=True,
         z_axis_min_nm=10.0,
         z_axis_max_nm=30.0,
         z_axis_descending=True,
     )
 
     assert ui_manager._zlut_generation_dialog.state_calls == [
-        ('Running', 'Collecting step 1', True, True)
+        ('Running', 'Collecting step 1', True, True, True)
     ]
 
 
