@@ -206,6 +206,40 @@ def test_add_task_returns_true_for_normal_processing_task(manager):
     assert 'zlut_capture' not in manager._tasks.items[0]
     assert manager._tasks.items[0]['tracking_recording_id'] == manager._tracking_recording_id
     assert manager._tasks.items[0]['save_tracking_roi_positions'] is False
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 3_600_000_000_000
+
+
+def test_add_task_uses_tracking_file_rotation_settings(manager):
+    from magscope.settings import (
+        MagScopeSettings,
+        TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+    )
+
+    manager.settings = MagScopeSettings(
+        {
+            'magnification': 60,
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: False,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+        }
+    )
+
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] is None
+
+    manager._tasks.items.clear()
+    manager.settings = MagScopeSettings(
+        {
+            'magnification': 60,
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+        }
+    )
+
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 1_800_000_000_000
 
 
 def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
@@ -267,6 +301,62 @@ def test_set_settings_rotates_tracking_recording_when_roi_save_setting_changes(m
     manager.set_settings(MagScopeSettings({SAVE_TRACKING_ROI_POSITIONS_SETTING: True}))
     manager.set_settings(MagScopeSettings({SAVE_TRACKING_ROI_POSITIONS_SETTING: True}))
 
+    assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_set_settings_rotates_tracking_recording_when_file_rotation_setting_changes(manager):
+    from magscope.settings import (
+        MagScopeSettings,
+        TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+    )
+
+    manager._acquisition_dir_on = True
+    manager.settings = MagScopeSettings(
+        {
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 60,
+        }
+    )
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: False,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+
+    assert manager._tracking_recording_id == initial_recording_id + 2
+
+
+def test_manual_tracking_file_rotation_only_rotates_when_saving(manager):
+    initial_recording_id = manager._tracking_recording_id
+
+    manager._acquisition_dir_on = False
+    manager.start_new_tracking_data_file()
+    assert manager._tracking_recording_id == initial_recording_id
+
+    manager._acquisition_dir_on = True
+    manager.start_new_tracking_data_file()
     assert manager._tracking_recording_id == initial_recording_id + 1
 
 
@@ -498,6 +588,7 @@ def test_worker_enqueues_tracking_data_batch_when_saving_enabled(monkeypatch, tm
             'bead_rois': np.asarray([[0, 2, 0, 2], [1, 3, 1, 3]], dtype=np.uint32),
             'save_profiles': False,
             'save_tracking_roi_positions': True,
+            'tracking_file_max_duration_ns': 123_000_000,
             'tracking_recording_id': 42,
             'zlut': None,
             'nm_per_px': 2.0,
@@ -514,6 +605,7 @@ def test_worker_enqueues_tracking_data_batch_when_saving_enabled(monkeypatch, tm
     batch = tracking_queue.items[0]
     assert batch.recording_id == 42
     assert batch.include_roi_positions is True
+    assert batch.max_file_duration_ns == 123_000_000
     np.testing.assert_array_equal(batch.frame_offsets, np.asarray([0, 2, 4], dtype=np.uint64))
     np.testing.assert_array_equal(batch.bead_ids, np.asarray([3, 4, 3, 4], dtype=np.uint16))
     np.testing.assert_array_equal(

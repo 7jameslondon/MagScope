@@ -35,6 +35,11 @@ class UpdateTrackingOptionsCommand(Command):
 
 
 @dataclass(frozen=True)
+class StartNewTrackingDataFileCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
 class SetAcquisitionOnCommand(Command):
     value: bool
 

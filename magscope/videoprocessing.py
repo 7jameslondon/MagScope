@@ -29,12 +29,18 @@ from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, ClearPendingZLUTP
                                    ReportProfileLengthCommand, ReportZLUTProfileLengthCommand,
                                    RequestProfileLengthCommand, RequestZLUTProfileLengthCommand,
                                    SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
-                                   SetSettingsCommand, ShowMessageCommand, UnloadZLUTCommand,
+                                   SetSettingsCommand, ShowMessageCommand,
+                                   StartNewTrackingDataFileCommand, UnloadZLUTCommand,
                                    UpdateTrackingOptionsCommand, UpdateWaitingCommand,
                                    UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand,
                                    ZLUTSweepCaptureCompleteCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.settings import MagScopeSettings, SAVE_TRACKING_ROI_POSITIONS_SETTING
+from magscope.settings import (
+    MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+)
 from magscope.tracking_data import TrackingDataWriter, build_tracking_data_batch
 from magscope.utils import (AcquisitionMode, crop_stack_to_rois, date_timestamp_str,
                              register_script_command)
@@ -53,6 +59,8 @@ logger = get_logger("videoprocessing")
 
 _LOOKUP_Z_PROFILE_WARNING = 'lookup_z_profile_size_warning'
 _DEFAULT_TRACKING_OPTIONS = {'center_of_mass': {'background': 'median'}}
+_NANOSECONDS_PER_MINUTE = 60_000_000_000
+
 
 class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
@@ -93,11 +101,15 @@ class VideoProcessorManager(ManagerProcessBase):
     )
     def set_settings(self, settings: MagScopeSettings):
         previous_save_roi_positions = self._save_tracking_roi_positions()
+        previous_rotation_duration = self._tracking_file_max_duration_ns()
         super().set_settings(settings)
         self._lookup_z_warning_reported = False
         if (
             self._acquisition_dir_on
-            and previous_save_roi_positions != self._save_tracking_roi_positions()
+            and (
+                previous_save_roi_positions != self._save_tracking_roi_positions()
+                or previous_rotation_duration != self._tracking_file_max_duration_ns()
+            )
         ):
             self._start_new_tracking_recording()
 
@@ -122,6 +134,11 @@ class VideoProcessorManager(ManagerProcessBase):
     @register_ipc_command(UpdateTrackingOptionsCommand)
     def update_tracking_options(self, value: dict):
         self._tracking_options = copy.deepcopy(value) if value else copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
+
+    @register_ipc_command(StartNewTrackingDataFileCommand)
+    def start_new_tracking_data_file(self):
+        if self._acquisition_dir_on:
+            self._start_new_tracking_recording()
 
     def setup(self):
         self._n_workers = self.settings['video processors n']
@@ -167,6 +184,23 @@ class VideoProcessorManager(ManagerProcessBase):
             return bool(self.settings[SAVE_TRACKING_ROI_POSITIONS_SETTING])
         except KeyError:
             return False
+
+    def _tracking_file_max_duration_ns(self) -> int | None:
+        enabled = self._settings_value(TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING)
+        if not enabled:
+            return None
+        interval_minutes = self._settings_value(
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING
+        )
+        return int(interval_minutes) * _NANOSECONDS_PER_MINUTE
+
+    def _settings_value(self, key: str):
+        if self.settings is not None:
+            try:
+                return self.settings[key]
+            except KeyError:
+                pass
+        return MagScopeSettings.spec_for(key).default_value()
 
     def _start_new_tracking_recording(self) -> None:
         self._tracking_recording_id += 1
@@ -454,6 +488,7 @@ class VideoProcessorManager(ManagerProcessBase):
             'report_zlut_profile_length': self._pending_zlut_profile_length_request,
             'save_profiles': self._save_profiles,
             'save_tracking_roi_positions': self._save_tracking_roi_positions(),
+            'tracking_file_max_duration_ns': self._tracking_file_max_duration_ns(),
             'tracking_options': copy.deepcopy(self._tracking_options),
             'tracking_recording_id': self._tracking_recording_id,
             'zlut': self._zlut
@@ -648,6 +683,7 @@ class VideoWorker(Process):
         bead_rois: np.ndarray = kwargs['bead_rois']
         save_profiles = kwargs['save_profiles']
         save_tracking_roi_positions = kwargs.get('save_tracking_roi_positions', False)
+        tracking_file_max_duration_ns = kwargs.get('tracking_file_max_duration_ns')
         tracking_recording_id = kwargs.get('tracking_recording_id', 0)
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
@@ -810,6 +846,7 @@ class VideoWorker(Process):
                             tracks=tracks,
                             n_rois=n_rois,
                             include_roi_positions=save_tracking_roi_positions,
+                            max_file_duration_ns=tracking_file_max_duration_ns,
                         )
                         self._tracking_data_queue.put_nowait(batch)
                     except Full:

@@ -16,6 +16,8 @@ from magscope.settings import (
     MagScopeSettings,
     PREFERENCES_BUNDLE_VERSION,
     SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
     TRACKING_OPTIONS_QSETTINGS_GROUP,
     TRACKING_OPTIONS_QSETTINGS_KEY,
     SettingSpec,
@@ -115,6 +117,8 @@ def test_settings_yaml_import_export_round_trip():
     settings["video processors n"] = 4
     settings["video buffer n stacks"] = 6
     settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = True
+    settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] = False
+    settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] = 15
 
     path = Path("settings-round-trip-test.yaml")
     try:
@@ -123,6 +127,8 @@ def test_settings_yaml_import_export_round_trip():
         assert loaded["video processors n"] == 4
         assert loaded["video buffer n stacks"] == 6
         assert loaded[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
+        assert loaded[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is False
+        assert loaded[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 15
     finally:
         path.unlink(missing_ok=True)
 
@@ -181,6 +187,28 @@ def test_save_tracking_roi_positions_setting_defaults_to_false_and_is_in_prefere
     assert settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
 
 
+def test_tracking_data_file_rotation_settings_defaults_and_validation():
+    settings = MagScopeSettings()
+
+    assert settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is True
+    assert settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 60
+    assert TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING in list(
+        MagScopeSettings.magscope_panel_keys()
+    )
+    assert TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING in list(
+        MagScopeSettings.magscope_panel_keys()
+    )
+
+    settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] = 'false'
+    settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] = '15'
+
+    assert settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is False
+    assert settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 15
+
+    with pytest.raises(ValueError):
+        settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] = 0
+
+
 def test_roi_must_be_even():
     settings = MagScopeSettings()
 
@@ -212,6 +240,8 @@ def test_settings_persist_between_instances(fake_qsettings):
     settings["magnification"] = 4.2
     settings["video buffer n images"] = 7
     settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = True
+    settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] = False
+    settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] = 20
     settings.save_to_qsettings()
 
     reloaded = MagScopeSettings.from_qsettings()
@@ -219,6 +249,8 @@ def test_settings_persist_between_instances(fake_qsettings):
     assert reloaded["magnification"] == 4.2
     assert reloaded["video buffer n images"] == 7
     assert reloaded[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
+    assert reloaded[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is False
+    assert reloaded[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 20
 
 
 def test_save_failure_marks_persistence_unavailable_and_keeps_memory_values(fake_qsettings):

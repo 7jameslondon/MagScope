@@ -27,6 +27,7 @@ class TrackingDataBatch:
     recording_id: int
     acquisition_dir: str
     include_roi_positions: bool
+    max_file_duration_ns: int | None
     frame_timestamps_ns: np.ndarray
     frame_offsets: np.ndarray
     bead_ids: np.ndarray
@@ -59,6 +60,7 @@ def build_tracking_data_batch(
     tracks: np.ndarray,
     n_rois: int,
     include_roi_positions: bool,
+    max_file_duration_ns: int | None = None,
 ) -> TrackingDataBatch:
     track_rows = np.asarray(tracks)
     if track_rows.ndim != 2 or track_rows.shape[1] < 7:
@@ -85,10 +87,16 @@ def build_tracking_data_batch(
     if include_roi_positions:
         roi_positions_px = _to_uint16_array(track_rows[:, 5:7], "ROI positions")
 
+    if max_file_duration_ns is not None:
+        max_file_duration_ns = int(max_file_duration_ns)
+        if max_file_duration_ns <= 0:
+            raise ValueError("max_file_duration_ns must be positive")
+
     return TrackingDataBatch(
         recording_id=int(recording_id),
         acquisition_dir=str(acquisition_dir),
         include_roi_positions=bool(include_roi_positions),
+        max_file_duration_ns=max_file_duration_ns,
         frame_timestamps_ns=frame_timestamps_ns,
         frame_offsets=frame_offsets,
         bead_ids=bead_ids,
@@ -220,12 +228,16 @@ class TrackingDataWriter(Process):
     def run(self) -> None:
         current_recording_id: int | None = None
         current_file: TrackingHDF5File | None = None
+        current_file_first_timestamp_ns: int | None = None
         try:
             while True:
                 batch = self._queue.get()
                 if batch is None:
                     break
-                if current_recording_id != batch.recording_id:
+                if (
+                    current_recording_id != batch.recording_id
+                    or _batch_starts_new_file(batch, current_file_first_timestamp_ns)
+                ):
                     if current_file is not None:
                         current_file.close()
                     path = tracking_data_path(
@@ -237,6 +249,7 @@ class TrackingDataWriter(Process):
                         include_roi_positions=batch.include_roi_positions,
                     )
                     current_recording_id = int(batch.recording_id)
+                    current_file_first_timestamp_ns = int(batch.frame_timestamps_ns[0])
                 current_file.append(batch)
         except Exception as exc:
             logger.exception("Tracking data writer failed: %s", exc)
@@ -254,6 +267,16 @@ def _to_uint16_array(values: np.ndarray, field_name: str) -> np.ndarray:
     if not np.all(array == np.floor(array)):
         raise ValueError(f"{field_name} must contain integer values")
     return array.astype(np.uint16)
+
+
+def _batch_starts_new_file(
+    batch: TrackingDataBatch,
+    current_file_first_timestamp_ns: int | None,
+) -> bool:
+    if current_file_first_timestamp_ns is None or batch.max_file_duration_ns is None:
+        return False
+    deadline_ns = current_file_first_timestamp_ns + int(batch.max_file_duration_ns)
+    return int(batch.frame_timestamps_ns[0]) >= deadline_ns
 
 
 def _format_timestamp_for_filename(timestamp_ns: int) -> str:

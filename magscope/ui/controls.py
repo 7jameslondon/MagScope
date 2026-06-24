@@ -81,6 +81,7 @@ from magscope.ipc_commands import (
     SetZLockOnCommand,
     SetZLockTargetCommand,
     SetZLockWindowCommand,
+    StartNewTrackingDataFileCommand,
     StartScriptCommand,
     UpdateScriptStepCommand,
     UpdateTrackingOptionsCommand,
@@ -93,6 +94,8 @@ from magscope.settings import (
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
     SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
     default_tracking_options,
     export_preferences_bundle,
     import_preferences_bundle,
@@ -413,6 +416,8 @@ class MagScopeSettingsPanel(QWidget):
             (
                 "tracks max datapoints",
                 SAVE_TRACKING_ROI_POSITIONS_SETTING,
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
                 "video buffer n images",
                 "video buffer n stacks",
                 "video processors n",
@@ -482,6 +487,19 @@ class MagScopeSettingsPanel(QWidget):
                         setting_key=key,
                     )
                 )
+        targets.extend(
+            _preference_widget_targets(
+                (
+                    (
+                        "start_new_tracking_file_button",
+                        "Start New Tracking File",
+                        ("tracking file rotation", "rotate tracking file"),
+                    ),
+                ),
+                tab_name="MagScope",
+                context="Preferences > MagScope",
+            )
+        )
         return targets
 
     def _show_error(self, message: str) -> None:
@@ -539,6 +557,9 @@ class MagScopeSettingsPanel(QWidget):
             return
         self._push_settings(updated)
 
+    def _start_new_tracking_file(self) -> None:
+        self.manager.send_ipc(StartNewTrackingDataFileCommand())
+
     def reset_defaults(self) -> None:
         defaults = MagScopeSettings()
         defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
@@ -569,7 +590,7 @@ class MagScopeSettingsPanel(QWidget):
 
             label = QLabel(spec.label)
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            label.setFixedWidth(155)
+            label.setFixedWidth(235)
             grid.addWidget(label, row, 0)
 
             if spec.value_type is bool:
@@ -605,6 +626,24 @@ class MagScopeSettingsPanel(QWidget):
             saved_label.setVisible(False)
             grid.addWidget(saved_label, row, 2)
             self._setting_value_labels[key] = saved_label
+
+        if title == "Data Buffers":
+            row = len(keys)
+            label = QLabel("Tracking data file")
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setFixedWidth(235)
+            grid.addWidget(label, row, 0)
+
+            self.start_new_tracking_file_button = QPushButton("Start New Tracking File")
+            self.start_new_tracking_file_button.clicked.connect(  # type: ignore[arg-type]
+                self._start_new_tracking_file
+            )
+            grid.addWidget(self.start_new_tracking_file_button, row, 1)
+
+            saved_label = QLabel("")
+            saved_label.setObjectName("preferencesSavedLabel")
+            saved_label.setVisible(False)
+            grid.addWidget(saved_label, row, 2)
 
         grid.setColumnStretch(0, 0)
         grid.setColumnStretch(1, 0)

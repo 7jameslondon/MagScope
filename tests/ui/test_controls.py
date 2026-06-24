@@ -15,8 +15,13 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QWidget
 
-from magscope.ipc_commands import UpdateSettingsCommand
-from magscope.settings import MagScopeSettings, SAVE_TRACKING_ROI_POSITIONS_SETTING
+from magscope.ipc_commands import StartNewTrackingDataFileCommand, UpdateSettingsCommand
+from magscope.settings import (
+    MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+)
 from magscope.scripting import ScriptStatus
 from magscope.ui.controls import (
     AcquisitionPanel,
@@ -504,3 +509,29 @@ def test_magscope_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
 
     assert isinstance(commands[-1], UpdateSettingsCommand)
     assert commands[-1].settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
+
+
+def test_magscope_settings_panel_tracks_tracking_file_rotation_controls(qtbot):
+    commands = []
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=commands.append,
+    )
+    panel = MagScopeSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    checkbox = panel._setting_checkboxes[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING]
+    duration_input = panel._setting_inputs[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING]
+    assert panel.start_new_tracking_file_button.text() == "Start New Tracking File"
+
+    checkbox.setChecked(False)
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is False
+
+    duration_input.setText("15")
+    duration_input.editingFinished.emit()
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 15
+
+    qtbot.mouseClick(panel.start_new_tracking_file_button, Qt.MouseButton.LeftButton)
+    assert isinstance(commands[-1], StartNewTrackingDataFileCommand)
