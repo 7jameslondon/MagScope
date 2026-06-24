@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -125,7 +126,8 @@ def test_status_panel_update_video_buffer_purge(qtbot):
     panel = StatusPanel(manager=SimpleNamespace())
     qtbot.addWidget(panel)
     panel.update_video_buffer_purge(5000.0)
-    assert "Video Buffer Purged at:" in panel.video_buffer_purge_label.text()
+    expected = time.strftime("%Y/%m/%d %I:%M:%S %p", time.localtime(5000.0))
+    assert panel.video_buffer_purge_label.text() == f"Video Buffer Purged at: {expected}"
 
 
 # ---------------------------------------------------------------------------

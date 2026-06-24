@@ -3098,7 +3098,7 @@ class StatusPanel(ControlPanelBase):
         self.video_buffer_size_status.setText(f'Video Buffer Size: {size_mb:.1f} MB')
 
     def update_video_buffer_purge(self, timestamp: float):
-        timestamp_text = time.strftime("%I:%M:%S %p", time.localtime(timestamp))
+        timestamp_text = time.strftime("%Y/%m/%d %I:%M:%S %p", time.localtime(timestamp))
         self.video_buffer_purge_label.setText(f'Video Buffer Purged at: {timestamp_text}')
 
 
