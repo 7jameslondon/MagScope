@@ -14,6 +14,7 @@ DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
 GUI_ACCENT_COLOR_SETTING = 'gui accent color'
 GUI_LIVE_PLOT_PROGRESS_BAR_SETTING = 'gui live plot progress bar'
 PREFERENCES_BUNDLE_VERSION = 1
+SAVE_TRACKING_ROI_POSITIONS_SETTING = 'save tracking ROI positions'
 TRACKING_OPTIONS_QSETTINGS_GROUP = 'TrackingOptions'
 TRACKING_OPTIONS_QSETTINGS_KEY = 'options_yaml'
 _HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
@@ -403,6 +404,12 @@ class MagScopeSettings(MutableMapping[str, Any]):
             default=1_000_000,
             display_name="Tracks max datapoints",
             minimum=1,
+        ),
+        SAVE_TRACKING_ROI_POSITIONS_SETTING: SettingSpec(
+            SAVE_TRACKING_ROI_POSITIONS_SETTING,
+            value_type=bool,
+            default=False,
+            display_name="Save tracking ROI positions",
         ),
         "video buffer n images": SettingSpec(
             "video buffer n images",

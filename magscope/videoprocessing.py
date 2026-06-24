@@ -28,12 +28,14 @@ from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, ClearPendingZLUTP
                                    DisarmZLUTSweepCaptureCommand, LoadZLUTCommand,
                                    ReportProfileLengthCommand, ReportZLUTProfileLengthCommand,
                                    RequestProfileLengthCommand, RequestZLUTProfileLengthCommand,
+                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
                                    SetSettingsCommand, ShowMessageCommand, UnloadZLUTCommand,
                                    UpdateTrackingOptionsCommand, UpdateWaitingCommand,
                                    UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand,
                                    ZLUTSweepCaptureCompleteCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.settings import MagScopeSettings
+from magscope.settings import MagScopeSettings, SAVE_TRACKING_ROI_POSITIONS_SETTING
+from magscope.tracking_data import TrackingDataWriter, build_tracking_data_batch
 from magscope.utils import (AcquisitionMode, crop_stack_to_rois, date_timestamp_str,
                              register_script_command)
 
@@ -73,6 +75,9 @@ class VideoProcessorManager(ManagerProcessBase):
         self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
         self._waiting_for_acquisition: bool | None = None
+        self._tracking_data_queue: QueueType | None = None
+        self._tracking_data_writer: TrackingDataWriter | None = None
+        self._tracking_recording_id = 0
 
         # TODO: Check implementation
         self._save_profiles = False
@@ -83,10 +88,36 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tracking_options: dict = copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
         self._load_default_zlut()
 
-    @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(
+        SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
     def set_settings(self, settings: MagScopeSettings):
+        previous_save_roi_positions = self._save_tracking_roi_positions()
         super().set_settings(settings)
         self._lookup_z_warning_reported = False
+        if (
+            self._acquisition_dir_on
+            and previous_save_roi_positions != self._save_tracking_roi_positions()
+        ):
+            self._start_new_tracking_recording()
+
+    @register_ipc_command(
+        SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
+    def set_acquisition_dir(self, value: str | None):
+        previous_dir = self._acquisition_dir
+        super().set_acquisition_dir(value)
+        if self._acquisition_dir_on and value != previous_dir:
+            self._start_new_tracking_recording()
+
+    @register_ipc_command(
+        SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
+    def set_acquisition_dir_on(self, value: bool):
+        previous_value = self._acquisition_dir_on
+        super().set_acquisition_dir_on(value)
+        if value and not previous_value:
+            self._start_new_tracking_recording()
 
     @register_ipc_command(UpdateTrackingOptionsCommand)
     def update_tracking_options(self, value: dict):
@@ -95,6 +126,8 @@ class VideoProcessorManager(ManagerProcessBase):
     def setup(self):
         self._n_workers = self.settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
+        self._tracking_data_queue = Queue()
+        self._tracking_data_writer = TrackingDataWriter(self._tracking_data_queue)
         self._profile_length_queue = Queue()
         self._warning_queue = Queue()
         self._zlut_capture_complete_queue = Queue()
@@ -115,14 +148,28 @@ class VideoProcessorManager(ManagerProcessBase):
                 zlut_profile_length_queue=self._zlut_profile_length_queue,
                 live_profile_enabled=self.shared_values.live_profile_enabled,
                 live_profile_bead=self.shared_values.live_profile_bead,
+                tracking_data_queue=self._tracking_data_queue,
             )
             self._workers.append(worker)
+
+        self._tracking_data_writer.start()
 
         # Start the workers
         for worker in self._workers:
             worker.start()
 
         self._broadcast_zlut_metadata()
+
+    def _save_tracking_roi_positions(self) -> bool:
+        if self.settings is None:
+            return False
+        try:
+            return bool(self.settings[SAVE_TRACKING_ROI_POSITIONS_SETTING])
+        except KeyError:
+            return False
+
+    def _start_new_tracking_recording(self) -> None:
+        self._tracking_recording_id += 1
 
     def do_main_loop(self):
         self._process_profile_length_reports()
@@ -172,6 +219,13 @@ class VideoProcessorManager(ManagerProcessBase):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.terminate()
+
+        if self._tracking_data_queue is not None:
+            self._tracking_data_queue.put(None)
+        if self._tracking_data_writer is not None and self._tracking_data_writer.is_alive():
+            self._tracking_data_writer.join()
+        if self._tracking_data_writer is not None and self._tracking_data_writer.is_alive():
+            self._tracking_data_writer.terminate()
 
     @register_ipc_command(LoadZLUTCommand)
     def load_zlut_file(self, filepath: str) -> None:
@@ -399,7 +453,9 @@ class VideoProcessorManager(ManagerProcessBase):
             'report_profile_length': self._pending_profile_length_request,
             'report_zlut_profile_length': self._pending_zlut_profile_length_request,
             'save_profiles': self._save_profiles,
+            'save_tracking_roi_positions': self._save_tracking_roi_positions(),
             'tracking_options': copy.deepcopy(self._tracking_options),
+            'tracking_recording_id': self._tracking_recording_id,
             'zlut': self._zlut
         }
         capture_step_index = self._zlut_capture_step_index
@@ -487,7 +543,8 @@ class VideoWorker(Process):
                  zlut_capture_complete_queue: QueueType | None,
                  zlut_profile_length_queue: QueueType | None,
                  live_profile_enabled: ValueTypeUI8,
-                 live_profile_bead: ValueTypeInt):
+                 live_profile_bead: ValueTypeInt,
+                 tracking_data_queue: QueueType | None = None):
         super().__init__()
         self._gpu_lock: Lock = gpu_lock
         self._tasks: QueueType = tasks
@@ -499,6 +556,7 @@ class VideoWorker(Process):
         self._warning_queue: QueueType | None = warning_queue
         self._zlut_capture_complete_queue: QueueType | None = zlut_capture_complete_queue
         self._zlut_profile_length_queue: QueueType | None = zlut_profile_length_queue
+        self._tracking_data_queue: QueueType | None = tracking_data_queue
         self._live_profile_enabled = live_profile_enabled
         self._live_profile_bead = live_profile_bead
         self._video_buffer: VideoBuffer | None = None
@@ -589,6 +647,8 @@ class VideoWorker(Process):
         bead_ids: np.ndarray = kwargs['bead_ids']
         bead_rois: np.ndarray = kwargs['bead_rois']
         save_profiles = kwargs['save_profiles']
+        save_tracking_roi_positions = kwargs.get('save_tracking_roi_positions', False)
+        tracking_recording_id = kwargs.get('tracking_recording_id', 0)
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
@@ -739,14 +799,25 @@ class VideoWorker(Process):
                     'unit': 'nm'
                 })
 
-        def save_tracks_profiles(first_timestamp, profiles, tracks):
+        def save_tracks_profiles(first_timestamp, timestamps, profiles, tracks, n_rois):
             if acquisition_dir_on and acquisition_dir:
-                filepath = os.path.join(acquisition_dir,
-                                        f'Bead Positions {first_timestamp}.txt')
-                np.savetxt(
-                    filepath,
-                    tracks,
-                    header='Time(sec) X(nm) Y(nm) Z(nm) Bead-ID ROI-X(px) ROI-Y(px)')
+                if self._tracking_data_queue is not None:
+                    try:
+                        batch = build_tracking_data_batch(
+                            recording_id=tracking_recording_id,
+                            acquisition_dir=acquisition_dir,
+                            timestamps=timestamps,
+                            tracks=tracks,
+                            n_rois=n_rois,
+                            include_roi_positions=save_tracking_roi_positions,
+                        )
+                        self._tracking_data_queue.put_nowait(batch)
+                    except Full:
+                        logger.warning(
+                            'Skipping tracking data save because the writer queue is full'
+                        )
+                    except ValueError as exc:
+                        logger.warning('Skipping tracking data save: %s', exc)
 
                 if save_profiles:
                     filepath = os.path.join(acquisition_dir,
@@ -822,7 +893,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
             else:  # No ROIs
                 self._release_stack()
@@ -854,7 +931,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
                 # Save video to disk
                 if acquisition_dir_on and acquisition_dir:
@@ -895,7 +978,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
             else:  # No ROIs
                 del stack

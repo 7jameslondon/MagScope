@@ -15,6 +15,7 @@ from magscope.settings import (
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
     PREFERENCES_BUNDLE_VERSION,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
     TRACKING_OPTIONS_QSETTINGS_GROUP,
     TRACKING_OPTIONS_QSETTINGS_KEY,
     SettingSpec,
@@ -113,6 +114,7 @@ def test_settings_yaml_import_export_round_trip():
     settings = MagScopeSettings()
     settings["video processors n"] = 4
     settings["video buffer n stacks"] = 6
+    settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = True
 
     path = Path("settings-round-trip-test.yaml")
     try:
@@ -120,6 +122,7 @@ def test_settings_yaml_import_export_round_trip():
         loaded = MagScopeSettings.import_yaml(path)
         assert loaded["video processors n"] == 4
         assert loaded["video buffer n stacks"] == 6
+        assert loaded[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
     finally:
         path.unlink(missing_ok=True)
 
@@ -168,6 +171,16 @@ def test_gui_live_plot_progress_indicator_setting_coerces_boolean_strings():
         settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = 'sometimes'
 
 
+def test_save_tracking_roi_positions_setting_defaults_to_false_and_is_in_preferences():
+    settings = MagScopeSettings()
+
+    assert settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is False
+    assert SAVE_TRACKING_ROI_POSITIONS_SETTING in list(MagScopeSettings.magscope_panel_keys())
+
+    settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = 'yes'
+    assert settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
+
+
 def test_roi_must_be_even():
     settings = MagScopeSettings()
 
@@ -198,12 +211,14 @@ def test_settings_persist_between_instances(fake_qsettings):
     settings = MagScopeSettings.from_qsettings()
     settings["magnification"] = 4.2
     settings["video buffer n images"] = 7
+    settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = True
     settings.save_to_qsettings()
 
     reloaded = MagScopeSettings.from_qsettings()
 
     assert reloaded["magnification"] == 4.2
     assert reloaded["video buffer n images"] == 7
+    assert reloaded[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
 
 
 def test_save_failure_marks_persistence_unavailable_and_keeps_memory_values(fake_qsettings):

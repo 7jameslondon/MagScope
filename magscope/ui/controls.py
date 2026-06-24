@@ -92,6 +92,7 @@ from magscope.settings import (
     GUI_ACCENT_COLOR_SETTING,
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
     default_tracking_options,
     export_preferences_bundle,
     import_preferences_bundle,
@@ -411,6 +412,7 @@ class MagScopeSettingsPanel(QWidget):
             "Data Buffers",
             (
                 "tracks max datapoints",
+                SAVE_TRACKING_ROI_POSITIONS_SETTING,
                 "video buffer n images",
                 "video buffer n stacks",
                 "video processors n",
@@ -437,6 +439,7 @@ class MagScopeSettingsPanel(QWidget):
         self.manager = manager
         self._current_settings = manager.settings.clone()
         self._setting_inputs: dict[str, QLineEdit] = {}
+        self._setting_checkboxes: dict[str, QCheckBox] = {}
         self._setting_value_labels: dict[str, QLabel] = {}
 
         self.setMaximumWidth(760)
@@ -507,6 +510,10 @@ class MagScopeSettingsPanel(QWidget):
             lineedit.setText(str(value))
             if key in self._setting_value_labels:
                 self._update_saved_label_for_input(key)
+        for key, checkbox in self._setting_checkboxes.items():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(bool(self._current_settings[key]))
+            checkbox.blockSignals(False)
 
     def _apply_setting_from_input(self, key: str) -> None:
         lineedit = self._setting_inputs.get(key)
@@ -522,6 +529,13 @@ class MagScopeSettingsPanel(QWidget):
             return
         if updated[key] == self._current_settings[key]:
             lineedit.setText(str(updated[key]))
+            return
+        self._push_settings(updated)
+
+    def _apply_bool_setting(self, key: str, checked: bool) -> None:
+        updated = self._current_settings.clone()
+        updated[key] = bool(checked)
+        if updated[key] == self._current_settings[key]:
             return
         self._push_settings(updated)
 
@@ -557,6 +571,22 @@ class MagScopeSettingsPanel(QWidget):
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             label.setFixedWidth(155)
             grid.addWidget(label, row, 0)
+
+            if spec.value_type is bool:
+                checkbox = QCheckBox()
+                checkbox.setChecked(bool(self._current_settings[key]))
+                checkbox.toggled.connect(  # type: ignore[arg-type]
+                    lambda checked, k=key: self._apply_bool_setting(k, checked)
+                )
+                grid.addWidget(checkbox, row, 1)
+                self._setting_checkboxes[key] = checkbox
+
+                saved_label = QLabel("")
+                saved_label.setObjectName("preferencesSavedLabel")
+                saved_label.setVisible(False)
+                grid.addWidget(saved_label, row, 2)
+                self._setting_value_labels[key] = saved_label
+                continue
 
             lineedit = QLineEdit(str(self._current_settings[key]))
             lineedit.setFixedWidth(120)
@@ -2701,6 +2731,8 @@ class PreferencesDialog(QDialog):
 
     def reveal_magscope_setting(self, setting_key: str) -> None:
         widget = self.settings_panel._setting_inputs.get(setting_key)
+        if widget is None:
+            widget = self.settings_panel._setting_checkboxes.get(setting_key)
         if widget is None:
             return
 

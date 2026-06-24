@@ -15,12 +15,15 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QWidget
 
+from magscope.ipc_commands import UpdateSettingsCommand
+from magscope.settings import MagScopeSettings, SAVE_TRACKING_ROI_POSITIONS_SETTING
 from magscope.scripting import ScriptStatus
 from magscope.ui.controls import (
     AcquisitionPanel,
     BeadSelectionPanel,
     CameraPanel,
     HelpPanel,
+    MagScopeSettingsPanel,
     ScriptPanel,
     StatusPanel,
     ZLUTPanel,
@@ -483,3 +486,21 @@ def test_acquisition_panel_set_acquisition_dir_text_path(qtbot):
     qtbot.addWidget(panel)
     panel.set_acquisition_dir_text("/some/path")
     assert "/some/path" in panel.acquisition_dir_textedit.text()
+
+
+def test_magscope_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
+    commands = []
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=commands.append,
+    )
+    panel = MagScopeSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    checkbox = panel._setting_checkboxes[SAVE_TRACKING_ROI_POSITIONS_SETTING]
+    assert SAVE_TRACKING_ROI_POSITIONS_SETTING not in panel._setting_inputs
+
+    checkbox.setChecked(True)
+
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
