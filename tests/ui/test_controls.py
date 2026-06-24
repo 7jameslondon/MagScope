@@ -29,6 +29,7 @@ from magscope.ui.controls import (
     CameraPanel,
     HelpPanel,
     MagScopeSettingsPanel,
+    SavingSettingsPanel,
     ScriptPanel,
     StatusPanel,
     ZLUTPanel,
@@ -493,13 +494,27 @@ def test_acquisition_panel_set_acquisition_dir_text_path(qtbot):
     assert "/some/path" in panel.acquisition_dir_textedit.text()
 
 
-def test_magscope_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
+def test_magscope_settings_panel_excludes_tracking_save_controls(qtbot):
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=lambda command: None,
+    )
+    panel = MagScopeSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    assert SAVE_TRACKING_ROI_POSITIONS_SETTING not in panel._setting_checkboxes
+    assert TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING not in panel._setting_checkboxes
+    assert TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING not in panel._setting_inputs
+    assert not hasattr(panel, "start_new_tracking_file_button")
+
+
+def test_saving_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
     commands = []
     manager = SimpleNamespace(
         settings=MagScopeSettings(),
         send_ipc=commands.append,
     )
-    panel = MagScopeSettingsPanel(manager=manager)
+    panel = SavingSettingsPanel(manager=manager)
     qtbot.addWidget(panel)
 
     checkbox = panel._setting_checkboxes[SAVE_TRACKING_ROI_POSITIONS_SETTING]
@@ -511,13 +526,13 @@ def test_magscope_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
     assert commands[-1].settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
 
 
-def test_magscope_settings_panel_tracks_tracking_file_rotation_controls(qtbot):
+def test_saving_settings_panel_tracks_tracking_file_rotation_controls(qtbot):
     commands = []
     manager = SimpleNamespace(
         settings=MagScopeSettings(),
         send_ipc=commands.append,
     )
-    panel = MagScopeSettingsPanel(manager=manager)
+    panel = SavingSettingsPanel(manager=manager)
     qtbot.addWidget(panel)
 
     checkbox = panel._setting_checkboxes[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING]

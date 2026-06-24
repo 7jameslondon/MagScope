@@ -91,6 +91,7 @@ from magscope.ui.controls import (
     PreferencesDialog,
     ProfilePanel,
     ScriptPanel,
+    SavingSettingsPanel,
     StatusPanel,
     MagScopeSettingsPanel,
     TrackingOptionsPanel,
@@ -2924,6 +2925,7 @@ class UIManager(ManagerProcessBase):
         registry = SearchRegistry()
         registry.register_many(self._menu_search_targets())
         registry.register_many(MagScopeSettingsPanel.search_targets())
+        registry.register_many(SavingSettingsPanel.search_targets())
         registry.register_many(TrackingOptionsPanel.search_targets())
         registry.register_many(self._generic_panel_search_targets())
         registry.register_many(self._core_control_search_targets())
@@ -3193,7 +3195,7 @@ class UIManager(ManagerProcessBase):
 
         reveal_setting = getattr(self._preferences_dialog, "reveal_setting", None)
         if callable(reveal_setting):
-            reveal_setting(target.setting_key)
+            reveal_setting(target.setting_key, target.tab_name)
         else:
             logger.warning("Preferences dialog cannot reveal setting %s", target.setting_key)
 

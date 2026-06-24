@@ -409,15 +409,14 @@ class MotorsPlaceholderPanel(ControlPanelBase):
 class MagScopeSettingsPanel(QWidget):
     """Allow importing, exporting, and editing MagScope configuration values."""
 
+    _SEARCH_CONTEXT = "Preferences > MagScope"
+    _MANUAL_TRACKING_FILE_GROUP_TITLE: str | None = None
     _SETTING_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("Imaging", ("ROI", "magnification")),
         (
             "Data Buffers",
             (
                 "tracks max datapoints",
-                SAVE_TRACKING_ROI_POSITIONS_SETTING,
-                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
-                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
                 "video buffer n images",
                 "video buffer n stacks",
                 "video processors n",
@@ -464,18 +463,27 @@ class MagScopeSettingsPanel(QWidget):
 
         layout.addStretch(1)
 
-    @staticmethod
-    def search_targets() -> list[SearchTarget]:
+    @classmethod
+    def _setting_keys(cls) -> tuple[str, ...]:
+        return tuple(
+            key
+            for _group_title, keys in cls._SETTING_GROUPS
+            for key in keys
+        )
+
+    @classmethod
+    def search_targets(cls) -> list[SearchTarget]:
         targets: list[SearchTarget] = []
-        for key in MagScopeSettings.magscope_panel_keys():
+        for key in cls._setting_keys():
             spec = MagScopeSettings.spec_for(key)
             if key == "ROI":
                 targets.append(
                     PreferencesSettingTarget(
                         label="ROI Size",
                         aliases=("ROI", "ROI size", "ROI (pixels)", "bead ROI", "region of interest"),
-                        context="Preferences > MagScope",
+                        context=cls._SEARCH_CONTEXT,
                         setting_key="ROI",
+                        tab_name=cls._SEARCH_CONTEXT.rsplit(" ", 1)[-1],
                     )
                 )
             else:
@@ -483,23 +491,25 @@ class MagScopeSettingsPanel(QWidget):
                     PreferencesSettingTarget(
                         label=spec.label,
                         aliases=(key,),
-                        context="Preferences > MagScope",
+                        context=cls._SEARCH_CONTEXT,
                         setting_key=key,
+                        tab_name=cls._SEARCH_CONTEXT.rsplit(" ", 1)[-1],
                     )
                 )
-        targets.extend(
-            _preference_widget_targets(
-                (
+        if cls._MANUAL_TRACKING_FILE_GROUP_TITLE is not None:
+            targets.extend(
+                _preference_widget_targets(
                     (
-                        "start_new_tracking_file_button",
-                        "Start New Tracking File",
-                        ("tracking file rotation", "rotate tracking file"),
+                        (
+                            "start_new_tracking_file_button",
+                            "Start New Tracking File",
+                            ("tracking file rotation", "rotate tracking file"),
+                        ),
                     ),
-                ),
-                tab_name="MagScope",
-                context="Preferences > MagScope",
+                    tab_name=cls._SEARCH_CONTEXT.rsplit(" ", 1)[-1],
+                    context=cls._SEARCH_CONTEXT,
+                )
             )
-        )
         return targets
 
     def _show_error(self, message: str) -> None:
@@ -538,22 +548,22 @@ class MagScopeSettingsPanel(QWidget):
         if lineedit is None:
             return
         text = lineedit.text().strip()
-        updated = self._current_settings.clone()
+        updated = self.manager.settings.clone()
         try:
             updated[key] = text
         except (KeyError, ValueError) as exc:
             self._show_error(str(exc))
-            lineedit.setText(str(self._current_settings[key]))
+            lineedit.setText(str(self.manager.settings[key]))
             return
-        if updated[key] == self._current_settings[key]:
+        if updated[key] == self.manager.settings[key]:
             lineedit.setText(str(updated[key]))
             return
         self._push_settings(updated)
 
     def _apply_bool_setting(self, key: str, checked: bool) -> None:
-        updated = self._current_settings.clone()
+        updated = self.manager.settings.clone()
         updated[key] = bool(checked)
-        if updated[key] == self._current_settings[key]:
+        if updated[key] == self.manager.settings[key]:
             return
         self._push_settings(updated)
 
@@ -562,11 +572,10 @@ class MagScopeSettingsPanel(QWidget):
 
     def reset_defaults(self) -> None:
         defaults = MagScopeSettings()
-        defaults[GUI_ACCENT_COLOR_SETTING] = self._current_settings[GUI_ACCENT_COLOR_SETTING]
-        defaults[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = self._current_settings[
-            GUI_LIVE_PLOT_PROGRESS_BAR_SETTING
-        ]
-        self._push_settings(defaults)
+        updated = self.manager.settings.clone()
+        for key in self._setting_keys():
+            updated[key] = defaults[key]
+        self._push_settings(updated)
 
     def _build_setting_group(self, title: str, keys: tuple[str, ...]) -> QWidget:
         group = QWidget(self)
@@ -627,7 +636,7 @@ class MagScopeSettingsPanel(QWidget):
             grid.addWidget(saved_label, row, 2)
             self._setting_value_labels[key] = saved_label
 
-        if title == "Data Buffers":
+        if title == self._MANUAL_TRACKING_FILE_GROUP_TITLE:
             row = len(keys)
             label = QLabel("Tracking data file")
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -662,6 +671,23 @@ class MagScopeSettingsPanel(QWidget):
         unsaved = lineedit.text().strip() != saved_value
         label.setText(saved_value if unsaved else "")
         label.setVisible(unsaved)
+
+
+class SavingSettingsPanel(MagScopeSettingsPanel):
+    """Preferences page for acquisition-save and tracking-data-save settings."""
+
+    _SEARCH_CONTEXT = "Preferences > Saving"
+    _MANUAL_TRACKING_FILE_GROUP_TITLE = "Tracking Data"
+    _SETTING_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "Tracking Data",
+            (
+                SAVE_TRACKING_ROI_POSITIONS_SETTING,
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+            ),
+        ),
+    )
 
 
 class AcquisitionPanel(ControlPanelBase):
@@ -2167,6 +2193,7 @@ class PreferencesDialog(QDialog):
 
     _SIDEBAR_SECTIONS: tuple[tuple[str, str], ...] = (
         ('tune', 'MagScope'),
+        ('save', 'Saving'),
         ('ads_click', 'Tracking'),
         ('palette', 'Appearance/Layout'),
     )
@@ -2228,6 +2255,9 @@ class PreferencesDialog(QDialog):
         )
         self.settings_scroll = self._scrollable_tab(self.settings_panel)
 
+        self.saving_settings_panel = SavingSettingsPanel(manager, collapsible=False)
+        self.saving_scroll = self._scrollable_tab(self.saving_settings_panel)
+
         self.tracking_options_panel = TrackingOptionsPanel(manager, collapsible=False)
         self.tracking_scroll = self._scrollable_tab(self.tracking_options_panel)
 
@@ -2236,6 +2266,7 @@ class PreferencesDialog(QDialog):
 
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.settings_scroll)
+        self.stack.addWidget(self.saving_scroll)
         self.stack.addWidget(self.tracking_scroll)
         self.stack.addWidget(self.appearance_scroll)
 
@@ -2462,6 +2493,7 @@ class PreferencesDialog(QDialog):
             if callable(import_layout):
                 import_layout(bundle['appearance_layout'])
             self.settings_panel._push_settings(bundle['magscope'])
+            self._refresh_settings_panels_from_manager()
             accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
             self._apply_preferences_style(accent_color)
             self._refresh_sidebar_icons(accent_color)
@@ -2510,7 +2542,7 @@ class PreferencesDialog(QDialog):
         confirmation = QMessageBox.question(
             self,
             'Reset Preferences',
-            'Reset all MagScope, tracking, appearance, and layout preferences to defaults?',
+            'Reset all MagScope, saving, tracking, appearance, and layout preferences to defaults?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2518,6 +2550,7 @@ class PreferencesDialog(QDialog):
             return
 
         self.settings_panel._push_settings(MagScopeSettings())
+        self._refresh_settings_panels_from_manager()
         self.tracking_options_panel.reset_defaults()
         self._reset_appearance_layout(reset_accent=False)
         accent_color = self.manager.settings[GUI_ACCENT_COLOR_SETTING]
@@ -2529,6 +2562,12 @@ class PreferencesDialog(QDialog):
             self.manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING]
         )
         self._set_preferences_file_status('All preferences reset to defaults')
+
+    def _refresh_settings_panels_from_manager(self) -> None:
+        settings = self.manager.settings.clone()
+        for panel in (self.settings_panel, self.saving_settings_panel):
+            panel._current_settings = settings.clone()
+            panel._refresh_fields()
 
     def _set_preferences_file_status(self, message: str) -> None:
         self.preferences_file_status.setText(message)
@@ -2664,7 +2703,6 @@ class PreferencesDialog(QDialog):
             return
 
         self.manager.settings = settings.clone()
-        self.settings_panel._current_settings = settings.clone()
         apply_accent_color = getattr(self.manager, '_apply_accent_color', None)
         if callable(apply_accent_color):
             apply_accent_color(accent_color)
@@ -2673,7 +2711,7 @@ class PreferencesDialog(QDialog):
         self._refresh_sidebar_icons(accent_color)
         self.accent_color_input.setText(accent_color)
         self._update_accent_color_swatch(accent_color)
-        self.settings_panel._refresh_fields()
+        self._refresh_settings_panels_from_manager()
         self.appearance_status_label.setText('Accent color updated')
 
     def _apply_live_plot_progress_indicator_setting(self, checked: bool) -> None:
@@ -2685,7 +2723,6 @@ class PreferencesDialog(QDialog):
             return
 
         self.manager.settings = settings.clone()
-        self.settings_panel._current_settings = settings.clone()
         apply_progress_indicator_enabled = getattr(
             self.manager,
             '_apply_live_plot_progress_indicator_enabled',
@@ -2694,7 +2731,7 @@ class PreferencesDialog(QDialog):
         if callable(apply_progress_indicator_enabled):
             apply_progress_indicator_enabled()
         self.manager.send_ipc(UpdateSettingsCommand(settings=settings.clone()))
-        self.settings_panel._refresh_fields()
+        self._refresh_settings_panels_from_manager()
         self.appearance_status_label.setText(
             'Live plot loading indicator shown' if checked else 'Live plot loading indicator hidden'
         )
@@ -2752,20 +2789,36 @@ class PreferencesDialog(QDialog):
         if index == 0:
             self.settings_panel.reset_defaults()
         elif index == 1:
-            self.tracking_options_panel.reset_defaults()
+            self.saving_settings_panel.reset_defaults()
         elif index == 2:
+            self.tracking_options_panel.reset_defaults()
+        elif index == 3:
             self._reset_appearance_layout(reset_accent=True)
 
     def _stack_index_for_scroll(self, scroll: QScrollArea) -> int:
         if scroll is self.settings_scroll:
             return 0
-        if scroll is self.tracking_scroll:
+        if scroll is self.saving_scroll:
             return 1
-        if scroll is self.appearance_scroll:
+        if scroll is self.tracking_scroll:
             return 2
+        if scroll is self.appearance_scroll:
+            return 3
         return -1
 
-    def reveal_setting(self, setting_key: str) -> None:
+    def reveal_setting(self, setting_key: str, tab_name: str | None = None) -> None:
+        if tab_name == 'Saving':
+            self.reveal_saving_setting(setting_key)
+            return
+        if tab_name == 'MagScope':
+            self.reveal_magscope_setting(setting_key)
+            return
+        if setting_key in self.saving_settings_panel._setting_inputs:
+            self.reveal_saving_setting(setting_key)
+            return
+        if setting_key in self.saving_settings_panel._setting_checkboxes:
+            self.reveal_saving_setting(setting_key)
+            return
         self.reveal_magscope_setting(setting_key)
 
     def reveal_magscope_setting(self, setting_key: str) -> None:
@@ -2777,6 +2830,15 @@ class PreferencesDialog(QDialog):
 
         self._reveal_widget(self.settings_scroll, widget)
 
+    def reveal_saving_setting(self, setting_key: str) -> None:
+        widget = self.saving_settings_panel._setting_inputs.get(setting_key)
+        if widget is None:
+            widget = self.saving_settings_panel._setting_checkboxes.get(setting_key)
+        if widget is None:
+            return
+
+        self._reveal_widget(self.saving_scroll, widget)
+
     def reveal_tracking_option(self, widget_attr: str) -> None:
         self.reveal_widget('Tracking', widget_attr)
 
@@ -2787,6 +2849,9 @@ class PreferencesDialog(QDialog):
         elif tab_name == 'MagScope':
             scroll = self.settings_scroll
             panel = self.settings_panel
+        elif tab_name == 'Saving':
+            scroll = self.saving_scroll
+            panel = self.saving_settings_panel
         else:
             return
 
