@@ -26,9 +26,11 @@ _RECORD_CHUNK = 65536
 @dataclass(frozen=True)
 class TrackingDataBatch:
     recording_id: int
+    recording_start_ns: int
     batch_sequence: int
     acquisition_dir: str
     include_roi_positions: bool
+    file_start_ns: int
     max_file_duration_ns: int | None
     frame_timestamps_ns: np.ndarray
     frame_offsets: np.ndarray
@@ -62,6 +64,7 @@ def build_tracking_data_batch(
     tracks: np.ndarray,
     n_rois: int,
     include_roi_positions: bool,
+    recording_start_ns: int | None = None,
     max_file_duration_ns: int | None = None,
     batch_sequence: int = 0,
 ) -> TrackingDataBatch:
@@ -97,12 +100,19 @@ def build_tracking_data_batch(
         max_file_duration_ns = int(max_file_duration_ns)
         if max_file_duration_ns <= 0:
             raise ValueError("max_file_duration_ns must be positive")
+    recording_start_ns, file_start_ns = _tracking_file_bucket_start_ns(
+        int(frame_timestamps_ns[0]),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_file_duration_ns,
+    )
 
     return TrackingDataBatch(
         recording_id=int(recording_id),
+        recording_start_ns=recording_start_ns,
         batch_sequence=batch_sequence,
         acquisition_dir=str(acquisition_dir),
         include_roi_positions=bool(include_roi_positions),
+        file_start_ns=file_start_ns,
         max_file_duration_ns=max_file_duration_ns,
         frame_timestamps_ns=frame_timestamps_ns,
         frame_offsets=frame_offsets,
@@ -128,7 +138,16 @@ def tracking_data_path(directory: str | Path, first_timestamp_ns: int) -> Path:
 
 
 class TrackingHDF5File:
-    def __init__(self, path: str | Path, *, include_roi_positions: bool):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        include_roi_positions: bool,
+        recording_id: int | None = None,
+        recording_start_ns: int | None = None,
+        file_start_ns: int | None = None,
+        rotation_interval_ns: int | None = None,
+    ):
         import h5py
 
         self.path = Path(path)
@@ -139,6 +158,14 @@ class TrackingHDF5File:
         group.attrs["include_roi_positions"] = np.uint8(self.include_roi_positions)
         group.attrs["record_order"] = "writer_append_order"
         group.attrs["batch_sequence_order"] = "video_task_enqueue_order"
+        if recording_id is not None:
+            group.attrs["recording_id"] = np.uint64(recording_id)
+        if recording_start_ns is not None:
+            group.attrs["recording_start_ns"] = np.uint64(recording_start_ns)
+        if file_start_ns is not None:
+            group.attrs["file_start_ns"] = np.uint64(file_start_ns)
+        if rotation_interval_ns is not None:
+            group.attrs["rotation_interval_ns"] = np.uint64(rotation_interval_ns)
         self._group = group
         self._batch_sequence = group.create_dataset(
             "batch_sequence",
@@ -303,46 +330,44 @@ class TrackingDataWriter(Process):
         self._queue = queue
 
     def run(self) -> None:
-        current_recording_id: int | None = None
-        current_file: TrackingHDF5File | None = None
-        current_file_first_timestamp_ns: int | None = None
+        open_files: dict[tuple[int, str, bool, int], TrackingHDF5File] = {}
         while True:
             batch = self._queue.get()
             if batch is None:
                 break
+            key: tuple[int, str, bool, int] | None = None
             try:
-                if (
-                    current_recording_id != batch.recording_id
-                    or _batch_starts_new_file(batch, current_file_first_timestamp_ns)
-                ):
-                    if current_file is not None:
-                        current_file.close()
-                    path = tracking_data_path(
-                        batch.acquisition_dir,
-                        int(batch.frame_timestamps_ns[0]),
-                    )
+                key = _file_key(batch)
+                current_file = open_files.get(key)
+                if current_file is None:
+                    path = tracking_data_path(batch.acquisition_dir, batch.file_start_ns)
                     current_file = TrackingHDF5File(
                         path,
                         include_roi_positions=batch.include_roi_positions,
+                        recording_id=batch.recording_id,
+                        recording_start_ns=batch.recording_start_ns,
+                        file_start_ns=batch.file_start_ns,
+                        rotation_interval_ns=(
+                            0
+                            if batch.max_file_duration_ns is None
+                            else batch.max_file_duration_ns
+                        ),
                     )
-                    current_recording_id = int(batch.recording_id)
-                    current_file_first_timestamp_ns = int(batch.frame_timestamps_ns[0])
+                    open_files[key] = current_file
                 current_file.append(batch)
             except Exception as exc:
                 logger.exception("Skipping tracking data batch after writer failure: %s", exc)
-                if current_file is not None:
+                failed_file = open_files.pop(key, None) if key is not None else None
+                if failed_file is not None:
                     try:
-                        current_file.close()
+                        failed_file.close()
                     except Exception as close_exc:
                         logger.exception(
                             "Failed to close tracking data file after writer failure: %s",
                             close_exc,
                         )
-                current_file = None
-                current_recording_id = None
-                current_file_first_timestamp_ns = None
-        if current_file is not None:
-            current_file.close()
+        for tracking_file in open_files.values():
+            tracking_file.close()
 
 
 def _to_uint16_array(values: np.ndarray, field_name: str) -> np.ndarray:
@@ -356,14 +381,36 @@ def _to_uint16_array(values: np.ndarray, field_name: str) -> np.ndarray:
     return array.astype(np.uint16)
 
 
-def _batch_starts_new_file(
-    batch: TrackingDataBatch,
-    current_file_first_timestamp_ns: int | None,
-) -> bool:
-    if current_file_first_timestamp_ns is None or batch.max_file_duration_ns is None:
-        return False
-    deadline_ns = current_file_first_timestamp_ns + int(batch.max_file_duration_ns)
-    return int(batch.frame_timestamps_ns[0]) >= deadline_ns
+def _tracking_file_bucket_start_ns(
+    first_frame_timestamp_ns: int,
+    *,
+    recording_start_ns: int | None,
+    max_file_duration_ns: int | None,
+) -> tuple[int, int]:
+    first_frame_timestamp_ns = int(first_frame_timestamp_ns)
+    if recording_start_ns is None:
+        recording_start_ns = first_frame_timestamp_ns
+    recording_start_ns = int(recording_start_ns)
+    if recording_start_ns < 0:
+        raise ValueError("recording_start_ns must be non-negative")
+    if max_file_duration_ns is None:
+        return recording_start_ns, recording_start_ns
+
+    elapsed_ns = max(0, first_frame_timestamp_ns - recording_start_ns)
+    bucket_index = elapsed_ns // int(max_file_duration_ns)
+    return (
+        recording_start_ns,
+        recording_start_ns + bucket_index * int(max_file_duration_ns),
+    )
+
+
+def _file_key(batch: TrackingDataBatch) -> tuple[int, str, bool, int]:
+    return (
+        int(batch.recording_id),
+        str(batch.acquisition_dir),
+        bool(batch.include_roi_positions),
+        int(batch.file_start_ns),
+    )
 
 
 def _format_timestamp_for_filename(timestamp_ns: int) -> str:

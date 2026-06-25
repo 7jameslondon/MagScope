@@ -6,6 +6,7 @@ from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
 from queue import Empty, Full
+from time import time_ns
 from typing import TYPE_CHECKING
 import warnings
 
@@ -86,6 +87,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tracking_data_queue: QueueType | None = None
         self._tracking_data_writer: TrackingDataWriter | None = None
         self._tracking_recording_id = 0
+        self._tracking_recording_start_ns = time_ns()
         self._tracking_task_sequence = 0
 
         # TODO: Check implementation
@@ -205,6 +207,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def _start_new_tracking_recording(self) -> None:
         self._tracking_recording_id += 1
+        self._tracking_recording_start_ns = time_ns()
 
     def do_main_loop(self):
         self._process_profile_length_reports()
@@ -492,6 +495,7 @@ class VideoProcessorManager(ManagerProcessBase):
             'tracking_file_max_duration_ns': self._tracking_file_max_duration_ns(),
             'tracking_options': copy.deepcopy(self._tracking_options),
             'tracking_recording_id': self._tracking_recording_id,
+            'tracking_recording_start_ns': self._tracking_recording_start_ns,
             'tracking_batch_sequence': self._tracking_task_sequence,
             'zlut': self._zlut
         }
@@ -688,6 +692,7 @@ class VideoWorker(Process):
         save_tracking_roi_positions = kwargs.get('save_tracking_roi_positions', False)
         tracking_file_max_duration_ns = kwargs.get('tracking_file_max_duration_ns')
         tracking_recording_id = kwargs.get('tracking_recording_id', 0)
+        tracking_recording_start_ns = kwargs.get('tracking_recording_start_ns')
         tracking_batch_sequence = kwargs.get('tracking_batch_sequence', 0)
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
@@ -850,6 +855,7 @@ class VideoWorker(Process):
                             tracks=tracks,
                             n_rois=n_rois,
                             include_roi_positions=save_tracking_roi_positions,
+                            recording_start_ns=tracking_recording_start_ns,
                             max_file_duration_ns=tracking_file_max_duration_ns,
                             batch_sequence=tracking_batch_sequence,
                         )

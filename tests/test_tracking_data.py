@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -30,21 +31,26 @@ def _single_bead_batch(
     tmp_path,
     timestamps: np.ndarray,
     *,
+    recording_id: int = 1,
+    recording_start_ns: int | None = None,
     include_roi_positions: bool = False,
     max_file_duration_ns: int | None = None,
+    batch_sequence: int = 0,
 ):
     rows = [
         [float(timestamp), 10.0 + index, np.nan, 30.0, 5.0, 100.0, 200.0]
         for index, timestamp in enumerate(timestamps)
     ]
     return build_tracking_data_batch(
-        recording_id=1,
+        recording_id=recording_id,
         acquisition_dir=str(tmp_path),
         timestamps=timestamps,
         tracks=_tracks(rows),
         n_rois=1,
         include_roi_positions=include_roi_positions,
+        recording_start_ns=recording_start_ns,
         max_file_duration_ns=max_file_duration_ns,
+        batch_sequence=batch_sequence,
     )
 
 
@@ -259,16 +265,19 @@ def test_hdf5_writer_preserves_batch_sequence_for_out_of_order_appends(tmp_path)
 
 def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_path):
     start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
     max_duration_ns = 60_000_000_000
     first_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start, start + 61.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         include_roi_positions=True,
         max_file_duration_ns=max_duration_ns,
     )
     second_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start + 62.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         include_roi_positions=True,
         max_file_duration_ns=max_duration_ns,
     )
@@ -307,19 +316,26 @@ def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_p
 
 def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
     start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
     first_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         include_roi_positions=False,
     )
-    bad_batch = _single_bead_batch(
-        tmp_path,
-        np.asarray([start + 1.0], dtype=np.float64),
-        include_roi_positions=True,
+    bad_batch = replace(
+        _single_bead_batch(
+            tmp_path,
+            np.asarray([start + 1.0], dtype=np.float64),
+            recording_start_ns=recording_start_ns,
+            include_roi_positions=False,
+        ),
+        positions_nm=np.zeros((2, 3), dtype=np.float64),
     )
     third_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start + 2.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         include_roi_positions=False,
     )
 
@@ -331,33 +347,135 @@ def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
     paths = sorted(tmp_path.glob("Tracking Data *.h5"))
     assert len(paths) == 2
 
-    with h5py.File(paths[0], "r") as file:
-        group = file["tracking"]
-        np.testing.assert_array_equal(
-            group["frame_timestamps_ns"][:],
-            timestamps_to_epoch_ns(np.asarray([start], dtype=np.float64)),
-        )
-        assert "roi_positions_px" not in group
+    saved_timestamps = []
+    for path in paths:
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            saved_timestamps.append(group["frame_timestamps_ns"][:].tolist())
+            assert "roi_positions_px" not in group
 
-    with h5py.File(paths[1], "r") as file:
-        group = file["tracking"]
-        np.testing.assert_array_equal(
-            group["frame_timestamps_ns"][:],
-            timestamps_to_epoch_ns(np.asarray([start + 2.0], dtype=np.float64)),
+    assert sorted(saved_timestamps) == sorted(
+        [
+            timestamps_to_epoch_ns(np.asarray([start], dtype=np.float64)).tolist(),
+            timestamps_to_epoch_ns(np.asarray([start + 2.0], dtype=np.float64)).tolist(),
+        ]
+    )
+
+
+def test_tracking_writer_routes_late_batches_to_original_recording_file(tmp_path):
+    start = 1_700_000_000.0
+    first_recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    second_recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start + 10.0]))[0])
+    second_recording_first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 10.0], dtype=np.float64),
+        recording_id=2,
+        recording_start_ns=second_recording_start_ns,
+        batch_sequence=2,
+    )
+    late_first_recording_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_id=1,
+        recording_start_ns=first_recording_start_ns,
+        batch_sequence=1,
+    )
+    second_recording_second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 11.0], dtype=np.float64),
+        recording_id=2,
+        recording_start_ns=second_recording_start_ns,
+        batch_sequence=3,
+    )
+
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(
+            second_recording_first_batch,
+            late_first_recording_batch,
+            second_recording_second_batch,
+            None,
         )
-        assert "roi_positions_px" not in group
+    )
+    writer.run()
+
+    files_by_recording = {}
+    for path in tmp_path.glob("Tracking Data *.h5"):
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            files_by_recording[int(group.attrs["recording_id"])] = (
+                group["batch_sequence"][:].tolist(),
+                int(group.attrs["recording_start_ns"]),
+                int(group.attrs["file_start_ns"]),
+            )
+
+    assert set(files_by_recording) == {1, 2}
+    assert files_by_recording[1] == ([1], first_recording_start_ns, first_recording_start_ns)
+    assert files_by_recording[2] == ([2, 3], second_recording_start_ns, second_recording_start_ns)
+
+
+def test_tracking_writer_routes_out_of_order_rotation_batches_by_file_bucket(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    max_duration_ns = 60_000_000_000
+    rotated_first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 62.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=2,
+    )
+    late_first_file_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=1,
+    )
+    rotated_second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 63.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=3,
+    )
+
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(
+            rotated_first_batch,
+            late_first_file_batch,
+            rotated_second_batch,
+            None,
+        )
+    )
+    writer.run()
+
+    batches_by_file_start = {}
+    for path in tmp_path.glob("Tracking Data *.h5"):
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            batches_by_file_start[int(group.attrs["file_start_ns"])] = group[
+                "batch_sequence"
+            ][:].tolist()
+
+    assert batches_by_file_start == {
+        recording_start_ns: [1],
+        recording_start_ns + max_duration_ns: [2, 3],
+    }
 
 
 def test_tracking_writer_keeps_one_file_when_rotation_is_disabled(tmp_path):
     start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
     first_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         max_file_duration_ns=None,
     )
     second_batch = _single_bead_batch(
         tmp_path,
         np.asarray([start + 3_600.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
         max_file_duration_ns=None,
     )
 
