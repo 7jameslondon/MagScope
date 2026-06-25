@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from magscope.ipc_commands import ShowMessageCommand, UpdateZLUTMetadataCommand
+from magscope.ipc_commands import ShowMessageCommand, ShowWarningCommand, UpdateZLUTMetadataCommand
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +92,25 @@ class DummyQueue:
 
     def put_nowait(self, item):
         self.items.append(item)
+
+
+class DummyFullQueue:
+    def __init__(self):
+        self.put_calls = 0
+
+    def put_nowait(self, item):
+        self.put_calls += 1
+        raise videoprocessing.Full
+
+
+class DummyGetNowaitQueue:
+    def __init__(self, items=()):
+        self.items = list(items)
+
+    def get_nowait(self):
+        if not self.items:
+            raise videoprocessing.Empty
+        return self.items.pop(0)
 
 
 class DummyLock:
@@ -186,6 +205,53 @@ def manager():
     manager._bead_roi_values = []
     return manager
 
+
+def test_setup_bounds_tracking_data_queue(manager, monkeypatch):
+    created_queues = []
+    created_workers = []
+
+    class FakeQueue:
+        def __init__(self, maxsize=0):
+            self.maxsize = maxsize
+            created_queues.append(self)
+
+    class FakeTrackingDataWriter:
+        def __init__(self, queue):
+            self.queue = queue
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    class FakeWorker:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created_workers.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(videoprocessing, 'Queue', FakeQueue)
+    monkeypatch.setattr(videoprocessing, 'TrackingDataWriter', FakeTrackingDataWriter)
+    monkeypatch.setattr(videoprocessing, 'VideoWorker', FakeWorker)
+    manager.settings = {'video processors n': 3}
+    manager.locks = {}
+    manager.shared_values = SimpleNamespace(
+        video_process_reserved_stacks=object(),
+        video_process_completed_stacks=object(),
+        video_process_busy_count=object(),
+        live_profile_enabled=object(),
+        live_profile_bead=object(),
+    )
+    manager._broadcast_zlut_metadata = lambda: None
+
+    manager.setup()
+
+    assert created_queues[0].maxsize == 3
+    assert created_queues[1].maxsize == 6
+    assert len(created_workers) == 3
+    assert all(worker.started for worker in created_workers)
 
 @pytest.fixture
 def camera_manager():
@@ -692,6 +758,70 @@ def test_worker_does_not_enqueue_tracking_data_when_saving_disabled(monkeypatch,
     assert tracking_queue.items == []
 
 
+def test_worker_reports_tracking_data_save_drop_when_writer_queue_is_full(monkeypatch, tmp_path):
+    tracking_queue = DummyFullQueue()
+    warning_queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=DummyQueue(),
+        locks={},
+        reserved_stacks=DummyValue(1),
+        completed_stacks=DummyValue(0),
+        busy_count=DummyValue(0),
+        gpu_lock=DummyLock(),
+        profile_length_queue=None,
+        warning_queue=warning_queue,
+        zlut_capture_complete_queue=None,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=DummyValue(0),
+        live_profile_bead=DummyValue(-1),
+        tracking_data_queue=tracking_queue,
+    )
+    worker._video_buffer = DummyStackVideoBuffer()
+    worker._tracks_buffer = DummyTracksBuffer()
+    worker._live_profile_buffer = None
+    worker._task_owes_reserved_stack = True
+
+    def fake_tracker(stack, zlut, **kwargs):
+        return (
+            np.asarray([0.5, 1.5, 2.5, 3.5], dtype=np.float64),
+            np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            np.asarray([10.0, np.nan, 30.0, 40.0], dtype=np.float64),
+            np.zeros((2, 4), dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        videoprocessing.magtrack,
+        'stack_to_xyzp_advanced',
+        fake_tracker,
+        raising=False,
+    )
+
+    worker.process(
+        {
+            'acquisition_dir': str(tmp_path),
+            'acquisition_dir_on': True,
+            'acquisition_mode': videoprocessing.AcquisitionMode.TRACK,
+            'bead_ids': np.asarray([3, 4], dtype=np.uint32),
+            'bead_rois': np.asarray([[0, 2, 0, 2], [1, 3, 1, 3]], dtype=np.uint32),
+            'save_profiles': False,
+            'save_tracking_roi_positions': False,
+            'tracking_recording_id': 42,
+            'tracking_batch_sequence': 17,
+            'zlut': None,
+            'nm_per_px': 2.0,
+            'magnification': 1.0,
+            'tracking_options': {},
+        }
+    )
+
+    assert tracking_queue.put_calls == 1
+    assert len(warning_queue.items) == 1
+    warning = warning_queue.items[0]
+    assert warning['type'] == videoprocessing._TRACKING_DATA_SAVE_DROPPED_WARNING
+    assert warning['batches'] == 1
+    assert warning['frames'] == 2
+    assert warning['records'] == 4
+
 def test_camera_manager_releases_only_newly_completed_stacks(camera_manager):
     releases = []
     camera_manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=0, n_images=5)
@@ -800,6 +930,70 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
         profile_length=None,
     )
 
+
+def test_tracking_data_save_drop_warning_is_throttled_and_recovers(manager, monkeypatch):
+    sent_commands = []
+    clock = {'value': 0.0}
+    manager.send_ipc = sent_commands.append
+    monkeypatch.setattr(videoprocessing, 'monotonic', lambda: clock['value'])
+
+    def drop_warning(timestamp, frames=2, records=4):
+        return {
+            'type': videoprocessing._TRACKING_DATA_SAVE_DROPPED_WARNING,
+            'timestamp': timestamp,
+            'batches': 1,
+            'frames': frames,
+            'records': records,
+        }
+
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_000.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    assert isinstance(sent_commands[0], ShowWarningCommand)
+    assert 'Dropped tracking batches: 1' in sent_commands[0].details
+    assert 'Dropped frames: 2' in sent_commands[0].details
+    assert 'Dropped bead records: 4' in sent_commands[0].details
+
+    clock['value'] = 10.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_010.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    assert manager._tracking_data_save_drop_count == 2
+
+    clock['value'] = 100.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_100.0)])
+    manager._process_worker_warnings()
+
+    clock['value'] = 200.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_200.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+
+    clock['value'] = 301.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_301.0, frames=1, records=1)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 2
+    assert 'Dropped tracking batches: 5' in sent_commands[1].details
+    assert 'Dropped frames: 9' in sent_commands[1].details
+    assert 'Dropped bead records: 17' in sent_commands[1].details
+
+    clock['value'] = 422.0
+    manager._warning_queue = DummyGetNowaitQueue()
+    manager._process_worker_warnings()
+
+    assert manager._tracking_data_save_drop_count == 0
+    assert manager._tracking_data_save_drop_last_warning_monotonic is None
+
+    clock['value'] = 423.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_423.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 3
+    assert 'Dropped tracking batches: 1' in sent_commands[2].details
 
 # ---------------------------------------------------------------------------
 # _extract_zlut_metadata error paths

@@ -194,6 +194,12 @@ class ShowMessageCommand(Command):
 
 
 @dataclass(frozen=True)
+class ShowWarningCommand(Command):
+    text: str
+    details: str | None = None
+
+
+@dataclass(frozen=True)
 class ShowErrorCommand(Command):
     text: str
     details: str | None = None

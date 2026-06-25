@@ -3999,6 +3999,7 @@ class UIManager(ManagerProcessBase):
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.show()
 
+    @register_ipc_command(ShowWarningCommand)
     def show_warning(self, text: str, details: str | None = None):
         msg = QMessageBox(self.windows[0])
         msg.setIcon(QMessageBox.Icon.Warning)
