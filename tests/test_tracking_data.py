@@ -305,6 +305,49 @@ def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_p
         assert group["roi_positions_px"].shape == (1, 2)
 
 
+def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
+    start = 1_700_000_000.0
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        include_roi_positions=False,
+    )
+    bad_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 1.0], dtype=np.float64),
+        include_roi_positions=True,
+    )
+    third_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 2.0], dtype=np.float64),
+        include_roi_positions=False,
+    )
+
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(first_batch, bad_batch, third_batch, None)
+    )
+    writer.run()
+
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 2
+
+    with h5py.File(paths[0], "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            timestamps_to_epoch_ns(np.asarray([start], dtype=np.float64)),
+        )
+        assert "roi_positions_px" not in group
+
+    with h5py.File(paths[1], "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            timestamps_to_epoch_ns(np.asarray([start + 2.0], dtype=np.float64)),
+        )
+        assert "roi_positions_px" not in group
+
+
 def test_tracking_writer_keeps_one_file_when_rotation_is_disabled(tmp_path):
     start = 1_700_000_000.0
     first_batch = _single_bead_batch(

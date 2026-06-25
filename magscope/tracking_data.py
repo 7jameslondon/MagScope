@@ -306,11 +306,11 @@ class TrackingDataWriter(Process):
         current_recording_id: int | None = None
         current_file: TrackingHDF5File | None = None
         current_file_first_timestamp_ns: int | None = None
-        try:
-            while True:
-                batch = self._queue.get()
-                if batch is None:
-                    break
+        while True:
+            batch = self._queue.get()
+            if batch is None:
+                break
+            try:
                 if (
                     current_recording_id != batch.recording_id
                     or _batch_starts_new_file(batch, current_file_first_timestamp_ns)
@@ -328,11 +328,21 @@ class TrackingDataWriter(Process):
                     current_recording_id = int(batch.recording_id)
                     current_file_first_timestamp_ns = int(batch.frame_timestamps_ns[0])
                 current_file.append(batch)
-        except Exception as exc:
-            logger.exception("Tracking data writer failed: %s", exc)
-        finally:
-            if current_file is not None:
-                current_file.close()
+            except Exception as exc:
+                logger.exception("Skipping tracking data batch after writer failure: %s", exc)
+                if current_file is not None:
+                    try:
+                        current_file.close()
+                    except Exception as close_exc:
+                        logger.exception(
+                            "Failed to close tracking data file after writer failure: %s",
+                            close_exc,
+                        )
+                current_file = None
+                current_recording_id = None
+                current_file_first_timestamp_ns = None
+        if current_file is not None:
+            current_file.close()
 
 
 def _to_uint16_array(values: np.ndarray, field_name: str) -> np.ndarray:
