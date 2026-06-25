@@ -171,6 +171,8 @@ TOP_BAR_ACTION_ICONS = {
 DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
 FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
+LAST_ZLUT_FILEPATH_SETTINGS_KEY = 'last zlut filepath'
+LAST_ZLUT_DIRECTORY_SETTINGS_KEY = 'last zlut directory'
 
 
 def _default_restored_window_geometry(
@@ -1199,6 +1201,7 @@ class UIManager(ManagerProcessBase):
         self._create_view_menu(window)
         self._create_tools_menu(window)
         self._create_zlut_menu(window)
+        self._load_remembered_zlut()
         self._create_help_menu_action(window)
         self._create_search_menu_widget(window)
         self._apply_default_viewer_layout()
@@ -4097,6 +4100,31 @@ class UIManager(ManagerProcessBase):
         command = LoadZLUTCommand(filepath=filepath)
         self.send_ipc(command)
 
+    def _load_remembered_zlut(self) -> None:
+        filepath = self._zlut_settings().value(
+            LAST_ZLUT_FILEPATH_SETTINGS_KEY,
+            '',
+            type=str,
+        )
+        if not filepath:
+            return
+
+        self.request_zlut_file(filepath)
+
+    @staticmethod
+    def _zlut_settings() -> QSettings:
+        return QSettings('MagScope', 'MagScope')
+
+    def _remember_zlut_filepath(self, filepath: str | None) -> None:
+        if not filepath:
+            return
+
+        settings = self._zlut_settings()
+        settings.setValue(LAST_ZLUT_FILEPATH_SETTINGS_KEY, filepath)
+        directory = os.path.dirname(filepath)
+        if directory:
+            settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
+
     def clear_zlut(self) -> None:
         self.unload_zlut()
 
@@ -4106,9 +4134,9 @@ class UIManager(ManagerProcessBase):
         self.send_ipc(command)
 
     def load_zlut_file_dialog(self) -> None:
-        settings = QSettings('MagScope', 'MagScope')
+        settings = self._zlut_settings()
         last_value = settings.value(
-            'last zlut directory',
+            LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
             os.path.expanduser('~'),
             type=str,
         )
@@ -4122,7 +4150,7 @@ class UIManager(ManagerProcessBase):
             return
 
         directory = os.path.dirname(path) or last_value
-        settings.setValue('last zlut directory', directory)
+        settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
         self.request_zlut_file(path)
 
     def show_current_zlut_dialog(self) -> None:
@@ -4218,6 +4246,7 @@ class UIManager(ManagerProcessBase):
         profile_length: int | None = None,
     ) -> None:
         self._current_zlut_filepath = filepath
+        self._remember_zlut_filepath(filepath)
         self._current_zlut_metadata = {
             'z_min': z_min,
             'z_max': z_max,
@@ -4354,8 +4383,12 @@ class UIManager(ManagerProcessBase):
         self._zlut_preview_last_poll = 0.0
 
     def save_generated_zlut(self, bead_id: int, load_after_save: bool = True) -> None:
-        settings = QSettings('MagScope', 'MagScope')
-        last_value = settings.value('last zlut directory', os.path.expanduser('~'), type=str)
+        settings = self._zlut_settings()
+        last_value = settings.value(
+            LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
+            os.path.expanduser('~'),
+            type=str,
+        )
         default_path = os.path.join(last_value, f'generated_zlut_bead_{int(bead_id)}.txt')
         filepath, _ = QFileDialog.getSaveFileName(
             self.windows[0] if self.windows else None,
@@ -4367,7 +4400,7 @@ class UIManager(ManagerProcessBase):
             return
 
         directory = os.path.dirname(filepath) or last_value
-        settings.setValue('last zlut directory', directory)
+        settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
         self.send_ipc(
             SaveGeneratedZLUTCommand(
                 filepath=filepath,

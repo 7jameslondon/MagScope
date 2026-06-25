@@ -1437,6 +1437,40 @@ def test_zlut_load_action_opens_file_picker_and_loads(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
+def test_request_zlut_file_remembers_filepath_and_directory():
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager.request_zlut_file('/tmp/zluts/loaded_zlut.txt')
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert (
+        settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str)
+        == '/tmp/zluts/loaded_zlut.txt'
+    )
+    assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
+    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/loaded_zlut.txt')]
+
+    clear_ui_manager_singleton()
+
+
+def test_load_remembered_zlut_requests_saved_filepath():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/remembered.txt')
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager._load_remembered_zlut()
+
+    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/remembered.txt')]
+    assert manager._current_zlut_filepath == '/tmp/zluts/remembered.txt'
+
+    clear_ui_manager_singleton()
+
 def test_current_zlut_dialog_renders_loaded_zlut_preview(qtbot, tmp_path):
     zlut_path = tmp_path / 'zlut.txt'
     zlut_array = np.array([
