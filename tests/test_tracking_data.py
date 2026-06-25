@@ -63,6 +63,7 @@ def test_hdf5_writer_appends_batches_without_roi_positions(tmp_path):
         ),
         n_rois=2,
         include_roi_positions=False,
+        batch_sequence=10,
     )
     second_batch = build_tracking_data_batch(
         recording_id=1,
@@ -76,6 +77,7 @@ def test_hdf5_writer_appends_batches_without_roi_positions(tmp_path):
         ),
         n_rois=2,
         include_roi_positions=False,
+        batch_sequence=11,
     )
 
     path = tmp_path / "tracking.h5"
@@ -86,6 +88,34 @@ def test_hdf5_writer_appends_batches_without_roi_positions(tmp_path):
 
     with h5py.File(path, "r") as file:
         group = file["tracking"]
+        assert group.attrs["record_order"] == "writer_append_order"
+        assert group.attrs["batch_sequence_order"] == "video_task_enqueue_order"
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(1_200_000_000)
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([10, 11], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_frame_start"][:],
+            np.asarray([0, 2], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_frame_count"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_record_start"][:],
+            np.asarray([0, 4], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_record_count"][:],
+            np.asarray([4, 2], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_batch_sequence"][:],
+            np.asarray([10, 10, 11], dtype=np.uint64),
+        )
         assert group["frame_timestamps_ns"].dtype == np.dtype(np.uint64)
         assert group["frame_timestamps_ns"].shape == (3,)
         assert group["frame_timestamps_ns"].maxshape == (None,)
@@ -181,6 +211,50 @@ def test_tracking_data_path_adds_numeric_suffix(tmp_path):
 
     assert second_path.parent == Path(tmp_path)
     assert second_path.name.endswith("(1).h5")
+
+
+def test_hdf5_writer_preserves_batch_sequence_for_out_of_order_appends(tmp_path):
+    later_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([2.0], dtype=np.float64),
+        tracks=_tracks([[2.0, 20.0, 21.0, 22.0, 5.0, 100.0, 200.0]]),
+        n_rois=1,
+        include_roi_positions=False,
+        batch_sequence=2,
+    )
+    earlier_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([1.0], dtype=np.float64),
+        tracks=_tracks([[1.0, 10.0, 11.0, 12.0, 5.0, 100.0, 200.0]]),
+        n_rois=1,
+        include_roi_positions=False,
+        batch_sequence=1,
+    )
+
+    path = tmp_path / "tracking-out-of-order.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=False)
+    writer.append(later_batch)
+    writer.append(earlier_batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            np.asarray([2_000_000_000, 1_000_000_000], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_batch_sequence"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(2_000_000_000)
 
 
 def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_path):

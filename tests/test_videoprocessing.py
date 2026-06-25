@@ -205,6 +205,8 @@ def test_add_task_returns_true_for_normal_processing_task(manager):
     assert len(manager._tasks.items) == 1
     assert 'zlut_capture' not in manager._tasks.items[0]
     assert manager._tasks.items[0]['tracking_recording_id'] == manager._tracking_recording_id
+    assert manager._tasks.items[0]['tracking_batch_sequence'] == 0
+    assert manager._tracking_task_sequence == 1
     assert manager._tasks.items[0]['save_tracking_roi_positions'] is False
     assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 3_600_000_000_000
 
@@ -240,6 +242,15 @@ def test_add_task_uses_tracking_file_rotation_settings(manager):
     manager._add_task()
 
     assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 1_800_000_000_000
+
+
+def test_add_task_assigns_monotonic_tracking_batch_sequence(manager):
+    manager._add_task()
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_batch_sequence'] == 0
+    assert manager._tasks.items[1]['tracking_batch_sequence'] == 1
+    assert manager._tracking_task_sequence == 2
 
 
 def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
@@ -590,6 +601,7 @@ def test_worker_enqueues_tracking_data_batch_when_saving_enabled(monkeypatch, tm
             'save_tracking_roi_positions': True,
             'tracking_file_max_duration_ns': 123_000_000,
             'tracking_recording_id': 42,
+            'tracking_batch_sequence': 17,
             'zlut': None,
             'nm_per_px': 2.0,
             'magnification': 1.0,
@@ -604,6 +616,7 @@ def test_worker_enqueues_tracking_data_batch_when_saving_enabled(monkeypatch, tm
     assert len(tracking_queue.items) == 1
     batch = tracking_queue.items[0]
     assert batch.recording_id == 42
+    assert batch.batch_sequence == 17
     assert batch.include_roi_positions is True
     assert batch.max_file_duration_ns == 123_000_000
     np.testing.assert_array_equal(batch.frame_offsets, np.asarray([0, 2, 4], dtype=np.uint64))

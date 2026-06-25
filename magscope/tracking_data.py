@@ -18,6 +18,7 @@ logger = get_logger("tracking_data")
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _MAX_UINT16 = np.iinfo(np.uint16).max
+_BATCH_CHUNK = 1024
 _FRAME_CHUNK = 4096
 _RECORD_CHUNK = 65536
 
@@ -25,6 +26,7 @@ _RECORD_CHUNK = 65536
 @dataclass(frozen=True)
 class TrackingDataBatch:
     recording_id: int
+    batch_sequence: int
     acquisition_dir: str
     include_roi_positions: bool
     max_file_duration_ns: int | None
@@ -61,12 +63,16 @@ def build_tracking_data_batch(
     n_rois: int,
     include_roi_positions: bool,
     max_file_duration_ns: int | None = None,
+    batch_sequence: int = 0,
 ) -> TrackingDataBatch:
     track_rows = np.asarray(tracks)
     if track_rows.ndim != 2 or track_rows.shape[1] < 7:
         raise ValueError("tracks must have at least seven columns")
     if n_rois <= 0:
         raise ValueError("n_rois must be positive")
+    batch_sequence = int(batch_sequence)
+    if batch_sequence < 0:
+        raise ValueError("batch_sequence must be non-negative")
 
     frame_timestamps_ns = timestamps_to_epoch_ns(timestamps)
     expected_rows = int(frame_timestamps_ns.shape[0] * n_rois)
@@ -94,6 +100,7 @@ def build_tracking_data_batch(
 
     return TrackingDataBatch(
         recording_id=int(recording_id),
+        batch_sequence=batch_sequence,
         acquisition_dir=str(acquisition_dir),
         include_roi_positions=bool(include_roi_positions),
         max_file_duration_ns=max_file_duration_ns,
@@ -130,7 +137,44 @@ class TrackingHDF5File:
         group = self._file.create_group("tracking")
         group.attrs["schema_version"] = 1
         group.attrs["include_roi_positions"] = np.uint8(self.include_roi_positions)
+        group.attrs["record_order"] = "writer_append_order"
+        group.attrs["batch_sequence_order"] = "video_task_enqueue_order"
         self._group = group
+        self._batch_sequence = group.create_dataset(
+            "batch_sequence",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_BATCH_CHUNK,),
+            dtype=np.uint64,
+        )
+        self._batch_frame_start = group.create_dataset(
+            "batch_frame_start",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_BATCH_CHUNK,),
+            dtype=np.uint64,
+        )
+        self._batch_frame_count = group.create_dataset(
+            "batch_frame_count",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_BATCH_CHUNK,),
+            dtype=np.uint64,
+        )
+        self._batch_record_start = group.create_dataset(
+            "batch_record_start",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_BATCH_CHUNK,),
+            dtype=np.uint64,
+        )
+        self._batch_record_count = group.create_dataset(
+            "batch_record_count",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_BATCH_CHUNK,),
+            dtype=np.uint64,
+        )
         self._frame_timestamps = group.create_dataset(
             "frame_timestamps_ns",
             shape=(0,),
@@ -143,6 +187,13 @@ class TrackingHDF5File:
             data=np.zeros((1,), dtype=np.uint64),
             maxshape=(None,),
             chunks=(_FRAME_CHUNK + 1,),
+        )
+        self._frame_batch_sequence = group.create_dataset(
+            "frame_batch_sequence",
+            shape=(0,),
+            maxshape=(None,),
+            chunks=(_FRAME_CHUNK,),
+            dtype=np.uint64,
         )
         self._bead_ids = group.create_dataset(
             "bead_ids",
@@ -194,6 +245,19 @@ class TrackingHDF5File:
         record_start = self._bead_ids.shape[0]
         frame_end = frame_start + n_frames
         record_end = record_start + n_records
+        batch_index = self._batch_sequence.shape[0]
+        batch_sequence = np.uint64(batch.batch_sequence)
+
+        self._batch_sequence.resize((batch_index + 1,))
+        self._batch_sequence[batch_index] = batch_sequence
+        self._batch_frame_start.resize((batch_index + 1,))
+        self._batch_frame_start[batch_index] = np.uint64(frame_start)
+        self._batch_frame_count.resize((batch_index + 1,))
+        self._batch_frame_count[batch_index] = np.uint64(n_frames)
+        self._batch_record_start.resize((batch_index + 1,))
+        self._batch_record_start[batch_index] = np.uint64(record_start)
+        self._batch_record_count.resize((batch_index + 1,))
+        self._batch_record_count[batch_index] = np.uint64(n_records)
 
         self._frame_timestamps.resize((frame_end,))
         self._frame_timestamps[frame_start:frame_end] = batch.frame_timestamps_ns
@@ -202,6 +266,9 @@ class TrackingHDF5File:
         self._frame_offsets[frame_start + 1:frame_end + 1] = (
             batch.frame_offsets[1:] + np.uint64(record_start)
         )
+
+        self._frame_batch_sequence.resize((frame_end,))
+        self._frame_batch_sequence[frame_start:frame_end] = batch_sequence
 
         self._bead_ids.resize((record_end,))
         self._bead_ids[record_start:record_end] = batch.bead_ids
@@ -212,12 +279,22 @@ class TrackingHDF5File:
         if self._roi_positions is not None:
             self._roi_positions.resize((record_end, 2))
             self._roi_positions[record_start:record_end, :] = batch.roi_positions_px
+        self._update_timestamp_range(batch.frame_timestamps_ns)
 
     def close(self) -> None:
         if getattr(self, "_file", None) is None:
             return
         self._file.close()
         self._file = None
+
+    def _update_timestamp_range(self, frame_timestamps_ns: np.ndarray) -> None:
+        batch_min = np.uint64(np.min(frame_timestamps_ns))
+        batch_max = np.uint64(np.max(frame_timestamps_ns))
+        if "min_frame_timestamp_ns" in self._group.attrs:
+            batch_min = min(batch_min, self._group.attrs["min_frame_timestamp_ns"])
+            batch_max = max(batch_max, self._group.attrs["max_frame_timestamp_ns"])
+        self._group.attrs["min_frame_timestamp_ns"] = np.uint64(batch_min)
+        self._group.attrs["max_frame_timestamp_ns"] = np.uint64(batch_max)
 
 
 class TrackingDataWriter(Process):

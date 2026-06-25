@@ -86,6 +86,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tracking_data_queue: QueueType | None = None
         self._tracking_data_writer: TrackingDataWriter | None = None
         self._tracking_recording_id = 0
+        self._tracking_task_sequence = 0
 
         # TODO: Check implementation
         self._save_profiles = False
@@ -491,6 +492,7 @@ class VideoProcessorManager(ManagerProcessBase):
             'tracking_file_max_duration_ns': self._tracking_file_max_duration_ns(),
             'tracking_options': copy.deepcopy(self._tracking_options),
             'tracking_recording_id': self._tracking_recording_id,
+            'tracking_batch_sequence': self._tracking_task_sequence,
             'zlut': self._zlut
         }
         capture_step_index = self._zlut_capture_step_index
@@ -512,6 +514,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
         try:
             self._tasks.put_nowait(kwargs)
+            self._tracking_task_sequence += 1
             if 'zlut_capture' in kwargs:
                 self._zlut_capture_step_index = None
                 self._zlut_capture_earliest_timestamp = None
@@ -685,6 +688,7 @@ class VideoWorker(Process):
         save_tracking_roi_positions = kwargs.get('save_tracking_roi_positions', False)
         tracking_file_max_duration_ns = kwargs.get('tracking_file_max_duration_ns')
         tracking_recording_id = kwargs.get('tracking_recording_id', 0)
+        tracking_batch_sequence = kwargs.get('tracking_batch_sequence', 0)
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
@@ -847,6 +851,7 @@ class VideoWorker(Process):
                             n_rois=n_rois,
                             include_roi_positions=save_tracking_roi_positions,
                             max_file_duration_ns=tracking_file_max_duration_ns,
+                            batch_sequence=tracking_batch_sequence,
                         )
                         self._tracking_data_queue.put_nowait(batch)
                     except Full:
