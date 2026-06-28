@@ -7,6 +7,7 @@ import pytest
 h5py = pytest.importorskip("h5py")
 
 from magscope.tracking_data import (
+    TRACKING_DATA_WRITER_FAILURE_WARNING,
     TrackingDataWriter,
     TrackingHDF5File,
     build_tracking_data_batch,
@@ -25,6 +26,14 @@ class DummyTrackingDataQueue:
 
     def get(self):
         return self.items.pop(0)
+
+
+class DummyWarningQueue:
+    def __init__(self):
+        self.items = []
+
+    def put_nowait(self, item):
+        self.items.append(item)
 
 
 def _single_bead_batch(
@@ -263,6 +272,56 @@ def test_hdf5_writer_preserves_batch_sequence_for_out_of_order_appends(tmp_path)
         assert group.attrs["max_frame_timestamp_ns"] == np.uint64(2_000_000_000)
 
 
+def test_hdf5_writer_rolls_back_partial_append_after_write_failure(monkeypatch, tmp_path):
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([1.0], dtype=np.float64),
+        batch_sequence=1,
+    )
+    second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([2.0], dtype=np.float64),
+        batch_sequence=2,
+    )
+    path = tmp_path / "rollback.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=False)
+    writer.append(first_batch)
+
+    original_setitem = h5py.Dataset.__setitem__
+
+    def fail_positions_write(dataset, key, value):
+        if dataset.name.endswith("/positions_nm"):
+            raise OSError("simulated position write failure")
+        return original_setitem(dataset, key, value)
+
+    monkeypatch.setattr(h5py.Dataset, "__setitem__", fail_positions_write)
+    with pytest.raises(OSError, match="simulated position write failure"):
+        writer.append(second_batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            np.asarray([1_000_000_000], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["bead_ids"][:],
+            np.asarray([5], dtype=np.uint16),
+        )
+        assert group["positions_nm"].shape == (1, 3)
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+
+
 def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_path):
     start = 1_700_000_000.0
     recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
@@ -339,8 +398,10 @@ def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
         include_roi_positions=False,
     )
 
+    warning_queue = DummyWarningQueue()
     writer = TrackingDataWriter(
-        DummyTrackingDataQueue(first_batch, bad_batch, third_batch, None)
+        DummyTrackingDataQueue(first_batch, bad_batch, third_batch, None),
+        warning_queue=warning_queue,
     )
     writer.run()
 
@@ -360,6 +421,15 @@ def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
             timestamps_to_epoch_ns(np.asarray([start + 2.0], dtype=np.float64)).tolist(),
         ]
     )
+    assert len(warning_queue.items) == 1
+    warning = warning_queue.items[0]
+    assert warning["type"] == TRACKING_DATA_WRITER_FAILURE_WARNING
+    assert warning["path"] is not None
+    assert warning["recording_id"] == bad_batch.recording_id
+    assert warning["batch_sequence"] == bad_batch.batch_sequence
+    assert warning["frames"] == 1
+    assert warning["records"] == 1
+    assert warning["error"]
 
 
 def test_tracking_writer_routes_late_batches_to_original_recording_file(tmp_path):

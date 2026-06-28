@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from multiprocessing import Process
 from pathlib import Path
+from queue import Full
+from time import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -21,6 +23,7 @@ _MAX_UINT16 = np.iinfo(np.uint16).max
 _BATCH_CHUNK = 1024
 _FRAME_CHUNK = 4096
 _RECORD_CHUNK = 65536
+TRACKING_DATA_WRITER_FAILURE_WARNING = "tracking_data_writer_failure"
 
 
 @dataclass(frozen=True)
@@ -275,38 +278,44 @@ class TrackingHDF5File:
         batch_index = self._batch_sequence.shape[0]
         batch_sequence = np.uint64(batch.batch_sequence)
 
-        self._batch_sequence.resize((batch_index + 1,))
-        self._batch_sequence[batch_index] = batch_sequence
-        self._batch_frame_start.resize((batch_index + 1,))
-        self._batch_frame_start[batch_index] = np.uint64(frame_start)
-        self._batch_frame_count.resize((batch_index + 1,))
-        self._batch_frame_count[batch_index] = np.uint64(n_frames)
-        self._batch_record_start.resize((batch_index + 1,))
-        self._batch_record_start[batch_index] = np.uint64(record_start)
-        self._batch_record_count.resize((batch_index + 1,))
-        self._batch_record_count[batch_index] = np.uint64(n_records)
+        rollback_state = self._append_rollback_state()
+        try:
+            self._batch_sequence.resize((batch_index + 1,))
+            self._batch_sequence[batch_index] = batch_sequence
+            self._batch_frame_start.resize((batch_index + 1,))
+            self._batch_frame_start[batch_index] = np.uint64(frame_start)
+            self._batch_frame_count.resize((batch_index + 1,))
+            self._batch_frame_count[batch_index] = np.uint64(n_frames)
+            self._batch_record_start.resize((batch_index + 1,))
+            self._batch_record_start[batch_index] = np.uint64(record_start)
+            self._batch_record_count.resize((batch_index + 1,))
+            self._batch_record_count[batch_index] = np.uint64(n_records)
 
-        self._frame_timestamps.resize((frame_end,))
-        self._frame_timestamps[frame_start:frame_end] = batch.frame_timestamps_ns
+            self._frame_timestamps.resize((frame_end,))
+            self._frame_timestamps[frame_start:frame_end] = batch.frame_timestamps_ns
 
-        self._frame_offsets.resize((frame_end + 1,))
-        self._frame_offsets[frame_start + 1:frame_end + 1] = (
-            batch.frame_offsets[1:] + np.uint64(record_start)
-        )
+            self._frame_offsets.resize((frame_end + 1,))
+            self._frame_offsets[frame_start + 1:frame_end + 1] = (
+                batch.frame_offsets[1:] + np.uint64(record_start)
+            )
 
-        self._frame_batch_sequence.resize((frame_end,))
-        self._frame_batch_sequence[frame_start:frame_end] = batch_sequence
+            self._frame_batch_sequence.resize((frame_end,))
+            self._frame_batch_sequence[frame_start:frame_end] = batch_sequence
 
-        self._bead_ids.resize((record_end,))
-        self._bead_ids[record_start:record_end] = batch.bead_ids
+            self._bead_ids.resize((record_end,))
+            self._bead_ids[record_start:record_end] = batch.bead_ids
 
-        self._positions.resize((record_end, 3))
-        self._positions[record_start:record_end, :] = batch.positions_nm
+            self._positions.resize((record_end, 3))
+            self._positions[record_start:record_end, :] = batch.positions_nm
 
-        if self._roi_positions is not None:
-            self._roi_positions.resize((record_end, 2))
-            self._roi_positions[record_start:record_end, :] = batch.roi_positions_px
-        self._update_timestamp_range(batch.frame_timestamps_ns)
+            if self._roi_positions is not None:
+                self._roi_positions.resize((record_end, 2))
+                self._roi_positions[record_start:record_end, :] = batch.roi_positions_px
+            self._update_timestamp_range(batch.frame_timestamps_ns)
+            self._file.flush()
+        except Exception:
+            self._rollback_append(rollback_state)
+            raise
 
     def close(self) -> None:
         if getattr(self, "_file", None) is None:
@@ -323,11 +332,62 @@ class TrackingHDF5File:
         self._group.attrs["min_frame_timestamp_ns"] = np.uint64(batch_min)
         self._group.attrs["max_frame_timestamp_ns"] = np.uint64(batch_max)
 
+    def _append_rollback_state(self) -> dict[str, object]:
+        dataset_shapes = {
+            "batch_sequence": self._batch_sequence.shape,
+            "batch_frame_start": self._batch_frame_start.shape,
+            "batch_frame_count": self._batch_frame_count.shape,
+            "batch_record_start": self._batch_record_start.shape,
+            "batch_record_count": self._batch_record_count.shape,
+            "frame_timestamps": self._frame_timestamps.shape,
+            "frame_offsets": self._frame_offsets.shape,
+            "frame_batch_sequence": self._frame_batch_sequence.shape,
+            "bead_ids": self._bead_ids.shape,
+            "positions": self._positions.shape,
+        }
+        if self._roi_positions is not None:
+            dataset_shapes["roi_positions"] = self._roi_positions.shape
+
+        timestamp_attrs = {}
+        for name in ("min_frame_timestamp_ns", "max_frame_timestamp_ns"):
+            timestamp_attrs[name] = (
+                name in self._group.attrs,
+                self._group.attrs.get(name),
+            )
+        return {"dataset_shapes": dataset_shapes, "timestamp_attrs": timestamp_attrs}
+
+    def _rollback_append(self, state: dict[str, object]) -> None:
+        try:
+            dataset_shapes = state["dataset_shapes"]
+            self._batch_sequence.resize(dataset_shapes["batch_sequence"])
+            self._batch_frame_start.resize(dataset_shapes["batch_frame_start"])
+            self._batch_frame_count.resize(dataset_shapes["batch_frame_count"])
+            self._batch_record_start.resize(dataset_shapes["batch_record_start"])
+            self._batch_record_count.resize(dataset_shapes["batch_record_count"])
+            self._frame_timestamps.resize(dataset_shapes["frame_timestamps"])
+            self._frame_offsets.resize(dataset_shapes["frame_offsets"])
+            self._frame_batch_sequence.resize(dataset_shapes["frame_batch_sequence"])
+            self._bead_ids.resize(dataset_shapes["bead_ids"])
+            self._positions.resize(dataset_shapes["positions"])
+            if self._roi_positions is not None:
+                self._roi_positions.resize(dataset_shapes["roi_positions"])
+
+            timestamp_attrs = state["timestamp_attrs"]
+            for name, (existed, value) in timestamp_attrs.items():
+                if existed:
+                    self._group.attrs[name] = value
+                elif name in self._group.attrs:
+                    del self._group.attrs[name]
+            self._file.flush()
+        except Exception as exc:
+            logger.exception("Failed to roll back partial tracking-data append: %s", exc)
+
 
 class TrackingDataWriter(Process):
-    def __init__(self, queue: "QueueType"):
+    def __init__(self, queue: "QueueType", warning_queue: "QueueType | None" = None):
         super().__init__()
         self._queue = queue
+        self._warning_queue = warning_queue
 
     def run(self) -> None:
         open_files: dict[tuple[int, str, bool, int], TrackingHDF5File] = {}
@@ -336,6 +396,7 @@ class TrackingDataWriter(Process):
             if batch is None:
                 break
             key: tuple[int, str, bool, int] | None = None
+            path: Path | None = None
             try:
                 key = _file_key(batch)
                 current_file = open_files.get(key)
@@ -354,9 +415,12 @@ class TrackingDataWriter(Process):
                         ),
                     )
                     open_files[key] = current_file
+                else:
+                    path = current_file.path
                 current_file.append(batch)
             except Exception as exc:
                 logger.exception("Skipping tracking data batch after writer failure: %s", exc)
+                self._report_writer_failure(batch, path, exc)
                 failed_file = open_files.pop(key, None) if key is not None else None
                 if failed_file is not None:
                     try:
@@ -368,6 +432,30 @@ class TrackingDataWriter(Process):
                         )
         for tracking_file in open_files.values():
             tracking_file.close()
+
+    def _report_writer_failure(
+        self,
+        batch: TrackingDataBatch,
+        path: Path | None,
+        exc: Exception,
+    ) -> None:
+        if self._warning_queue is None:
+            return
+        error = str(exc).strip() or repr(exc)
+        warning = {
+            "type": TRACKING_DATA_WRITER_FAILURE_WARNING,
+            "timestamp": time(),
+            "path": None if path is None else str(path),
+            "recording_id": int(batch.recording_id),
+            "batch_sequence": int(batch.batch_sequence),
+            "frames": int(batch.frame_timestamps_ns.shape[0]),
+            "records": int(batch.bead_ids.shape[0]),
+            "error": error,
+        }
+        try:
+            self._warning_queue.put_nowait(warning)
+        except Full:
+            logger.debug("Dropping tracking data writer failure warning because queue is full")
 
 
 def _to_uint16_array(values: np.ndarray, field_name: str) -> np.ndarray:

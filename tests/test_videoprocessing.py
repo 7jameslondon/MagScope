@@ -209,6 +209,7 @@ def manager():
 def test_setup_bounds_tracking_data_queue(manager, monkeypatch):
     created_queues = []
     created_workers = []
+    created_writers = []
 
     class FakeQueue:
         def __init__(self, maxsize=0):
@@ -216,9 +217,11 @@ def test_setup_bounds_tracking_data_queue(manager, monkeypatch):
             created_queues.append(self)
 
     class FakeTrackingDataWriter:
-        def __init__(self, queue):
+        def __init__(self, queue, warning_queue=None):
             self.queue = queue
+            self.warning_queue = warning_queue
             self.started = False
+            created_writers.append(self)
 
         def start(self):
             self.started = True
@@ -250,6 +253,8 @@ def test_setup_bounds_tracking_data_queue(manager, monkeypatch):
 
     assert created_queues[0].maxsize == 3
     assert created_queues[1].maxsize == 6
+    assert created_writers[0].queue is created_queues[1]
+    assert created_writers[0].warning_queue is created_queues[3]
     assert len(created_workers) == 3
     assert all(worker.started for worker in created_workers)
 
@@ -994,6 +999,37 @@ def test_tracking_data_save_drop_warning_is_throttled_and_recovers(manager, monk
 
     assert len(sent_commands) == 3
     assert 'Dropped tracking batches: 1' in sent_commands[2].details
+
+def test_tracking_data_writer_failure_warning_is_sent_to_ui(manager):
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+    manager._warning_queue = DummyGetNowaitQueue(
+        [
+            {
+                'type': videoprocessing.TRACKING_DATA_WRITER_FAILURE_WARNING,
+                'timestamp': 1_700_000_000.0,
+                'path': 'C:/data/Tracking Data 1.h5',
+                'recording_id': 3,
+                'batch_sequence': 12,
+                'frames': 2,
+                'records': 4,
+                'error': 'disk full',
+            }
+        ]
+    )
+
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    command = sent_commands[0]
+    assert isinstance(command, ShowWarningCommand)
+    assert command.text == 'Tracking data HDF5 writer failed.'
+    assert 'C:/data/Tracking Data 1.h5' in command.details
+    assert 'Batch sequence: 12' in command.details
+    assert 'Frames not saved: 2' in command.details
+    assert 'Bead records not saved: 4' in command.details
+    assert 'disk full' in command.details
+
 
 # ---------------------------------------------------------------------------
 # _extract_zlut_metadata error paths

@@ -43,7 +43,11 @@ from magscope.settings import (
     TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
     TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
 )
-from magscope.tracking_data import TrackingDataWriter, build_tracking_data_batch
+from magscope.tracking_data import (
+    TRACKING_DATA_WRITER_FAILURE_WARNING,
+    TrackingDataWriter,
+    build_tracking_data_batch,
+)
 from magscope.utils import (AcquisitionMode, crop_stack_to_rois, date_timestamp_str,
                              register_script_command)
 
@@ -73,6 +77,13 @@ def _is_tracking_data_save_drop_warning(warning: object) -> bool:
     return (
         isinstance(warning, dict)
         and warning.get('type') == _TRACKING_DATA_SAVE_DROPPED_WARNING
+    )
+
+
+def _is_tracking_data_writer_failure_warning(warning: object) -> bool:
+    return (
+        isinstance(warning, dict)
+        and warning.get('type') == TRACKING_DATA_WRITER_FAILURE_WARNING
     )
 
 
@@ -184,11 +195,14 @@ class VideoProcessorManager(ManagerProcessBase):
             self._n_workers * _TRACKING_DATA_QUEUE_MULTIPLIER,
         )
         self._tracking_data_queue = Queue(maxsize=tracking_queue_size)
-        self._tracking_data_writer = TrackingDataWriter(self._tracking_data_queue)
         self._profile_length_queue = Queue()
         self._warning_queue = Queue()
         self._zlut_capture_complete_queue = Queue()
         self._zlut_profile_length_queue = Queue()
+        self._tracking_data_writer = TrackingDataWriter(
+            self._tracking_data_queue,
+            warning_queue=self._warning_queue,
+        )
 
         # Create the workers
         for _ in range(self._n_workers):
@@ -603,8 +617,43 @@ class VideoProcessorManager(ManagerProcessBase):
 
             if _is_tracking_data_save_drop_warning(warning):
                 self._process_tracking_data_save_drop_warning(warning)
+                continue
+
+            if _is_tracking_data_writer_failure_warning(warning):
+                self._process_tracking_data_writer_failure_warning(warning)
+                continue
 
         self._reset_tracking_data_save_drop_warning_if_recovered()
+
+    def _process_tracking_data_writer_failure_warning(
+        self,
+        warning: dict[str, object],
+    ) -> None:
+        timestamp = warning.get('timestamp')
+        if not isinstance(timestamp, (int, float)):
+            timestamp = None
+        path = warning.get('path') or 'unknown file'
+        error = warning.get('error') or 'unknown error'
+        recording_id = warning.get('recording_id')
+        batch_sequence = warning.get('batch_sequence')
+        details = (
+            f"Time: {_format_epoch_timestamp(timestamp)}\n"
+            f"File: {path}\n"
+            f"Recording ID: {recording_id if recording_id is not None else 'unknown'}\n"
+            f"Batch sequence: {batch_sequence if batch_sequence is not None else 'unknown'}\n"
+            f"Frames not saved: {_coerce_nonnegative_int(warning.get('frames'), default=0)}\n"
+            f"Bead records not saved: {_coerce_nonnegative_int(warning.get('records'), default=0)}\n\n"
+            f"Error: {error}\n\n"
+            "The failed batch was not saved. MagScope attempted to roll back "
+            "any partial HDF5 writes before continuing. Check disk space, "
+            "folder permissions, and whether another program is holding the file."
+        )
+        self.send_ipc(
+            ShowWarningCommand(
+                text='Tracking data HDF5 writer failed.',
+                details=details,
+            )
+        )
 
     def _process_tracking_data_save_drop_warning(self, warning: dict[str, object]) -> None:
         now = monotonic()
