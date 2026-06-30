@@ -90,6 +90,9 @@ class DummyQueue:
     def __init__(self):
         self.items = []
 
+    def put(self, item):
+        self.items.append(item)
+
     def put_nowait(self, item):
         self.items.append(item)
 
@@ -444,6 +447,27 @@ def test_manual_tracking_file_rotation_only_rotates_when_saving(manager):
     manager._acquisition_dir_on = True
     manager.start_new_tracking_data_file()
     assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_tracking_recording_boundary_queues_close_request(manager):
+    manager._tracking_data_queue = DummyQueue()
+    manager._acquisition_dir_on = True
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.start_new_tracking_data_file()
+
+    assert manager._tracking_recording_id == initial_recording_id + 1
+    assert len(manager._tracking_data_queue.items) == 1
+    request = manager._tracking_data_queue.items[0]
+    assert isinstance(request, videoprocessing.CloseTrackingDataFiles)
+    assert request.recording_id == initial_recording_id
+
+    manager.set_acquisition_dir_on(False)
+
+    assert len(manager._tracking_data_queue.items) == 2
+    request = manager._tracking_data_queue.items[1]
+    assert isinstance(request, videoprocessing.CloseTrackingDataFiles)
+    assert request.recording_id == initial_recording_id + 1
 
 
 def test_add_task_uses_frozen_rois_for_pending_zlut_profile_length(manager):

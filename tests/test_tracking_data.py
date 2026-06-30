@@ -1,5 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -7,6 +9,7 @@ import pytest
 h5py = pytest.importorskip("h5py")
 
 from magscope.tracking_data import (
+    CloseTrackingDataFiles,
     TRACKING_DATA_WRITER_FAILURE_WARNING,
     TrackingDataWriter,
     TrackingHDF5File,
@@ -26,6 +29,22 @@ class DummyTrackingDataQueue:
 
     def get(self):
         return self.items.pop(0)
+
+
+def _assert_child_process_can_open_hdf5(path: Path) -> None:
+    code = (
+        "import h5py, sys; "
+        "file = h5py.File(sys.argv[1], 'r'); "
+        "file['tracking']; "
+        "file.close()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 class DummyWarningQueue:
@@ -561,3 +580,89 @@ def test_tracking_writer_keeps_one_file_when_rotation_is_disabled(tmp_path):
             np.asarray([0, 1, 2], dtype=np.uint64),
         )
         assert "roi_positions_px" not in group
+
+
+def test_tracking_writer_close_request_unlocks_file_and_late_batch_appends(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        batch_sequence=1,
+    )
+    late_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 1.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        batch_sequence=2,
+    )
+    expected_path = tracking_data_path(tmp_path, first_batch.file_start_ns)
+
+    class InspectingQueue(DummyTrackingDataQueue):
+        checked_unlocked = False
+
+        def get(self):
+            item = super().get()
+            if item is late_batch:
+                _assert_child_process_can_open_hdf5(expected_path)
+                self.checked_unlocked = True
+            return item
+
+    queue = InspectingQueue(
+        first_batch,
+        CloseTrackingDataFiles(recording_id=first_batch.recording_id),
+        late_batch,
+        None,
+    )
+    writer = TrackingDataWriter(queue)
+    writer.run()
+
+    assert queue.checked_unlocked
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert paths == [expected_path]
+    with h5py.File(expected_path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([1, 2], dtype=np.uint64),
+        )
+
+
+def test_tracking_writer_closes_rotated_file_before_shutdown(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    max_duration_ns = 60_000_000_000
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=1,
+    )
+    rotated_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 61.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=2,
+    )
+    first_path = tracking_data_path(tmp_path, first_batch.file_start_ns)
+
+    class InspectingQueue(DummyTrackingDataQueue):
+        checked_unlocked = False
+
+        def get(self):
+            item = super().get()
+            if item is None:
+                _assert_child_process_can_open_hdf5(first_path)
+                self.checked_unlocked = True
+            return item
+
+    queue = InspectingQueue(first_batch, rotated_batch, None)
+    writer = TrackingDataWriter(queue)
+    writer.run()
+
+    assert queue.checked_unlocked
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 2

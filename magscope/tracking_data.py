@@ -42,6 +42,11 @@ class TrackingDataBatch:
     roi_positions_px: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class CloseTrackingDataFiles:
+    recording_id: int | None = None
+
+
 def timestamps_to_epoch_ns(timestamps: np.ndarray) -> np.ndarray:
     timestamp_array = np.asarray(timestamps, dtype=np.float64)
     if timestamp_array.ndim != 1:
@@ -157,6 +162,7 @@ class TrackingHDF5File:
         self.include_roi_positions = bool(include_roi_positions)
         self._file = h5py.File(self.path, "w")
         group = self._file.create_group("tracking")
+        self._group = group
         group.attrs["schema_version"] = 1
         group.attrs["include_roi_positions"] = np.uint8(self.include_roi_positions)
         group.attrs["record_order"] = "writer_append_order"
@@ -169,7 +175,44 @@ class TrackingHDF5File:
             group.attrs["file_start_ns"] = np.uint64(file_start_ns)
         if rotation_interval_ns is not None:
             group.attrs["rotation_interval_ns"] = np.uint64(rotation_interval_ns)
-        self._group = group
+        self._create_datasets(group)
+
+    @classmethod
+    def open_existing(
+        cls,
+        path: str | Path,
+        *,
+        include_roi_positions: bool,
+        recording_id: int | None = None,
+        recording_start_ns: int | None = None,
+        file_start_ns: int | None = None,
+        rotation_interval_ns: int | None = None,
+    ) -> "TrackingHDF5File":
+        import h5py
+
+        tracking_file = cls.__new__(cls)
+        tracking_file.path = Path(path)
+        tracking_file.include_roi_positions = bool(include_roi_positions)
+        tracking_file._file = h5py.File(tracking_file.path, "a")
+        try:
+            if "tracking" not in tracking_file._file:
+                raise ValueError("existing HDF5 file is missing /tracking group")
+            group = tracking_file._file["tracking"]
+            tracking_file._group = group
+            tracking_file._validate_existing_group(
+                group,
+                recording_id=recording_id,
+                recording_start_ns=recording_start_ns,
+                file_start_ns=file_start_ns,
+                rotation_interval_ns=rotation_interval_ns,
+            )
+            tracking_file._bind_datasets(group)
+        except Exception:
+            tracking_file.close()
+            raise
+        return tracking_file
+
+    def _create_datasets(self, group) -> None:
         self._batch_sequence = group.create_dataset(
             "batch_sequence",
             shape=(0,),
@@ -248,6 +291,50 @@ class TrackingHDF5File:
                 chunks=(_RECORD_CHUNK, 2),
                 dtype=np.uint16,
             )
+
+    def _bind_datasets(self, group) -> None:
+        self._batch_sequence = group["batch_sequence"]
+        self._batch_frame_start = group["batch_frame_start"]
+        self._batch_frame_count = group["batch_frame_count"]
+        self._batch_record_start = group["batch_record_start"]
+        self._batch_record_count = group["batch_record_count"]
+        self._frame_timestamps = group["frame_timestamps_ns"]
+        self._frame_offsets = group["frame_offsets"]
+        self._frame_batch_sequence = group["frame_batch_sequence"]
+        self._bead_ids = group["bead_ids"]
+        self._positions = group["positions_nm"]
+        self._roi_positions = None
+        if self.include_roi_positions:
+            if "roi_positions_px" not in group:
+                raise ValueError("existing HDF5 file is missing roi_positions_px dataset")
+            self._roi_positions = group["roi_positions_px"]
+
+    def _validate_existing_group(
+        self,
+        group,
+        *,
+        recording_id: int | None,
+        recording_start_ns: int | None,
+        file_start_ns: int | None,
+        rotation_interval_ns: int | None,
+    ) -> None:
+        if int(group.attrs.get("schema_version", -1)) != 1:
+            raise ValueError("existing HDF5 tracking schema is unsupported")
+        if bool(group.attrs.get("include_roi_positions", 0)) != self.include_roi_positions:
+            raise ValueError("existing HDF5 file ROI-position setting does not match")
+        self._validate_existing_attr(group, "recording_id", recording_id)
+        self._validate_existing_attr(group, "recording_start_ns", recording_start_ns)
+        self._validate_existing_attr(group, "file_start_ns", file_start_ns)
+        self._validate_existing_attr(group, "rotation_interval_ns", rotation_interval_ns)
+
+    @staticmethod
+    def _validate_existing_attr(group, name: str, expected: int | None) -> None:
+        if expected is None:
+            return
+        if name not in group.attrs:
+            raise ValueError(f"existing HDF5 file is missing {name} attribute")
+        if int(group.attrs[name]) != int(expected):
+            raise ValueError(f"existing HDF5 file {name} attribute does not match")
 
     def append(self, batch: TrackingDataBatch) -> None:
         if batch.include_roi_positions != self.include_roi_positions:
@@ -391,37 +478,73 @@ class TrackingDataWriter(Process):
 
     def run(self) -> None:
         open_files: dict[tuple[int, str, bool, int], TrackingHDF5File] = {}
+        paths_by_key: dict[tuple[int, str, bool, int], Path] = {}
+        closed_keys: set[tuple[int, str, bool, int]] = set()
+        closed_recording_ids: set[int] = set()
         while True:
-            batch = self._queue.get()
-            if batch is None:
+            item = self._queue.get()
+            if item is None:
                 break
+            if isinstance(item, CloseTrackingDataFiles):
+                self._handle_close_request(
+                    item,
+                    open_files=open_files,
+                    closed_keys=closed_keys,
+                    closed_recording_ids=closed_recording_ids,
+                )
+                continue
+
+            batch = item
             key: tuple[int, str, bool, int] | None = None
             path: Path | None = None
+            current_file: TrackingHDF5File | None = None
             try:
                 key = _file_key(batch)
+                self._close_rotated_files(
+                    batch,
+                    open_files=open_files,
+                    closed_keys=closed_keys,
+                )
                 current_file = open_files.get(key)
                 if current_file is None:
-                    path = tracking_data_path(batch.acquisition_dir, batch.file_start_ns)
-                    current_file = TrackingHDF5File(
+                    path = paths_by_key.get(key)
+                    append_existing = path is not None and path.exists()
+                    if path is None:
+                        path = tracking_data_path(
+                            batch.acquisition_dir,
+                            batch.file_start_ns,
+                        )
+                        paths_by_key[key] = path
+                    current_file = self._open_tracking_file(
                         path,
-                        include_roi_positions=batch.include_roi_positions,
-                        recording_id=batch.recording_id,
-                        recording_start_ns=batch.recording_start_ns,
-                        file_start_ns=batch.file_start_ns,
-                        rotation_interval_ns=(
-                            0
-                            if batch.max_file_duration_ns is None
-                            else batch.max_file_duration_ns
-                        ),
+                        batch,
+                        append_existing=append_existing,
                     )
-                    open_files[key] = current_file
+                    if not self._should_close_after_append(
+                        key,
+                        batch,
+                        closed_keys=closed_keys,
+                        closed_recording_ids=closed_recording_ids,
+                    ):
+                        open_files[key] = current_file
                 else:
                     path = current_file.path
                 current_file.append(batch)
+                if self._should_close_after_append(
+                    key,
+                    batch,
+                    closed_keys=closed_keys,
+                    closed_recording_ids=closed_recording_ids,
+                ):
+                    current_file.close()
             except Exception as exc:
                 logger.exception("Skipping tracking data batch after writer failure: %s", exc)
                 self._report_writer_failure(batch, path, exc)
+                if key is not None:
+                    paths_by_key.pop(key, None)
                 failed_file = open_files.pop(key, None) if key is not None else None
+                if failed_file is None:
+                    failed_file = current_file
                 if failed_file is not None:
                     try:
                         failed_file.close()
@@ -432,6 +555,77 @@ class TrackingDataWriter(Process):
                         )
         for tracking_file in open_files.values():
             tracking_file.close()
+
+    def _handle_close_request(
+        self,
+        request: CloseTrackingDataFiles,
+        *,
+        open_files: dict[tuple[int, str, bool, int], TrackingHDF5File],
+        closed_keys: set[tuple[int, str, bool, int]],
+        closed_recording_ids: set[int],
+    ) -> None:
+        if request.recording_id is not None:
+            closed_recording_ids.add(int(request.recording_id))
+
+        for key in list(open_files):
+            if request.recording_id is not None and key[0] != int(request.recording_id):
+                continue
+            tracking_file = open_files.pop(key)
+            closed_keys.add(key)
+            tracking_file.close()
+
+    def _close_rotated_files(
+        self,
+        batch: TrackingDataBatch,
+        *,
+        open_files: dict[tuple[int, str, bool, int], TrackingHDF5File],
+        closed_keys: set[tuple[int, str, bool, int]],
+    ) -> None:
+        key = _file_key(batch)
+        for open_key in list(open_files):
+            if open_key == key:
+                continue
+            same_recording = (
+                open_key[0] == key[0]
+                and open_key[1] == key[1]
+                and open_key[2] == key[2]
+            )
+            if same_recording and open_key[3] < key[3]:
+                tracking_file = open_files.pop(open_key)
+                closed_keys.add(open_key)
+                tracking_file.close()
+
+    def _open_tracking_file(
+        self,
+        path: Path,
+        batch: TrackingDataBatch,
+        *,
+        append_existing: bool,
+    ) -> TrackingHDF5File:
+        kwargs = {
+            "include_roi_positions": batch.include_roi_positions,
+            "recording_id": batch.recording_id,
+            "recording_start_ns": batch.recording_start_ns,
+            "file_start_ns": batch.file_start_ns,
+            "rotation_interval_ns": (
+                0
+                if batch.max_file_duration_ns is None
+                else batch.max_file_duration_ns
+            ),
+        }
+        if append_existing:
+            return TrackingHDF5File.open_existing(path, **kwargs)
+        return TrackingHDF5File(path, **kwargs)
+
+    @staticmethod
+    def _should_close_after_append(
+        key: tuple[int, str, bool, int],
+        batch: TrackingDataBatch,
+        *,
+        closed_keys: set[tuple[int, str, bool, int]],
+        closed_recording_ids: set[int],
+    ) -> bool:
+        return key in closed_keys or int(batch.recording_id) in closed_recording_ids
 
     def _report_writer_failure(
         self,

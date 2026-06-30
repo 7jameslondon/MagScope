@@ -44,6 +44,7 @@ from magscope.settings import (
     TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
 )
 from magscope.tracking_data import (
+    CloseTrackingDataFiles,
     TRACKING_DATA_WRITER_FAILURE_WARNING,
     TrackingDataWriter,
     build_tracking_data_batch,
@@ -158,6 +159,7 @@ class VideoProcessorManager(ManagerProcessBase):
                 or previous_rotation_duration != self._tracking_file_max_duration_ns()
             )
         ):
+            self._close_current_tracking_data_files()
             self._start_new_tracking_recording()
 
     @register_ipc_command(
@@ -167,6 +169,7 @@ class VideoProcessorManager(ManagerProcessBase):
         previous_dir = self._acquisition_dir
         super().set_acquisition_dir(value)
         if self._acquisition_dir_on and value != previous_dir:
+            self._close_current_tracking_data_files()
             self._start_new_tracking_recording()
 
     @register_ipc_command(
@@ -177,6 +180,8 @@ class VideoProcessorManager(ManagerProcessBase):
         super().set_acquisition_dir_on(value)
         if value and not previous_value:
             self._start_new_tracking_recording()
+        elif previous_value and not value:
+            self._close_current_tracking_data_files()
 
     @register_ipc_command(UpdateTrackingOptionsCommand)
     def update_tracking_options(self, value: dict):
@@ -185,6 +190,7 @@ class VideoProcessorManager(ManagerProcessBase):
     @register_ipc_command(StartNewTrackingDataFileCommand)
     def start_new_tracking_data_file(self):
         if self._acquisition_dir_on:
+            self._close_current_tracking_data_files()
             self._start_new_tracking_recording()
 
     def setup(self):
@@ -259,6 +265,15 @@ class VideoProcessorManager(ManagerProcessBase):
     def _start_new_tracking_recording(self) -> None:
         self._tracking_recording_id += 1
         self._tracking_recording_start_ns = time_ns()
+
+    def _close_current_tracking_data_files(self) -> None:
+        if self._tracking_data_queue is None:
+            return
+        request = CloseTrackingDataFiles(recording_id=self._tracking_recording_id)
+        try:
+            self._tracking_data_queue.put(request)
+        except Exception as exc:
+            logger.warning('Could not queue tracking data file close request: %s', exc)
 
     def do_main_loop(self):
         self._process_profile_length_reports()
