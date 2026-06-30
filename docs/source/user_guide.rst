@@ -336,7 +336,7 @@ setup, tracking, saving, and file checking in one sequence.
 5. Pick a data mode.
 
    For a first recording, choose ``Track`` unless you specifically need video.
-   ``Track`` writes bead-position text files and is usually the smallest, safest
+   ``Track`` writes tracking HDF5 files and is usually the smallest, safest
    output. Use ``Track and Video (ROIs)`` when you also want cropped ROI video.
    Use full-frame video modes only when you need the entire camera frame.
 
@@ -357,18 +357,19 @@ setup, tracking, saving, and file checking in one sequence.
 
    Open the folder you selected and look for timestamped output files:
 
-   * ``Bead Positions <timestamp>.txt`` appears for ``Track``,
+   * ``Tracking Data <timestamp>.h5`` appears for ``Track``,
      ``Track and Video (ROIs)``, and ``Track and Video (Full)``.
    * ``Video <timestamp>.tiff`` appears for the video data modes.
    * ``Bead Profiles <timestamp>.txt`` appears when profile saving is enabled.
    * Hardware managers can also append telemetry to ``<HardwareManagerName>.txt``
      while saving is enabled.
 
-   MagScope writes data in processing batches, so a short recording can create
-   several timestamped files instead of one large file. If no files appear,
-   check that the folder is writable, ``Saving`` was enabled, the selected data
-   mode includes the output you expected, and enough time passed for frames to
-   be processed.
+   MagScope appends tracking batches to HDF5 files. A recording usually creates
+   one ``Tracking Data`` file, but automatic duration-based rotation, the
+   ``Start New Tracking File`` button, or saving-setting changes can create
+   additional timestamped files. If no files appear, check that the folder is
+   writable, ``Saving`` was enabled, the selected data mode includes the output
+   you expected, and enough time passed for frames to be processed.
 
 Recording and Saving Data
 -------------------------
@@ -420,6 +421,37 @@ Full-frame video is useful for debugging and record keeping, but it is the
 heaviest option. If the video buffer fills, reduce saved video volume, reduce
 the number of tracked beads, or review buffer and processor settings.
 
+Tracking Data Files
+^^^^^^^^^^^^^^^^^^^
+
+Track modes write HDF5 files named ``Tracking Data <timestamp>.h5``. The file
+contains a ``tracking`` group with these core datasets:
+
+* ``frame_timestamps_ns`` stores one Unix epoch timestamp, in nanoseconds, for
+  each processed frame.
+* ``frame_offsets`` maps each frame to rows in the record datasets. For frame
+  index ``i``, records start at ``frame_offsets[i]`` and stop before
+  ``frame_offsets[i + 1]``.
+* ``bead_ids`` stores the bead ID for each record.
+* ``positions_nm`` stores X, Y, and Z bead positions in nanometers. Z values can
+  be ``NaN`` when no active Z-LUT provides a valid Z estimate.
+* ``roi_positions_px`` is present only when ``Save tracking ROI positions`` is
+  enabled in Preferences. It stores the ROI top-left X and Y position in camera
+  pixels for each record.
+
+The group also stores ``schema_version``, ``include_roi_positions``,
+``min_frame_timestamp_ns``, and ``max_frame_timestamp_ns`` attributes. Records
+are stored in writer append order. When multiple video processors finish
+batches out of order, use ``frame_timestamps_ns`` for acquisition-time ordering
+or the batch datasets to inspect processing order:
+
+* ``batch_sequence`` records the original video-task enqueue order for each
+  appended batch.
+* ``frame_batch_sequence`` stores the batch sequence for each frame.
+* ``batch_frame_start``, ``batch_frame_count``, ``batch_record_start``, and
+  ``batch_record_count`` describe the frame and record ranges written by each
+  batch.
+
 Status and Camera Settings
 --------------------------
 
@@ -440,6 +472,10 @@ Key status fields:
 The video buffer should normally stay comfortably below full. A full buffer
 means frames are arriving faster than they can be processed or saved. That can
 lead to old frames being purged before processing.
+
+When old buffered frames are purged, the status panel shows
+``Video Buffer Purged at:`` with the latest purge time. Treat this as a sign
+that acquisition data was dropped before processing could catch up.
 
 The ``Camera Settings`` panel shows settings exposed by the active camera.
 
@@ -514,7 +550,7 @@ X/Y/Z values are treated like ``auto``.
 
 Manual X/Y/Z limits are in nanometers. They affect only the live plot display.
 They do not delete points, change bead tracking, or change saved
-``Bead Positions`` files.
+``Tracking Data`` files.
 
 Time axis modes
 """""""""""""""
@@ -631,15 +667,16 @@ Preferences and Persistent Settings
 -----------------------------------
 
 Open ``Preferences`` from the top bar to edit persistent MagScope settings,
-tracking settings, and appearance/layout options.
+saving behavior, tracking settings, and appearance/layout options.
 
 .. image:: ../../assets/doc_capture/screenshots/preferences/preferences-dialog.png
    :alt: Preferences dialog showing MagScope settings.
    :align: center
 
-The dialog has three sections:
+The dialog has four sections:
 
 * ``MagScope`` for imaging, data buffers, and lock defaults.
+* ``Saving`` for tracking-data file contents, rotation, and manual file starts.
 * ``Tracking`` for the MagTrack processing options used to find bead positions.
 * ``Appearance/Layout`` for visual preferences and saved window layout.
 
@@ -667,7 +704,7 @@ Magnification and Pixel Calibration
 ``Magnification`` is part of the conversion from camera pixels to nanometers in
 tracking and saved output. Change it when your optical magnification or camera
 calibration changes. If this value is wrong, X/Y distances in plots and
-``Bead Positions <timestamp>.txt`` files will be scaled incorrectly.
+``Tracking Data <timestamp>.h5`` files will be scaled incorrectly.
 
 Treat magnification as a calibration setting, not a display zoom control. The
 live camera zoom changes only what you see on screen; the magnification
@@ -692,6 +729,25 @@ available CPU/GPU and memory headroom. Decrease it if the system becomes
 sluggish, memory pressure is high, or adding processors does not improve the
 status panel. More processors are not always faster because they compete for
 memory bandwidth, GPU work, and disk output.
+
+Tracking Data Saving
+^^^^^^^^^^^^^^^^^^^^
+
+The ``Saving`` section in Preferences controls tracking HDF5 output:
+
+* ``Save tracking ROI positions`` adds the optional ``roi_positions_px`` dataset
+  to new tracking files. Leave it off unless your analysis needs the ROI origin
+  used for each saved bead record.
+* ``Automatically start new tracking files`` rotates tracking files while
+  saving remains enabled.
+* ``Tracking file duration (minutes)`` sets the maximum duration of each
+  automatically rotated tracking file. The default is 60 minutes.
+* ``Start New Tracking File`` closes the current tracking-data recording and
+  starts a new HDF5 file on the next saved tracking batch.
+
+Changing ROI-position saving or file-rotation settings while saving is active
+starts a new tracking-data recording, because those settings affect the output
+file layout or rotation boundary.
 
 Tracking Options
 ^^^^^^^^^^^^^^^^
@@ -735,8 +791,8 @@ image. Test ``Once`` corrections before enabling repeated locking.
 Import, Export, and Reset
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``Export`` writes a YAML preferences bundle containing MagScope settings,
-tracking options, and appearance/layout preferences. Use it to save a
+``Export`` writes a YAML preferences bundle containing MagScope settings, saving
+settings, tracking options, and appearance/layout preferences. Use it to save a
 known-good configuration, copy a setup to another computer, or record the
 settings used for an experiment series.
 
@@ -745,12 +801,13 @@ from a setup you trust, then inspect the live camera, status panel, tracking,
 and lock defaults before recording data.
 
 ``Reset Current Section`` resets only the selected sidebar section:
-``MagScope``, ``Tracking``, or ``Appearance/Layout``. Use it when one group of
-settings is confusing but you want to preserve the others.
+``MagScope``, ``Saving``, ``Tracking``, or ``Appearance/Layout``. Use it when
+one group of settings is confusing but you want to preserve the others.
 
-``Reset All`` resets MagScope, tracking, appearance, and layout preferences to
-defaults. Use it when the whole interface or acquisition setup has become
-confusing and you would rather rebuild the configuration from a clean baseline.
+``Reset All`` resets MagScope, saving, tracking, appearance, and layout
+preferences to defaults. Use it when the whole interface or acquisition setup
+has become confusing and you would rather rebuild the configuration from a
+clean baseline.
 
 Locking and Hardware-Aware Panels
 ---------------------------------
@@ -787,7 +844,7 @@ For focus motors based on ``FocusMotorBase``, the telemetry rows represent:
 * target Z position
 * whether the motor reports that it is at the target
 
-These hardware files are separate from ``Bead Positions`` and ``Video`` files.
+These hardware files are separate from ``Tracking Data`` and ``Video`` files.
 Plot limits, selected bead settings, and reference bead settings do not change
 hardware telemetry. They only change the live display.
 
@@ -1098,10 +1155,10 @@ and ``Motors`` tabs. This layout is separate from the ``Live Camera`` and
 
 If the workflow tabs or control panels are arranged in a confusing way, open
 ``Preferences`` and use the ``Appearance/Layout`` section. ``Reset Current
-Section`` resets the appearance/layout settings without resetting all MagScope
-and tracking preferences. ``Reset All`` is broader and should be saved for
-cases where you want to rebuild the whole interface configuration from
-defaults.
+Section`` resets the appearance/layout settings without resetting MagScope,
+saving, or tracking preferences. ``Reset All`` is broader and should be
+saved for cases where you want to rebuild the whole interface configuration
+from defaults.
 
 Which recovery option to use
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1221,8 +1278,8 @@ plain numbers instead of units, avoid negative values for counts and sizes, and
 keep ROI and buffer settings within practical ranges.
 
 Use ``Reset Current Section`` when only one preference group is confusing. Use
-``Reset All`` when you want to return MagScope, tracking, appearance, and layout
-preferences to defaults.
+``Reset All`` when you want to return MagScope, saving, tracking, appearance,
+and layout preferences to defaults.
 
 A script fails or stops early
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

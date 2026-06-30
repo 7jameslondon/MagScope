@@ -63,6 +63,9 @@ from magscope.settings import (
     GUI_ACCENT_COLOR_SETTING,
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
     MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
     default_tracking_options,
 )
 from magscope.ui.controls import (
@@ -72,6 +75,7 @@ from magscope.ui.controls import (
     CurrentZLUTDialog,
     PlotSettingsPanel,
     PreferencesDialog,
+    SavingSettingsPanel,
     TrackingOptionsPanel,
     XYLockPanel,
     ZLUTGenerationSetupDialog,
@@ -2273,8 +2277,10 @@ def test_panel_search_targets_cover_common_controls():
     ):
         target_labels.update(target.label for target in panel_class.search_targets(object()))
     target_labels.update(target.label for target in TrackingOptionsPanel.search_targets())
+    target_labels.update(target.label for target in SavingSettingsPanel.search_targets())
 
     assert 'Acquire' in target_labels
+    assert 'Start New Tracking File' in target_labels
     assert 'Selected Bead' in target_labels
     assert 'FFT rmin' in target_labels
     assert 'XY-Lock Once' in target_labels
@@ -2438,6 +2444,29 @@ def test_search_guides_to_roi_setting_in_preferences(qtbot):
     clear_ui_manager_singleton()
 
 
+def test_search_guides_to_saving_setting_in_preferences(qtbot):
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    manager.settings = MagScopeSettings()
+    manager.windows = []
+    highlighted_widgets = []
+    manager._highlight_search_widget = lambda widget: highlighted_widgets.append(widget)
+
+    manager._guide_to_search_result('Tracking file duration')
+
+    dialog = manager._preferences_dialog
+    assert isinstance(dialog, PreferencesDialog)
+    qtbot.addWidget(dialog)
+    duration_widget = dialog.saving_settings_panel._setting_inputs[
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING
+    ]
+    assert dialog.stack.currentIndex() == 1
+    assert highlighted_widgets == [duration_widget]
+    assert duration_widget.selectedText() == duration_widget.text()
+
+    clear_ui_manager_singleton()
+
+
 def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeypatch):
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -2456,7 +2485,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     dialog = PreferencesDialog(manager)
     qtbot.addWidget(dialog)
 
-    assert dialog.sidebar.count() == 3
+    assert dialog.sidebar.count() == 4
     assert dialog.accent_color_input.text() == ACCENT_COLOR
     assert f'background-color: {ACCENT_COLOR};' in dialog.accent_color_swatch.styleSheet()
     assert not dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
@@ -2467,6 +2496,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
     assert hasattr(dialog, 'reset_section_button')
     assert dialog.appearance_layout_tab.layout().indexOf(dialog.appearance_status_label) != -1
     assert len(dialog.settings_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
+    assert len(dialog.saving_settings_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 1
     assert len(dialog.tracking_options_panel.findChildren(QFrame, 'preferencesGroupPanel')) == 4
     assert len(dialog.appearance_layout_tab.findChildren(QFrame, 'preferencesGroupPanel')) == 2
     assert any(
@@ -2478,7 +2508,7 @@ def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeyp
         for label in dialog.appearance_layout_tab.findChildren(QLabel)
     )
 
-    dialog.sidebar.setCurrentRow(2)
+    dialog.sidebar.setCurrentRow(3)
     dialog._on_reset_current_section()
 
     assert reset_calls == [True]
@@ -2619,6 +2649,9 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     clear_ui_manager_singleton()
     settings = MagScopeSettings()
     settings['magnification'] = 4.0
+    settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] = True
+    settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] = False
+    settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] = 15
     settings[GUI_ACCENT_COLOR_SETTING] = '#336699'
     settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] = False
     manager = UIManager()
@@ -2640,6 +2673,9 @@ def test_preferences_reset_all_resets_each_preferences_area(qtbot, monkeypatch):
     qtbot.mouseClick(dialog.reset_all_preferences_button, Qt.MouseButton.LeftButton)
 
     assert manager.settings['magnification'] == MagScopeSettings()['magnification']
+    assert manager.settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is False
+    assert manager.settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is True
+    assert manager.settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 60
     assert manager.settings[GUI_ACCENT_COLOR_SETTING] == ACCENT_COLOR
     assert manager.settings[GUI_LIVE_PLOT_PROGRESS_BAR_SETTING] is True
     assert dialog.live_plot_progress_indicator_checkbox.checkbox.isChecked()
@@ -2808,7 +2844,7 @@ def test_search_guides_to_fft_rmin_in_tracking_preferences(qtbot):
     dialog = manager._preferences_dialog
     assert isinstance(dialog, PreferencesDialog)
     qtbot.addWidget(dialog)
-    assert dialog.stack.currentIndex() == 1
+    assert dialog.stack.currentIndex() == 2
     assert highlighted_widgets == [dialog.tracking_options_panel.fft_rmin]
     assert dialog.tracking_options_panel.fft_rmin.lineedit.selectedText() == (
         dialog.tracking_options_panel.fft_rmin.lineedit.text()

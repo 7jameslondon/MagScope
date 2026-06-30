@@ -24,6 +24,7 @@ classifiers = [
 license = "GPL-3.0"
 license-files = ["license"]
 dependencies = [
+    "h5py",
     "numpy>=1.26",
     "scipy>=1.11.1",
     "matplotlib",

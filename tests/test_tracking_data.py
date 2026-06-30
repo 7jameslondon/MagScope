@@ -1,0 +1,668 @@
+from dataclasses import replace
+from pathlib import Path
+import subprocess
+import sys
+
+import numpy as np
+import pytest
+
+h5py = pytest.importorskip("h5py")
+
+from magscope.tracking_data import (
+    CloseTrackingDataFiles,
+    TRACKING_DATA_WRITER_FAILURE_WARNING,
+    TrackingDataWriter,
+    TrackingHDF5File,
+    build_tracking_data_batch,
+    timestamps_to_epoch_ns,
+    tracking_data_path,
+)
+
+
+def _tracks(rows: list[list[float]]) -> np.ndarray:
+    return np.asarray(rows, dtype=np.float64)
+
+
+class DummyTrackingDataQueue:
+    def __init__(self, *items):
+        self.items = list(items)
+
+    def get(self):
+        return self.items.pop(0)
+
+
+def _assert_child_process_can_open_hdf5(path: Path) -> None:
+    code = (
+        "import h5py, sys; "
+        "file = h5py.File(sys.argv[1], 'r'); "
+        "file['tracking']; "
+        "file.close()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+class DummyWarningQueue:
+    def __init__(self):
+        self.items = []
+
+    def put_nowait(self, item):
+        self.items.append(item)
+
+
+def _single_bead_batch(
+    tmp_path,
+    timestamps: np.ndarray,
+    *,
+    recording_id: int = 1,
+    recording_start_ns: int | None = None,
+    include_roi_positions: bool = False,
+    max_file_duration_ns: int | None = None,
+    batch_sequence: int = 0,
+):
+    rows = [
+        [float(timestamp), 10.0 + index, np.nan, 30.0, 5.0, 100.0, 200.0]
+        for index, timestamp in enumerate(timestamps)
+    ]
+    return build_tracking_data_batch(
+        recording_id=recording_id,
+        acquisition_dir=str(tmp_path),
+        timestamps=timestamps,
+        tracks=_tracks(rows),
+        n_rois=1,
+        include_roi_positions=include_roi_positions,
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_file_duration_ns,
+        batch_sequence=batch_sequence,
+    )
+
+
+def test_hdf5_writer_appends_batches_without_roi_positions(tmp_path):
+    first_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([1.0, 1.1], dtype=np.float64),
+        tracks=_tracks(
+            [
+                [1.0, 10.0, 20.0, np.nan, 5.0, 100.0, 200.0],
+                [1.0, 11.0, 21.0, 31.0, 6.0, 110.0, 210.0],
+                [1.1, 12.0, 22.0, 32.0, 5.0, 100.0, 200.0],
+                [1.1, 13.0, 23.0, 33.0, 6.0, 110.0, 210.0],
+            ]
+        ),
+        n_rois=2,
+        include_roi_positions=False,
+        batch_sequence=10,
+    )
+    second_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([1.2], dtype=np.float64),
+        tracks=_tracks(
+            [
+                [1.2, 14.0, 24.0, 34.0, 5.0, 100.0, 200.0],
+                [1.2, 15.0, 25.0, 35.0, 6.0, 110.0, 210.0],
+            ]
+        ),
+        n_rois=2,
+        include_roi_positions=False,
+        batch_sequence=11,
+    )
+
+    path = tmp_path / "tracking.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=False)
+    writer.append(first_batch)
+    writer.append(second_batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        assert group.attrs["record_order"] == "writer_append_order"
+        assert group.attrs["batch_sequence_order"] == "video_task_enqueue_order"
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(1_200_000_000)
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([10, 11], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_frame_start"][:],
+            np.asarray([0, 2], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_frame_count"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_record_start"][:],
+            np.asarray([0, 4], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_record_count"][:],
+            np.asarray([4, 2], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_batch_sequence"][:],
+            np.asarray([10, 10, 11], dtype=np.uint64),
+        )
+        assert group["frame_timestamps_ns"].dtype == np.dtype(np.uint64)
+        assert group["frame_timestamps_ns"].shape == (3,)
+        assert group["frame_timestamps_ns"].maxshape == (None,)
+        assert group["frame_timestamps_ns"].chunks is not None
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            np.asarray([1_000_000_000, 1_100_000_000, 1_200_000_000], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 2, 4, 6], dtype=np.uint64),
+        )
+        assert group["bead_ids"].dtype == np.dtype(np.uint16)
+        np.testing.assert_array_equal(
+            group["bead_ids"][:],
+            np.asarray([5, 6, 5, 6, 5, 6], dtype=np.uint16),
+        )
+        assert group["positions_nm"].dtype == np.dtype(np.float64)
+        assert group["positions_nm"].shape == (6, 3)
+        assert np.isnan(group["positions_nm"][0, 2])
+        assert "roi_positions_px" not in group
+
+
+def test_hdf5_writer_saves_optional_roi_positions(tmp_path):
+    batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([2.0], dtype=np.float64),
+        tracks=_tracks(
+            [
+                [2.0, 10.0, 20.0, 30.0, 5.0, 100.0, 200.0],
+                [2.0, 11.0, 21.0, 31.0, 6.0, 110.0, 210.0],
+            ]
+        ),
+        n_rois=2,
+        include_roi_positions=True,
+    )
+
+    path = tmp_path / "tracking-roi.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=True)
+    writer.append(batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        assert group["roi_positions_px"].dtype == np.dtype(np.uint16)
+        assert group["roi_positions_px"].shape == (2, 2)
+        np.testing.assert_array_equal(
+            group["roi_positions_px"][:],
+            np.asarray([[100, 200], [110, 210]], dtype=np.uint16),
+        )
+
+
+def test_batch_validation_rejects_bad_timestamps():
+    with pytest.raises(ValueError, match="finite"):
+        timestamps_to_epoch_ns(np.asarray([1.0, np.nan], dtype=np.float64))
+
+
+@pytest.mark.parametrize(
+    ("field_index", "bad_value", "match"),
+    [
+        (4, 70000.0, "bead IDs"),
+        (5, 70000.0, "ROI positions"),
+        (4, 1.5, "bead IDs"),
+    ],
+)
+def test_batch_validation_rejects_values_that_do_not_fit_uint16(
+    field_index,
+    bad_value,
+    match,
+    tmp_path,
+):
+    rows = _tracks([[1.0, 10.0, 20.0, 30.0, 5.0, 100.0, 200.0]])
+    rows[0, field_index] = bad_value
+
+    with pytest.raises(ValueError, match=match):
+        build_tracking_data_batch(
+            recording_id=1,
+            acquisition_dir=str(tmp_path),
+            timestamps=np.asarray([1.0], dtype=np.float64),
+            tracks=rows,
+            n_rois=1,
+            include_roi_positions=True,
+        )
+
+
+def test_tracking_data_path_adds_numeric_suffix(tmp_path):
+    first_timestamp_ns = 1_000_000_000
+    first_path = tracking_data_path(tmp_path, first_timestamp_ns)
+    first_path.touch()
+
+    second_path = tracking_data_path(tmp_path, first_timestamp_ns)
+
+    assert second_path.parent == Path(tmp_path)
+    assert second_path.name.endswith("(1).h5")
+
+
+def test_hdf5_writer_preserves_batch_sequence_for_out_of_order_appends(tmp_path):
+    later_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([2.0], dtype=np.float64),
+        tracks=_tracks([[2.0, 20.0, 21.0, 22.0, 5.0, 100.0, 200.0]]),
+        n_rois=1,
+        include_roi_positions=False,
+        batch_sequence=2,
+    )
+    earlier_batch = build_tracking_data_batch(
+        recording_id=1,
+        acquisition_dir=str(tmp_path),
+        timestamps=np.asarray([1.0], dtype=np.float64),
+        tracks=_tracks([[1.0, 10.0, 11.0, 12.0, 5.0, 100.0, 200.0]]),
+        n_rois=1,
+        include_roi_positions=False,
+        batch_sequence=1,
+    )
+
+    path = tmp_path / "tracking-out-of-order.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=False)
+    writer.append(later_batch)
+    writer.append(earlier_batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            np.asarray([2_000_000_000, 1_000_000_000], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_batch_sequence"][:],
+            np.asarray([2, 1], dtype=np.uint64),
+        )
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(2_000_000_000)
+
+
+def test_hdf5_writer_rolls_back_partial_append_after_write_failure(monkeypatch, tmp_path):
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([1.0], dtype=np.float64),
+        batch_sequence=1,
+    )
+    second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([2.0], dtype=np.float64),
+        batch_sequence=2,
+    )
+    path = tmp_path / "rollback.h5"
+    writer = TrackingHDF5File(path, include_roi_positions=False)
+    writer.append(first_batch)
+
+    original_setitem = h5py.Dataset.__setitem__
+
+    def fail_positions_write(dataset, key, value):
+        if dataset.name.endswith("/positions_nm"):
+            raise OSError("simulated position write failure")
+        return original_setitem(dataset, key, value)
+
+    monkeypatch.setattr(h5py.Dataset, "__setitem__", fail_positions_write)
+    with pytest.raises(OSError, match="simulated position write failure"):
+        writer.append(second_batch)
+    writer.close()
+
+    with h5py.File(path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            np.asarray([1_000_000_000], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 1], dtype=np.uint64),
+        )
+        np.testing.assert_array_equal(
+            group["bead_ids"][:],
+            np.asarray([5], dtype=np.uint16),
+        )
+        assert group["positions_nm"].shape == (1, 3)
+        assert group.attrs["min_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+        assert group.attrs["max_frame_timestamp_ns"] == np.uint64(1_000_000_000)
+
+
+def test_tracking_writer_rotates_between_batches_and_preserves_roi_dataset(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    max_duration_ns = 60_000_000_000
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start, start + 61.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        include_roi_positions=True,
+        max_file_duration_ns=max_duration_ns,
+    )
+    second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 62.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        include_roi_positions=True,
+        max_file_duration_ns=max_duration_ns,
+    )
+
+    writer = TrackingDataWriter(DummyTrackingDataQueue(first_batch, second_batch, None))
+    writer.run()
+
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 2
+
+    with h5py.File(paths[0], "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            timestamps_to_epoch_ns(np.asarray([start, start + 61.0], dtype=np.float64)),
+        )
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 1, 2], dtype=np.uint64),
+        )
+        assert group["roi_positions_px"].shape == (2, 2)
+        assert np.isnan(group["positions_nm"][0, 1])
+
+    with h5py.File(paths[1], "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_timestamps_ns"][:],
+            timestamps_to_epoch_ns(np.asarray([start + 62.0], dtype=np.float64)),
+        )
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 1], dtype=np.uint64),
+        )
+        assert group["roi_positions_px"].shape == (1, 2)
+
+
+def test_tracking_writer_skips_failed_batch_and_continues(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        include_roi_positions=False,
+    )
+    bad_batch = replace(
+        _single_bead_batch(
+            tmp_path,
+            np.asarray([start + 1.0], dtype=np.float64),
+            recording_start_ns=recording_start_ns,
+            include_roi_positions=False,
+        ),
+        positions_nm=np.zeros((2, 3), dtype=np.float64),
+    )
+    third_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 2.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        include_roi_positions=False,
+    )
+
+    warning_queue = DummyWarningQueue()
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(first_batch, bad_batch, third_batch, None),
+        warning_queue=warning_queue,
+    )
+    writer.run()
+
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 2
+
+    saved_timestamps = []
+    for path in paths:
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            saved_timestamps.append(group["frame_timestamps_ns"][:].tolist())
+            assert "roi_positions_px" not in group
+
+    assert sorted(saved_timestamps) == sorted(
+        [
+            timestamps_to_epoch_ns(np.asarray([start], dtype=np.float64)).tolist(),
+            timestamps_to_epoch_ns(np.asarray([start + 2.0], dtype=np.float64)).tolist(),
+        ]
+    )
+    assert len(warning_queue.items) == 1
+    warning = warning_queue.items[0]
+    assert warning["type"] == TRACKING_DATA_WRITER_FAILURE_WARNING
+    assert warning["path"] is not None
+    assert warning["recording_id"] == bad_batch.recording_id
+    assert warning["batch_sequence"] == bad_batch.batch_sequence
+    assert warning["frames"] == 1
+    assert warning["records"] == 1
+    assert warning["error"]
+
+
+def test_tracking_writer_routes_late_batches_to_original_recording_file(tmp_path):
+    start = 1_700_000_000.0
+    first_recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    second_recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start + 10.0]))[0])
+    second_recording_first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 10.0], dtype=np.float64),
+        recording_id=2,
+        recording_start_ns=second_recording_start_ns,
+        batch_sequence=2,
+    )
+    late_first_recording_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_id=1,
+        recording_start_ns=first_recording_start_ns,
+        batch_sequence=1,
+    )
+    second_recording_second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 11.0], dtype=np.float64),
+        recording_id=2,
+        recording_start_ns=second_recording_start_ns,
+        batch_sequence=3,
+    )
+
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(
+            second_recording_first_batch,
+            late_first_recording_batch,
+            second_recording_second_batch,
+            None,
+        )
+    )
+    writer.run()
+
+    files_by_recording = {}
+    for path in tmp_path.glob("Tracking Data *.h5"):
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            files_by_recording[int(group.attrs["recording_id"])] = (
+                group["batch_sequence"][:].tolist(),
+                int(group.attrs["recording_start_ns"]),
+                int(group.attrs["file_start_ns"]),
+            )
+
+    assert set(files_by_recording) == {1, 2}
+    assert files_by_recording[1] == ([1], first_recording_start_ns, first_recording_start_ns)
+    assert files_by_recording[2] == ([2, 3], second_recording_start_ns, second_recording_start_ns)
+
+
+def test_tracking_writer_routes_out_of_order_rotation_batches_by_file_bucket(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    max_duration_ns = 60_000_000_000
+    rotated_first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 62.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=2,
+    )
+    late_first_file_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=1,
+    )
+    rotated_second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 63.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=3,
+    )
+
+    writer = TrackingDataWriter(
+        DummyTrackingDataQueue(
+            rotated_first_batch,
+            late_first_file_batch,
+            rotated_second_batch,
+            None,
+        )
+    )
+    writer.run()
+
+    batches_by_file_start = {}
+    for path in tmp_path.glob("Tracking Data *.h5"):
+        with h5py.File(path, "r") as file:
+            group = file["tracking"]
+            batches_by_file_start[int(group.attrs["file_start_ns"])] = group[
+                "batch_sequence"
+            ][:].tolist()
+
+    assert batches_by_file_start == {
+        recording_start_ns: [1],
+        recording_start_ns + max_duration_ns: [2, 3],
+    }
+
+
+def test_tracking_writer_keeps_one_file_when_rotation_is_disabled(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=None,
+    )
+    second_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 3_600.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=None,
+    )
+
+    writer = TrackingDataWriter(DummyTrackingDataQueue(first_batch, second_batch, None))
+    writer.run()
+
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 1
+    with h5py.File(paths[0], "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["frame_offsets"][:],
+            np.asarray([0, 1, 2], dtype=np.uint64),
+        )
+        assert "roi_positions_px" not in group
+
+
+def test_tracking_writer_close_request_unlocks_file_and_late_batch_appends(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        batch_sequence=1,
+    )
+    late_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 1.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        batch_sequence=2,
+    )
+    expected_path = tracking_data_path(tmp_path, first_batch.file_start_ns)
+
+    class InspectingQueue(DummyTrackingDataQueue):
+        checked_unlocked = False
+
+        def get(self):
+            item = super().get()
+            if item is late_batch:
+                _assert_child_process_can_open_hdf5(expected_path)
+                self.checked_unlocked = True
+            return item
+
+    queue = InspectingQueue(
+        first_batch,
+        CloseTrackingDataFiles(recording_id=first_batch.recording_id),
+        late_batch,
+        None,
+    )
+    writer = TrackingDataWriter(queue)
+    writer.run()
+
+    assert queue.checked_unlocked
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert paths == [expected_path]
+    with h5py.File(expected_path, "r") as file:
+        group = file["tracking"]
+        np.testing.assert_array_equal(
+            group["batch_sequence"][:],
+            np.asarray([1, 2], dtype=np.uint64),
+        )
+
+
+def test_tracking_writer_closes_rotated_file_before_shutdown(tmp_path):
+    start = 1_700_000_000.0
+    recording_start_ns = int(timestamps_to_epoch_ns(np.asarray([start]))[0])
+    max_duration_ns = 60_000_000_000
+    first_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=1,
+    )
+    rotated_batch = _single_bead_batch(
+        tmp_path,
+        np.asarray([start + 61.0], dtype=np.float64),
+        recording_start_ns=recording_start_ns,
+        max_file_duration_ns=max_duration_ns,
+        batch_sequence=2,
+    )
+    first_path = tracking_data_path(tmp_path, first_batch.file_start_ns)
+
+    class InspectingQueue(DummyTrackingDataQueue):
+        checked_unlocked = False
+
+        def get(self):
+            item = super().get()
+            if item is None:
+                _assert_child_process_can_open_hdf5(first_path)
+                self.checked_unlocked = True
+            return item
+
+    queue = InspectingQueue(first_batch, rotated_batch, None)
+    writer = TrackingDataWriter(queue)
+    writer.run()
+
+    assert queue.checked_unlocked
+    paths = sorted(tmp_path.glob("Tracking Data *.h5"))
+    assert len(paths) == 2

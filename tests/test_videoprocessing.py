@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from magscope.ipc_commands import ShowMessageCommand, UpdateZLUTMetadataCommand
+from magscope.ipc_commands import ShowMessageCommand, ShowWarningCommand, UpdateZLUTMetadataCommand
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,8 +90,30 @@ class DummyQueue:
     def __init__(self):
         self.items = []
 
+    def put(self, item):
+        self.items.append(item)
+
     def put_nowait(self, item):
         self.items.append(item)
+
+
+class DummyFullQueue:
+    def __init__(self):
+        self.put_calls = 0
+
+    def put_nowait(self, item):
+        self.put_calls += 1
+        raise videoprocessing.Full
+
+
+class DummyGetNowaitQueue:
+    def __init__(self, items=()):
+        self.items = list(items)
+
+    def get_nowait(self):
+        if not self.items:
+            raise videoprocessing.Empty
+        return self.items.pop(0)
 
 
 class DummyLock:
@@ -124,6 +146,25 @@ class DummyVideoBuffer:
 
     def read_stack_no_return(self):
         self.read_calls += 1
+
+
+class DummyStackVideoBuffer(DummyVideoBuffer):
+    def __init__(self):
+        super().__init__()
+        self.stack = np.arange(18, dtype=np.uint16).reshape((3, 3, 2))
+        self.timestamps = np.asarray([1.0, 1.1], dtype=np.float64)
+        self.stack_shape = self.stack.shape
+
+    def peak_stack(self):
+        return self.stack, self.timestamps
+
+
+class DummyTracksBuffer:
+    def __init__(self):
+        self.rows = []
+
+    def write(self, rows):
+        self.rows.append(np.asarray(rows).copy())
 
 
 class DummyReadableVideoBuffer:
@@ -168,6 +209,58 @@ def manager():
     return manager
 
 
+def test_setup_bounds_tracking_data_queue(manager, monkeypatch):
+    created_queues = []
+    created_workers = []
+    created_writers = []
+
+    class FakeQueue:
+        def __init__(self, maxsize=0):
+            self.maxsize = maxsize
+            created_queues.append(self)
+
+    class FakeTrackingDataWriter:
+        def __init__(self, queue, warning_queue=None):
+            self.queue = queue
+            self.warning_queue = warning_queue
+            self.started = False
+            created_writers.append(self)
+
+        def start(self):
+            self.started = True
+
+    class FakeWorker:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.started = False
+            created_workers.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(videoprocessing, 'Queue', FakeQueue)
+    monkeypatch.setattr(videoprocessing, 'TrackingDataWriter', FakeTrackingDataWriter)
+    monkeypatch.setattr(videoprocessing, 'VideoWorker', FakeWorker)
+    manager.settings = {'video processors n': 3}
+    manager.locks = {}
+    manager.shared_values = SimpleNamespace(
+        video_process_reserved_stacks=object(),
+        video_process_completed_stacks=object(),
+        video_process_busy_count=object(),
+        live_profile_enabled=object(),
+        live_profile_bead=object(),
+    )
+    manager._broadcast_zlut_metadata = lambda: None
+
+    manager.setup()
+
+    assert created_queues[0].maxsize == 3
+    assert created_queues[1].maxsize == 6
+    assert created_writers[0].queue is created_queues[1]
+    assert created_writers[0].warning_queue is created_queues[3]
+    assert len(created_workers) == 3
+    assert all(worker.started for worker in created_workers)
+
 @pytest.fixture
 def camera_manager():
     type(CameraManager)._instances.pop(CameraManager, None)
@@ -185,6 +278,57 @@ def test_add_task_returns_true_for_normal_processing_task(manager):
     assert result is True
     assert len(manager._tasks.items) == 1
     assert 'zlut_capture' not in manager._tasks.items[0]
+    assert manager._tasks.items[0]['tracking_recording_id'] == manager._tracking_recording_id
+    assert (
+        manager._tasks.items[0]['tracking_recording_start_ns']
+        == manager._tracking_recording_start_ns
+    )
+    assert manager._tasks.items[0]['tracking_batch_sequence'] == 0
+    assert manager._tracking_task_sequence == 1
+    assert manager._tasks.items[0]['save_tracking_roi_positions'] is False
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 3_600_000_000_000
+
+
+def test_add_task_uses_tracking_file_rotation_settings(manager):
+    from magscope.settings import (
+        MagScopeSettings,
+        TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+    )
+
+    manager.settings = MagScopeSettings(
+        {
+            'magnification': 60,
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: False,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+        }
+    )
+
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] is None
+
+    manager._tasks.items.clear()
+    manager.settings = MagScopeSettings(
+        {
+            'magnification': 60,
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+        }
+    )
+
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_file_max_duration_ns'] == 1_800_000_000_000
+
+
+def test_add_task_assigns_monotonic_tracking_batch_sequence(manager):
+    manager._add_task()
+    manager._add_task()
+
+    assert manager._tasks.items[0]['tracking_batch_sequence'] == 0
+    assert manager._tasks.items[1]['tracking_batch_sequence'] == 1
+    assert manager._tracking_task_sequence == 2
 
 
 def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
@@ -213,6 +357,117 @@ def test_add_task_clears_zlut_capture_state_after_successful_enqueue(manager):
     assert manager._zlut_capture_earliest_timestamp is None
     assert manager._zlut_capture_motor_z_value is None
     assert manager._zlut_capture_remaining_profiles_per_bead is None
+
+
+def test_set_acquisition_dir_on_rotates_tracking_recording(manager):
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.set_acquisition_dir_on(True)
+    manager.set_acquisition_dir_on(True)
+    manager.set_acquisition_dir_on(False)
+
+    assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_set_acquisition_dir_rotates_tracking_recording_when_saving(manager, tmp_path):
+    manager._acquisition_dir_on = True
+    manager._acquisition_dir = str(tmp_path / 'first')
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.set_acquisition_dir(str(tmp_path / 'second'))
+    manager.set_acquisition_dir(str(tmp_path / 'second'))
+
+    assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_set_settings_rotates_tracking_recording_when_roi_save_setting_changes(manager):
+    from magscope.settings import MagScopeSettings, SAVE_TRACKING_ROI_POSITIONS_SETTING
+
+    manager._acquisition_dir_on = True
+    manager.settings = MagScopeSettings({SAVE_TRACKING_ROI_POSITIONS_SETTING: False})
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.set_settings(MagScopeSettings({SAVE_TRACKING_ROI_POSITIONS_SETTING: True}))
+    manager.set_settings(MagScopeSettings({SAVE_TRACKING_ROI_POSITIONS_SETTING: True}))
+
+    assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_set_settings_rotates_tracking_recording_when_file_rotation_setting_changes(manager):
+    from magscope.settings import (
+        MagScopeSettings,
+        TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+    )
+
+    manager._acquisition_dir_on = True
+    manager.settings = MagScopeSettings(
+        {
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 60,
+        }
+    )
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: True,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+    manager.set_settings(
+        MagScopeSettings(
+            {
+                TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: False,
+                TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: 30,
+            }
+        )
+    )
+
+    assert manager._tracking_recording_id == initial_recording_id + 2
+
+
+def test_manual_tracking_file_rotation_only_rotates_when_saving(manager):
+    initial_recording_id = manager._tracking_recording_id
+
+    manager._acquisition_dir_on = False
+    manager.start_new_tracking_data_file()
+    assert manager._tracking_recording_id == initial_recording_id
+
+    manager._acquisition_dir_on = True
+    manager.start_new_tracking_data_file()
+    assert manager._tracking_recording_id == initial_recording_id + 1
+
+
+def test_tracking_recording_boundary_queues_close_request(manager):
+    manager._tracking_data_queue = DummyQueue()
+    manager._acquisition_dir_on = True
+    initial_recording_id = manager._tracking_recording_id
+
+    manager.start_new_tracking_data_file()
+
+    assert manager._tracking_recording_id == initial_recording_id + 1
+    assert len(manager._tracking_data_queue.items) == 1
+    request = manager._tracking_data_queue.items[0]
+    assert isinstance(request, videoprocessing.CloseTrackingDataFiles)
+    assert request.recording_id == initial_recording_id
+
+    manager.set_acquisition_dir_on(False)
+
+    assert len(manager._tracking_data_queue.items) == 2
+    request = manager._tracking_data_queue.items[1]
+    assert isinstance(request, videoprocessing.CloseTrackingDataFiles)
+    assert request.recording_id == initial_recording_id + 1
 
 
 def test_add_task_uses_frozen_rois_for_pending_zlut_profile_length(manager):
@@ -397,6 +652,205 @@ def test_release_stack_marks_completion_and_clears_reservation():
     assert worker._task_owes_reserved_stack is False
 
 
+def test_worker_enqueues_tracking_data_batch_when_saving_enabled(monkeypatch, tmp_path):
+    tracking_queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=DummyQueue(),
+        locks={},
+        reserved_stacks=DummyValue(1),
+        completed_stacks=DummyValue(0),
+        busy_count=DummyValue(0),
+        gpu_lock=DummyLock(),
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=None,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=DummyValue(0),
+        live_profile_bead=DummyValue(-1),
+        tracking_data_queue=tracking_queue,
+    )
+    worker._video_buffer = DummyStackVideoBuffer()
+    worker._tracks_buffer = DummyTracksBuffer()
+    worker._live_profile_buffer = None
+    worker._task_owes_reserved_stack = True
+
+    def fake_tracker(stack, zlut, **kwargs):
+        return (
+            np.asarray([0.5, 1.5, 2.5, 3.5], dtype=np.float64),
+            np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            np.asarray([10.0, np.nan, 30.0, 40.0], dtype=np.float64),
+            np.zeros((2, 4), dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        videoprocessing.magtrack,
+        'stack_to_xyzp_advanced',
+        fake_tracker,
+        raising=False,
+    )
+
+    worker.process(
+        {
+            'acquisition_dir': str(tmp_path),
+            'acquisition_dir_on': True,
+            'acquisition_mode': videoprocessing.AcquisitionMode.TRACK,
+            'bead_ids': np.asarray([3, 4], dtype=np.uint32),
+            'bead_rois': np.asarray([[0, 2, 0, 2], [1, 3, 1, 3]], dtype=np.uint32),
+            'save_profiles': False,
+            'save_tracking_roi_positions': True,
+            'tracking_file_max_duration_ns': 123_000_000,
+            'tracking_recording_id': 42,
+            'tracking_recording_start_ns': 1_000_000_000,
+            'tracking_batch_sequence': 17,
+            'zlut': None,
+            'nm_per_px': 2.0,
+            'magnification': 1.0,
+            'tracking_options': {},
+        }
+    )
+
+    assert len(worker._tracks_buffer.rows) == 1
+    saved_tracks = worker._tracks_buffer.rows[0]
+    assert saved_tracks.shape == (4, 7)
+    np.testing.assert_array_equal(saved_tracks[:, 4], np.asarray([3.0, 4.0, 3.0, 4.0]))
+    assert len(tracking_queue.items) == 1
+    batch = tracking_queue.items[0]
+    assert batch.recording_id == 42
+    assert batch.recording_start_ns == 1_000_000_000
+    assert batch.batch_sequence == 17
+    assert batch.include_roi_positions is True
+    assert batch.max_file_duration_ns == 123_000_000
+    np.testing.assert_array_equal(batch.frame_offsets, np.asarray([0, 2, 4], dtype=np.uint64))
+    np.testing.assert_array_equal(batch.bead_ids, np.asarray([3, 4, 3, 4], dtype=np.uint16))
+    np.testing.assert_array_equal(
+        batch.roi_positions_px,
+        np.asarray([[0, 0], [1, 1], [0, 0], [1, 1]], dtype=np.uint16),
+    )
+    assert list(tmp_path.glob('Bead Positions*.txt')) == []
+
+
+def test_worker_does_not_enqueue_tracking_data_when_saving_disabled(monkeypatch, tmp_path):
+    tracking_queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=DummyQueue(),
+        locks={},
+        reserved_stacks=DummyValue(1),
+        completed_stacks=DummyValue(0),
+        busy_count=DummyValue(0),
+        gpu_lock=DummyLock(),
+        profile_length_queue=None,
+        warning_queue=None,
+        zlut_capture_complete_queue=None,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=DummyValue(0),
+        live_profile_bead=DummyValue(-1),
+        tracking_data_queue=tracking_queue,
+    )
+    worker._video_buffer = DummyStackVideoBuffer()
+    worker._tracks_buffer = DummyTracksBuffer()
+    worker._live_profile_buffer = None
+    worker._task_owes_reserved_stack = True
+
+    def fake_tracker(stack, zlut, **kwargs):
+        return (
+            np.zeros((4,), dtype=np.float64),
+            np.zeros((4,), dtype=np.float64),
+            np.zeros((4,), dtype=np.float64),
+            np.zeros((2, 4), dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        videoprocessing.magtrack,
+        'stack_to_xyzp_advanced',
+        fake_tracker,
+        raising=False,
+    )
+
+    worker.process(
+        {
+            'acquisition_dir': str(tmp_path),
+            'acquisition_dir_on': False,
+            'acquisition_mode': videoprocessing.AcquisitionMode.TRACK,
+            'bead_ids': np.asarray([3, 4], dtype=np.uint32),
+            'bead_rois': np.asarray([[0, 2, 0, 2], [1, 3, 1, 3]], dtype=np.uint32),
+            'save_profiles': False,
+            'save_tracking_roi_positions': False,
+            'tracking_recording_id': 42,
+            'zlut': None,
+            'nm_per_px': 2.0,
+            'magnification': 1.0,
+            'tracking_options': {},
+        }
+    )
+
+    assert len(worker._tracks_buffer.rows) == 1
+    assert tracking_queue.items == []
+
+
+def test_worker_reports_tracking_data_save_drop_when_writer_queue_is_full(monkeypatch, tmp_path):
+    tracking_queue = DummyFullQueue()
+    warning_queue = DummyQueue()
+    worker = VideoWorker(
+        tasks=DummyQueue(),
+        locks={},
+        reserved_stacks=DummyValue(1),
+        completed_stacks=DummyValue(0),
+        busy_count=DummyValue(0),
+        gpu_lock=DummyLock(),
+        profile_length_queue=None,
+        warning_queue=warning_queue,
+        zlut_capture_complete_queue=None,
+        zlut_profile_length_queue=None,
+        live_profile_enabled=DummyValue(0),
+        live_profile_bead=DummyValue(-1),
+        tracking_data_queue=tracking_queue,
+    )
+    worker._video_buffer = DummyStackVideoBuffer()
+    worker._tracks_buffer = DummyTracksBuffer()
+    worker._live_profile_buffer = None
+    worker._task_owes_reserved_stack = True
+
+    def fake_tracker(stack, zlut, **kwargs):
+        return (
+            np.asarray([0.5, 1.5, 2.5, 3.5], dtype=np.float64),
+            np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+            np.asarray([10.0, np.nan, 30.0, 40.0], dtype=np.float64),
+            np.zeros((2, 4), dtype=np.float64),
+        )
+
+    monkeypatch.setattr(
+        videoprocessing.magtrack,
+        'stack_to_xyzp_advanced',
+        fake_tracker,
+        raising=False,
+    )
+
+    worker.process(
+        {
+            'acquisition_dir': str(tmp_path),
+            'acquisition_dir_on': True,
+            'acquisition_mode': videoprocessing.AcquisitionMode.TRACK,
+            'bead_ids': np.asarray([3, 4], dtype=np.uint32),
+            'bead_rois': np.asarray([[0, 2, 0, 2], [1, 3, 1, 3]], dtype=np.uint32),
+            'save_profiles': False,
+            'save_tracking_roi_positions': False,
+            'tracking_recording_id': 42,
+            'tracking_batch_sequence': 17,
+            'zlut': None,
+            'nm_per_px': 2.0,
+            'magnification': 1.0,
+            'tracking_options': {},
+        }
+    )
+
+    assert tracking_queue.put_calls == 1
+    assert len(warning_queue.items) == 1
+    warning = warning_queue.items[0]
+    assert warning['type'] == videoprocessing._TRACKING_DATA_SAVE_DROPPED_WARNING
+    assert warning['batches'] == 1
+    assert warning['frames'] == 2
+    assert warning['records'] == 4
+
 def test_camera_manager_releases_only_newly_completed_stacks(camera_manager):
     releases = []
     camera_manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=0, n_images=5)
@@ -504,6 +958,101 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
         step_size=None,
         profile_length=None,
     )
+
+
+def test_tracking_data_save_drop_warning_is_throttled_and_recovers(manager, monkeypatch):
+    sent_commands = []
+    clock = {'value': 0.0}
+    manager.send_ipc = sent_commands.append
+    monkeypatch.setattr(videoprocessing, 'monotonic', lambda: clock['value'])
+
+    def drop_warning(timestamp, frames=2, records=4):
+        return {
+            'type': videoprocessing._TRACKING_DATA_SAVE_DROPPED_WARNING,
+            'timestamp': timestamp,
+            'batches': 1,
+            'frames': frames,
+            'records': records,
+        }
+
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_000.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    assert isinstance(sent_commands[0], ShowWarningCommand)
+    assert 'Dropped tracking batches: 1' in sent_commands[0].details
+    assert 'Dropped frames: 2' in sent_commands[0].details
+    assert 'Dropped bead records: 4' in sent_commands[0].details
+
+    clock['value'] = 10.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_010.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    assert manager._tracking_data_save_drop_count == 2
+
+    clock['value'] = 100.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_100.0)])
+    manager._process_worker_warnings()
+
+    clock['value'] = 200.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_200.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+
+    clock['value'] = 301.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_301.0, frames=1, records=1)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 2
+    assert 'Dropped tracking batches: 5' in sent_commands[1].details
+    assert 'Dropped frames: 9' in sent_commands[1].details
+    assert 'Dropped bead records: 17' in sent_commands[1].details
+
+    clock['value'] = 422.0
+    manager._warning_queue = DummyGetNowaitQueue()
+    manager._process_worker_warnings()
+
+    assert manager._tracking_data_save_drop_count == 0
+    assert manager._tracking_data_save_drop_last_warning_monotonic is None
+
+    clock['value'] = 423.0
+    manager._warning_queue = DummyGetNowaitQueue([drop_warning(1_700_000_423.0)])
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 3
+    assert 'Dropped tracking batches: 1' in sent_commands[2].details
+
+def test_tracking_data_writer_failure_warning_is_sent_to_ui(manager):
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+    manager._warning_queue = DummyGetNowaitQueue(
+        [
+            {
+                'type': videoprocessing.TRACKING_DATA_WRITER_FAILURE_WARNING,
+                'timestamp': 1_700_000_000.0,
+                'path': 'C:/data/Tracking Data 1.h5',
+                'recording_id': 3,
+                'batch_sequence': 12,
+                'frames': 2,
+                'records': 4,
+                'error': 'disk full',
+            }
+        ]
+    )
+
+    manager._process_worker_warnings()
+
+    assert len(sent_commands) == 1
+    command = sent_commands[0]
+    assert isinstance(command, ShowWarningCommand)
+    assert command.text == 'Tracking data HDF5 writer failed.'
+    assert 'C:/data/Tracking Data 1.h5' in command.details
+    assert 'Batch sequence: 12' in command.details
+    assert 'Frames not saved: 2' in command.details
+    assert 'Bead records not saved: 4' in command.details
+    assert 'disk full' in command.details
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,12 +16,21 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtWidgets import QWidget
 
+from magscope.ipc_commands import StartNewTrackingDataFileCommand, UpdateSettingsCommand
+from magscope.settings import (
+    MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+)
 from magscope.scripting import ScriptStatus
 from magscope.ui.controls import (
     AcquisitionPanel,
     BeadSelectionPanel,
     CameraPanel,
     HelpPanel,
+    MagScopeSettingsPanel,
+    SavingSettingsPanel,
     ScriptPanel,
     StatusPanel,
     ZLUTPanel,
@@ -116,7 +126,8 @@ def test_status_panel_update_video_buffer_purge(qtbot):
     panel = StatusPanel(manager=SimpleNamespace())
     qtbot.addWidget(panel)
     panel.update_video_buffer_purge(5000.0)
-    assert "Video Buffer Purged at:" in panel.video_buffer_purge_label.text()
+    expected = time.strftime("%Y/%m/%d %I:%M:%S %p", time.localtime(5000.0))
+    assert panel.video_buffer_purge_label.text() == f"Video Buffer Purged at: {expected}"
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +494,61 @@ def test_acquisition_panel_set_acquisition_dir_text_path(qtbot):
     qtbot.addWidget(panel)
     panel.set_acquisition_dir_text("/some/path")
     assert "/some/path" in panel.acquisition_dir_textedit.text()
+
+
+def test_magscope_settings_panel_excludes_tracking_save_controls(qtbot):
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=lambda command: None,
+    )
+    panel = MagScopeSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    assert SAVE_TRACKING_ROI_POSITIONS_SETTING not in panel._setting_checkboxes
+    assert TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING not in panel._setting_checkboxes
+    assert TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING not in panel._setting_inputs
+    assert not hasattr(panel, "start_new_tracking_file_button")
+
+
+def test_saving_settings_panel_uses_checkbox_for_tracking_roi_save(qtbot):
+    commands = []
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=commands.append,
+    )
+    panel = SavingSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    checkbox = panel._setting_checkboxes[SAVE_TRACKING_ROI_POSITIONS_SETTING]
+    assert SAVE_TRACKING_ROI_POSITIONS_SETTING not in panel._setting_inputs
+
+    checkbox.setChecked(True)
+
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[SAVE_TRACKING_ROI_POSITIONS_SETTING] is True
+
+
+def test_saving_settings_panel_tracks_tracking_file_rotation_controls(qtbot):
+    commands = []
+    manager = SimpleNamespace(
+        settings=MagScopeSettings(),
+        send_ipc=commands.append,
+    )
+    panel = SavingSettingsPanel(manager=manager)
+    qtbot.addWidget(panel)
+
+    checkbox = panel._setting_checkboxes[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING]
+    duration_input = panel._setting_inputs[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING]
+    assert panel.start_new_tracking_file_button.text() == "Start New Tracking File"
+
+    checkbox.setChecked(False)
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING] is False
+
+    duration_input.setText("15")
+    duration_input.editingFinished.emit()
+    assert isinstance(commands[-1], UpdateSettingsCommand)
+    assert commands[-1].settings[TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING] == 15
+
+    qtbot.mouseClick(panel.start_new_tracking_file_button, Qt.MouseButton.LeftButton)
+    assert isinstance(commands[-1], StartNewTrackingDataFileCommand)

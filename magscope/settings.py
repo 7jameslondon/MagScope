@@ -14,6 +14,11 @@ DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
 GUI_ACCENT_COLOR_SETTING = 'gui accent color'
 GUI_LIVE_PLOT_PROGRESS_BAR_SETTING = 'gui live plot progress bar'
 PREFERENCES_BUNDLE_VERSION = 1
+SAVE_TRACKING_ROI_POSITIONS_SETTING = 'save tracking ROI positions'
+TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING = 'tracking data file rotation enabled'
+TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING = (
+    'tracking data file rotation interval minutes'
+)
 TRACKING_OPTIONS_QSETTINGS_GROUP = 'TrackingOptions'
 TRACKING_OPTIONS_QSETTINGS_KEY = 'options_yaml'
 _HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
@@ -402,6 +407,25 @@ class MagScopeSettings(MutableMapping[str, Any]):
             value_type=int,
             default=1_000_000,
             display_name="Tracks max datapoints",
+            minimum=1,
+        ),
+        SAVE_TRACKING_ROI_POSITIONS_SETTING: SettingSpec(
+            SAVE_TRACKING_ROI_POSITIONS_SETTING,
+            value_type=bool,
+            default=False,
+            display_name="Save tracking ROI positions",
+        ),
+        TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING: SettingSpec(
+            TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+            value_type=bool,
+            default=True,
+            display_name="Automatically start new tracking files",
+        ),
+        TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING: SettingSpec(
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+            value_type=int,
+            default=60,
+            display_name="Tracking file duration (minutes)",
             minimum=1,
         ),
         "video buffer n images": SettingSpec(

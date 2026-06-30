@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Callable, Type
 
-import magtrack
+from magtrack._cupy import is_cupy_available
 import numpy as np
 from PyQt6.QtGui import QImage
 
@@ -120,4 +120,4 @@ def register_script_command(command_type: type[Command]):
 
 def check_cupy() -> bool:
     """Return ``True`` when the CuPy package is usable."""
-    return magtrack.check_cupy()
+    return is_cupy_available()

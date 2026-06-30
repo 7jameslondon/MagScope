@@ -15,6 +15,7 @@ _SUBMODULES = {
     'processes',
     'scope',
     'scripting',
+    'tracking_data',
     'ui',
     'utils',
     'zlut_generation',

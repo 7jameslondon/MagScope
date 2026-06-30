@@ -35,6 +35,11 @@ class UpdateTrackingOptionsCommand(Command):
 
 
 @dataclass(frozen=True)
+class StartNewTrackingDataFileCommand(Command):
+    pass
+
+
+@dataclass(frozen=True)
 class SetAcquisitionOnCommand(Command):
     value: bool
 
@@ -184,6 +189,12 @@ class UpdateScriptStepCommand(Command):
 
 @dataclass(frozen=True)
 class ShowMessageCommand(Command):
+    text: str
+    details: str | None = None
+
+
+@dataclass(frozen=True)
+class ShowWarningCommand(Command):
     text: str
     details: str | None = None
 

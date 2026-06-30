@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import copy
 from contextlib import nullcontext
+from datetime import datetime
 from multiprocessing import Lock, Process, Queue
 import os
 from pathlib import Path
 from queue import Empty, Full
+from time import monotonic, time, time_ns
 from typing import TYPE_CHECKING
 import warnings
 
@@ -28,12 +30,25 @@ from magscope.ipc_commands import (ArmZLUTSweepCaptureCommand, ClearPendingZLUTP
                                    DisarmZLUTSweepCaptureCommand, LoadZLUTCommand,
                                    ReportProfileLengthCommand, ReportZLUTProfileLengthCommand,
                                    RequestProfileLengthCommand, RequestZLUTProfileLengthCommand,
-                                   SetSettingsCommand, ShowMessageCommand, UnloadZLUTCommand,
+                                   SetAcquisitionDirCommand, SetAcquisitionDirOnCommand,
+                                   SetSettingsCommand, ShowMessageCommand, ShowWarningCommand,
+                                   StartNewTrackingDataFileCommand, UnloadZLUTCommand,
                                    UpdateTrackingOptionsCommand, UpdateWaitingCommand,
                                    UpdateZLUTMetadataCommand, WaitUntilAcquisitionOnCommand,
                                    ZLUTSweepCaptureCompleteCommand)
 from magscope.processes import ManagerProcessBase
-from magscope.settings import MagScopeSettings
+from magscope.settings import (
+    MagScopeSettings,
+    SAVE_TRACKING_ROI_POSITIONS_SETTING,
+    TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING,
+    TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING,
+)
+from magscope.tracking_data import (
+    CloseTrackingDataFiles,
+    TRACKING_DATA_WRITER_FAILURE_WARNING,
+    TrackingDataWriter,
+    build_tracking_data_batch,
+)
 from magscope.utils import (AcquisitionMode, crop_stack_to_rois, date_timestamp_str,
                              register_script_command)
 
@@ -51,6 +66,41 @@ logger = get_logger("videoprocessing")
 
 _LOOKUP_Z_PROFILE_WARNING = 'lookup_z_profile_size_warning'
 _DEFAULT_TRACKING_OPTIONS = {'center_of_mass': {'background': 'median'}}
+_NANOSECONDS_PER_MINUTE = 60_000_000_000
+_TRACKING_DATA_QUEUE_MIN_SIZE = 2
+_TRACKING_DATA_QUEUE_MULTIPLIER = 2
+_TRACKING_DATA_SAVE_DROPPED_WARNING = 'tracking_data_save_dropped'
+_TRACKING_DROP_RECOVERY_SECONDS = 120.0
+_TRACKING_DROP_WARNING_INTERVAL_SECONDS = 300.0
+
+
+def _is_tracking_data_save_drop_warning(warning: object) -> bool:
+    return (
+        isinstance(warning, dict)
+        and warning.get('type') == _TRACKING_DATA_SAVE_DROPPED_WARNING
+    )
+
+
+def _is_tracking_data_writer_failure_warning(warning: object) -> bool:
+    return (
+        isinstance(warning, dict)
+        and warning.get('type') == TRACKING_DATA_WRITER_FAILURE_WARNING
+    )
+
+
+def _coerce_nonnegative_int(value: object, *, default: int) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, coerced)
+
+
+def _format_epoch_timestamp(timestamp: float | None) -> str:
+    if timestamp is None:
+        return 'unknown'
+    return datetime.fromtimestamp(float(timestamp)).strftime('%Y/%m/%d %I:%M:%S %p')
+
 
 class VideoProcessorManager(ManagerProcessBase):
     def __init__(self):
@@ -73,6 +123,17 @@ class VideoProcessorManager(ManagerProcessBase):
         self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
         self._waiting_for_acquisition: bool | None = None
+        self._tracking_data_queue: QueueType | None = None
+        self._tracking_data_writer: TrackingDataWriter | None = None
+        self._tracking_recording_id = 0
+        self._tracking_recording_start_ns = time_ns()
+        self._tracking_task_sequence = 0
+        self._tracking_data_save_drop_count = 0
+        self._tracking_data_save_drop_frame_count = 0
+        self._tracking_data_save_drop_record_count = 0
+        self._tracking_data_save_drop_first_timestamp: float | None = None
+        self._tracking_data_save_drop_last_monotonic: float | None = None
+        self._tracking_data_save_drop_last_warning_monotonic: float | None = None
 
         # TODO: Check implementation
         self._save_profiles = False
@@ -83,22 +144,71 @@ class VideoProcessorManager(ManagerProcessBase):
         self._tracking_options: dict = copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
         self._load_default_zlut()
 
-    @register_ipc_command(SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase')
+    @register_ipc_command(
+        SetSettingsCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
     def set_settings(self, settings: MagScopeSettings):
+        previous_save_roi_positions = self._save_tracking_roi_positions()
+        previous_rotation_duration = self._tracking_file_max_duration_ns()
         super().set_settings(settings)
         self._lookup_z_warning_reported = False
+        if (
+            self._acquisition_dir_on
+            and (
+                previous_save_roi_positions != self._save_tracking_roi_positions()
+                or previous_rotation_duration != self._tracking_file_max_duration_ns()
+            )
+        ):
+            self._close_current_tracking_data_files()
+            self._start_new_tracking_recording()
+
+    @register_ipc_command(
+        SetAcquisitionDirCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
+    def set_acquisition_dir(self, value: str | None):
+        previous_dir = self._acquisition_dir
+        super().set_acquisition_dir(value)
+        if self._acquisition_dir_on and value != previous_dir:
+            self._close_current_tracking_data_files()
+            self._start_new_tracking_recording()
+
+    @register_ipc_command(
+        SetAcquisitionDirOnCommand, delivery=Delivery.BROADCAST, target='ManagerProcessBase'
+    )
+    def set_acquisition_dir_on(self, value: bool):
+        previous_value = self._acquisition_dir_on
+        super().set_acquisition_dir_on(value)
+        if value and not previous_value:
+            self._start_new_tracking_recording()
+        elif previous_value and not value:
+            self._close_current_tracking_data_files()
 
     @register_ipc_command(UpdateTrackingOptionsCommand)
     def update_tracking_options(self, value: dict):
         self._tracking_options = copy.deepcopy(value) if value else copy.deepcopy(_DEFAULT_TRACKING_OPTIONS)
 
+    @register_ipc_command(StartNewTrackingDataFileCommand)
+    def start_new_tracking_data_file(self):
+        if self._acquisition_dir_on:
+            self._close_current_tracking_data_files()
+            self._start_new_tracking_recording()
+
     def setup(self):
         self._n_workers = self.settings['video processors n']
         self._tasks = Queue(maxsize=self._n_workers)
+        tracking_queue_size = max(
+            _TRACKING_DATA_QUEUE_MIN_SIZE,
+            self._n_workers * _TRACKING_DATA_QUEUE_MULTIPLIER,
+        )
+        self._tracking_data_queue = Queue(maxsize=tracking_queue_size)
         self._profile_length_queue = Queue()
         self._warning_queue = Queue()
         self._zlut_capture_complete_queue = Queue()
         self._zlut_profile_length_queue = Queue()
+        self._tracking_data_writer = TrackingDataWriter(
+            self._tracking_data_queue,
+            warning_queue=self._warning_queue,
+        )
 
         # Create the workers
         for _ in range(self._n_workers):
@@ -115,14 +225,55 @@ class VideoProcessorManager(ManagerProcessBase):
                 zlut_profile_length_queue=self._zlut_profile_length_queue,
                 live_profile_enabled=self.shared_values.live_profile_enabled,
                 live_profile_bead=self.shared_values.live_profile_bead,
+                tracking_data_queue=self._tracking_data_queue,
             )
             self._workers.append(worker)
+
+        self._tracking_data_writer.start()
 
         # Start the workers
         for worker in self._workers:
             worker.start()
 
         self._broadcast_zlut_metadata()
+
+    def _save_tracking_roi_positions(self) -> bool:
+        if self.settings is None:
+            return False
+        try:
+            return bool(self.settings[SAVE_TRACKING_ROI_POSITIONS_SETTING])
+        except KeyError:
+            return False
+
+    def _tracking_file_max_duration_ns(self) -> int | None:
+        enabled = self._settings_value(TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING)
+        if not enabled:
+            return None
+        interval_minutes = self._settings_value(
+            TRACKING_DATA_FILE_ROTATION_INTERVAL_MINUTES_SETTING
+        )
+        return int(interval_minutes) * _NANOSECONDS_PER_MINUTE
+
+    def _settings_value(self, key: str):
+        if self.settings is not None:
+            try:
+                return self.settings[key]
+            except KeyError:
+                pass
+        return MagScopeSettings.spec_for(key).default_value()
+
+    def _start_new_tracking_recording(self) -> None:
+        self._tracking_recording_id += 1
+        self._tracking_recording_start_ns = time_ns()
+
+    def _close_current_tracking_data_files(self) -> None:
+        if self._tracking_data_queue is None:
+            return
+        request = CloseTrackingDataFiles(recording_id=self._tracking_recording_id)
+        try:
+            self._tracking_data_queue.put(request)
+        except Exception as exc:
+            logger.warning('Could not queue tracking data file close request: %s', exc)
 
     def do_main_loop(self):
         self._process_profile_length_reports()
@@ -172,6 +323,13 @@ class VideoProcessorManager(ManagerProcessBase):
             for worker in self._workers:
                 if worker and worker.is_alive():
                     worker.terminate()
+
+        if self._tracking_data_queue is not None:
+            self._tracking_data_queue.put(None)
+        if self._tracking_data_writer is not None and self._tracking_data_writer.is_alive():
+            self._tracking_data_writer.join()
+        if self._tracking_data_writer is not None and self._tracking_data_writer.is_alive():
+            self._tracking_data_writer.terminate()
 
     @register_ipc_command(LoadZLUTCommand)
     def load_zlut_file(self, filepath: str) -> None:
@@ -399,7 +557,12 @@ class VideoProcessorManager(ManagerProcessBase):
             'report_profile_length': self._pending_profile_length_request,
             'report_zlut_profile_length': self._pending_zlut_profile_length_request,
             'save_profiles': self._save_profiles,
+            'save_tracking_roi_positions': self._save_tracking_roi_positions(),
+            'tracking_file_max_duration_ns': self._tracking_file_max_duration_ns(),
             'tracking_options': copy.deepcopy(self._tracking_options),
+            'tracking_recording_id': self._tracking_recording_id,
+            'tracking_recording_start_ns': self._tracking_recording_start_ns,
+            'tracking_batch_sequence': self._tracking_task_sequence,
             'zlut': self._zlut
         }
         capture_step_index = self._zlut_capture_step_index
@@ -421,6 +584,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
         try:
             self._tasks.put_nowait(kwargs)
+            self._tracking_task_sequence += 1
             if 'zlut_capture' in kwargs:
                 self._zlut_capture_step_index = None
                 self._zlut_capture_earliest_timestamp = None
@@ -447,6 +611,7 @@ class VideoProcessorManager(ManagerProcessBase):
 
     def _process_worker_warnings(self) -> None:
         if self._warning_queue is None:
+            self._reset_tracking_data_save_drop_warning_if_recovered()
             return
 
         while True:
@@ -455,13 +620,126 @@ class VideoProcessorManager(ManagerProcessBase):
             except Empty:
                 break
 
-            if warning == _LOOKUP_Z_PROFILE_WARNING and not self._lookup_z_warning_reported:
-                self._lookup_z_warning_reported = True
-                command = ShowMessageCommand(
-                    text='Z-LUT may not match current ROI or detection settings.',
-                    details='MagTrack reported a LookupZProfileSizeWarning; consider reloading a compatible Z-LUT or adjusting ROI size.',
-                )
-                self.send_ipc(command)
+            if warning == _LOOKUP_Z_PROFILE_WARNING:
+                if not self._lookup_z_warning_reported:
+                    self._lookup_z_warning_reported = True
+                    command = ShowMessageCommand(
+                        text='Z-LUT may not match current ROI or detection settings.',
+                        details='MagTrack reported a LookupZProfileSizeWarning; consider reloading a compatible Z-LUT or adjusting ROI size.',
+                    )
+                    self.send_ipc(command)
+                continue
+
+            if _is_tracking_data_save_drop_warning(warning):
+                self._process_tracking_data_save_drop_warning(warning)
+                continue
+
+            if _is_tracking_data_writer_failure_warning(warning):
+                self._process_tracking_data_writer_failure_warning(warning)
+                continue
+
+        self._reset_tracking_data_save_drop_warning_if_recovered()
+
+    def _process_tracking_data_writer_failure_warning(
+        self,
+        warning: dict[str, object],
+    ) -> None:
+        timestamp = warning.get('timestamp')
+        if not isinstance(timestamp, (int, float)):
+            timestamp = None
+        path = warning.get('path') or 'unknown file'
+        error = warning.get('error') or 'unknown error'
+        recording_id = warning.get('recording_id')
+        batch_sequence = warning.get('batch_sequence')
+        details = (
+            f"Time: {_format_epoch_timestamp(timestamp)}\n"
+            f"File: {path}\n"
+            f"Recording ID: {recording_id if recording_id is not None else 'unknown'}\n"
+            f"Batch sequence: {batch_sequence if batch_sequence is not None else 'unknown'}\n"
+            f"Frames not saved: {_coerce_nonnegative_int(warning.get('frames'), default=0)}\n"
+            f"Bead records not saved: {_coerce_nonnegative_int(warning.get('records'), default=0)}\n\n"
+            f"Error: {error}\n\n"
+            "The failed batch was not saved. MagScope attempted to roll back "
+            "any partial HDF5 writes before continuing. Check disk space, "
+            "folder permissions, and whether another program is holding the file."
+        )
+        self.send_ipc(
+            ShowWarningCommand(
+                text='Tracking data HDF5 writer failed.',
+                details=details,
+            )
+        )
+
+    def _process_tracking_data_save_drop_warning(self, warning: dict[str, object]) -> None:
+        now = monotonic()
+        last_drop = self._tracking_data_save_drop_last_monotonic
+        if last_drop is not None and now - last_drop >= _TRACKING_DROP_RECOVERY_SECONDS:
+            self._reset_tracking_data_save_drop_warning_state()
+
+        drop_timestamp = warning.get('timestamp')
+        if not isinstance(drop_timestamp, (int, float)):
+            drop_timestamp = time()
+
+        self._tracking_data_save_drop_count += _coerce_nonnegative_int(
+            warning.get('batches'),
+            default=1,
+        )
+        self._tracking_data_save_drop_frame_count += _coerce_nonnegative_int(
+            warning.get('frames'),
+            default=0,
+        )
+        self._tracking_data_save_drop_record_count += _coerce_nonnegative_int(
+            warning.get('records'),
+            default=0,
+        )
+        if self._tracking_data_save_drop_first_timestamp is None:
+            self._tracking_data_save_drop_first_timestamp = float(drop_timestamp)
+        self._tracking_data_save_drop_last_monotonic = now
+
+        last_warning = self._tracking_data_save_drop_last_warning_monotonic
+        if (
+            last_warning is not None
+            and now - last_warning < _TRACKING_DROP_WARNING_INTERVAL_SECONDS
+        ):
+            return
+
+        self._tracking_data_save_drop_last_warning_monotonic = now
+        self._send_tracking_data_save_drop_warning()
+
+    def _send_tracking_data_save_drop_warning(self) -> None:
+        since = _format_epoch_timestamp(self._tracking_data_save_drop_first_timestamp)
+        details = (
+            f"Since: {since}\n"
+            f"Dropped tracking batches: {self._tracking_data_save_drop_count}\n"
+            f"Dropped frames: {self._tracking_data_save_drop_frame_count}\n"
+            f"Dropped bead records: {self._tracking_data_save_drop_record_count}\n\n"
+            "Acquisition and live tracking continued, but these processed rows "
+            "were not saved to the HDF5 tracking file. Try saving to a faster "
+            "local disk, reducing frame rate, reducing tracked bead count, or "
+            "disabling optional ROI-position saving."
+        )
+        self.send_ipc(
+            ShowWarningCommand(
+                text='Tracking data saving is falling behind.',
+                details=details,
+            )
+        )
+
+    def _reset_tracking_data_save_drop_warning_if_recovered(self) -> None:
+        last_drop = self._tracking_data_save_drop_last_monotonic
+        if last_drop is None:
+            return
+        if monotonic() - last_drop < _TRACKING_DROP_RECOVERY_SECONDS:
+            return
+        self._reset_tracking_data_save_drop_warning_state()
+
+    def _reset_tracking_data_save_drop_warning_state(self) -> None:
+        self._tracking_data_save_drop_count = 0
+        self._tracking_data_save_drop_frame_count = 0
+        self._tracking_data_save_drop_record_count = 0
+        self._tracking_data_save_drop_first_timestamp = None
+        self._tracking_data_save_drop_last_monotonic = None
+        self._tracking_data_save_drop_last_warning_monotonic = None
 
     @register_ipc_command(WaitUntilAcquisitionOnCommand)
     @register_script_command(WaitUntilAcquisitionOnCommand)
@@ -487,7 +765,8 @@ class VideoWorker(Process):
                  zlut_capture_complete_queue: QueueType | None,
                  zlut_profile_length_queue: QueueType | None,
                  live_profile_enabled: ValueTypeUI8,
-                 live_profile_bead: ValueTypeInt):
+                 live_profile_bead: ValueTypeInt,
+                 tracking_data_queue: QueueType | None = None):
         super().__init__()
         self._gpu_lock: Lock = gpu_lock
         self._tasks: QueueType = tasks
@@ -499,6 +778,7 @@ class VideoWorker(Process):
         self._warning_queue: QueueType | None = warning_queue
         self._zlut_capture_complete_queue: QueueType | None = zlut_capture_complete_queue
         self._zlut_profile_length_queue: QueueType | None = zlut_profile_length_queue
+        self._tracking_data_queue: QueueType | None = tracking_data_queue
         self._live_profile_enabled = live_profile_enabled
         self._live_profile_bead = live_profile_bead
         self._video_buffer: VideoBuffer | None = None
@@ -582,6 +862,21 @@ class VideoWorker(Process):
         except Full:
             logger.debug('Dropping Z-LUT capture retry because queue is full')
 
+    def _report_tracking_data_save_drop(self, batch) -> None:
+        if self._warning_queue is None:
+            return
+        warning = {
+            'type': _TRACKING_DATA_SAVE_DROPPED_WARNING,
+            'timestamp': time(),
+            'batches': 1,
+            'frames': int(batch.frame_timestamps_ns.shape[0]),
+            'records': int(batch.bead_ids.shape[0]),
+        }
+        try:
+            self._warning_queue.put_nowait(warning)
+        except Full:
+            logger.debug('Dropping tracking data save warning because queue is full')
+
     def process(self, kwargs):
         acquisition_dir: str = kwargs['acquisition_dir']
         acquisition_dir_on: bool = kwargs['acquisition_dir_on']
@@ -589,6 +884,11 @@ class VideoWorker(Process):
         bead_ids: np.ndarray = kwargs['bead_ids']
         bead_rois: np.ndarray = kwargs['bead_rois']
         save_profiles = kwargs['save_profiles']
+        save_tracking_roi_positions = kwargs.get('save_tracking_roi_positions', False)
+        tracking_file_max_duration_ns = kwargs.get('tracking_file_max_duration_ns')
+        tracking_recording_id = kwargs.get('tracking_recording_id', 0)
+        tracking_recording_start_ns = kwargs.get('tracking_recording_start_ns')
+        tracking_batch_sequence = kwargs.get('tracking_batch_sequence', 0)
         zlut = kwargs['zlut']
         nm_per_px: float = kwargs['nm_per_px']
         magnification: float = kwargs['magnification']
@@ -739,14 +1039,29 @@ class VideoWorker(Process):
                     'unit': 'nm'
                 })
 
-        def save_tracks_profiles(first_timestamp, profiles, tracks):
+        def save_tracks_profiles(first_timestamp, timestamps, profiles, tracks, n_rois):
             if acquisition_dir_on and acquisition_dir:
-                filepath = os.path.join(acquisition_dir,
-                                        f'Bead Positions {first_timestamp}.txt')
-                np.savetxt(
-                    filepath,
-                    tracks,
-                    header='Time(sec) X(nm) Y(nm) Z(nm) Bead-ID ROI-X(px) ROI-Y(px)')
+                if self._tracking_data_queue is not None:
+                    try:
+                        batch = build_tracking_data_batch(
+                            recording_id=tracking_recording_id,
+                            acquisition_dir=acquisition_dir,
+                            timestamps=timestamps,
+                            tracks=tracks,
+                            n_rois=n_rois,
+                            include_roi_positions=save_tracking_roi_positions,
+                            recording_start_ns=tracking_recording_start_ns,
+                            max_file_duration_ns=tracking_file_max_duration_ns,
+                            batch_sequence=tracking_batch_sequence,
+                        )
+                        self._tracking_data_queue.put_nowait(batch)
+                    except Full:
+                        logger.warning(
+                            'Skipping tracking data save because the writer queue is full'
+                        )
+                        self._report_tracking_data_save_drop(batch)
+                    except ValueError as exc:
+                        logger.warning('Skipping tracking data save: %s', exc)
 
                 if save_profiles:
                     filepath = os.path.join(acquisition_dir,
@@ -822,7 +1137,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
             else:  # No ROIs
                 self._release_stack()
@@ -854,7 +1175,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
                 # Save video to disk
                 if acquisition_dir_on and acquisition_dir:
@@ -895,7 +1222,13 @@ class VideoWorker(Process):
                 self._tracks_buffer.write(tracks_data)
 
                 # Save tracks and profiles to disk
-                save_tracks_profiles(first_timestamp, profiles, tracks_data)
+                save_tracks_profiles(
+                    first_timestamp,
+                    timestamps,
+                    profiles,
+                    tracks_data,
+                    bead_rois.shape[0],
+                )
 
             else:  # No ROIs
                 del stack

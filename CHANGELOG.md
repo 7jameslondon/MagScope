@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Tracking output is now saved to HDF5 files named `Tracking Data <timestamp>.h5`, with
+  frame timestamps, frame offsets, bead IDs, nanometer positions, optional ROI positions,
+  timestamp-range attributes, and batch-order metadata.
+- Saving preferences for optional tracking ROI positions, automatic tracking-data file
+  rotation, and manually starting a new tracking-data file.
+- Status panel feedback for the latest video-buffer purge time.
+
+### Changed
+- **Breaking**: Tracking acquisition modes now write HDF5 tracking files instead of
+  per-batch `Bead Positions <timestamp>.txt` files. Analysis tools that read saved
+  tracking output should read the `/tracking` datasets in `Tracking Data <timestamp>.h5`.
+
 ## [0.4.0] - 2026-06-16
 
 ### Added

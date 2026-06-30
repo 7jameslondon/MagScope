@@ -12,5 +12,6 @@ __pycache__
 .vscode/
 *.ipynb*
 .codex-tmp/
-.venv/
+.pytest-tmp/
+.venv*/
 assets/doc_capture/gif_frames/
