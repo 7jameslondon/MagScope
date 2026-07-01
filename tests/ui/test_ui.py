@@ -1437,7 +1437,27 @@ def test_zlut_load_action_opens_file_picker_and_loads(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
-def test_request_zlut_file_waits_for_metadata_before_remembering():
+def test_update_zlut_metadata_without_pending_request_does_not_remember_filepath():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, '/tmp/dialogs')
+    manager = UIManager()
+
+    manager.update_zlut_metadata(
+        filepath='/tmp/defaults/simulation_zlut.txt',
+        z_min=0.0,
+        z_max=10.0,
+        step_size=10.0,
+        profile_length=2,
+    )
+
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/dialogs'
+
+    clear_ui_manager_singleton()
+
+
+def test_request_zlut_file_waits_for_matching_metadata_before_remembering():
     clear_ui_manager_singleton()
     manager = UIManager()
     commands = []
@@ -1450,12 +1470,14 @@ def test_request_zlut_file_waits_for_metadata_before_remembering():
     assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/loaded_zlut.txt')]
     assert manager._current_zlut_filepath == '/tmp/zluts/loaded_zlut.txt'
 
-    clear_ui_manager_singleton()
-
-
-def test_update_zlut_metadata_remembers_filepath_and_directory():
-    clear_ui_manager_singleton()
-    manager = UIManager()
+    manager.update_zlut_metadata(
+        filepath='/tmp/defaults/simulation_zlut.txt',
+        z_min=0.0,
+        z_max=10.0,
+        step_size=10.0,
+        profile_length=2,
+    )
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
 
     manager.update_zlut_metadata(
         filepath='/tmp/zluts/loaded_zlut.txt',
@@ -1465,7 +1487,6 @@ def test_update_zlut_metadata_remembers_filepath_and_directory():
         profile_length=2,
     )
 
-    settings = QSettings('MagScope', 'MagScope')
     assert (
         settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str)
         == '/tmp/zluts/loaded_zlut.txt'
@@ -1491,15 +1512,66 @@ def test_load_remembered_zlut_requests_saved_filepath():
     clear_ui_manager_singleton()
 
 
-def test_update_zlut_metadata_clears_remembered_filepath():
+def test_update_zlut_metadata_clears_remembered_filepath_after_failed_request():
     clear_ui_manager_singleton()
     settings = QSettings('MagScope', 'MagScope')
     settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/stale.txt')
     settings.setValue(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, '/tmp/zluts')
     manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
 
+    manager.request_zlut_file('/tmp/zluts/stale.txt')
     manager.update_zlut_metadata(filepath=None)
 
+    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/stale.txt')]
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
+
+    clear_ui_manager_singleton()
+
+
+def test_failed_zlut_metadata_keeps_pending_request_for_later_confirmation():
+    clear_ui_manager_singleton()
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager.request_zlut_file('/tmp/zluts/retry.txt')
+    manager.update_zlut_metadata(filepath=None)
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/retry.txt')]
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+
+    manager.update_zlut_metadata(
+        filepath='/tmp/zluts/retry.txt',
+        z_min=0.0,
+        z_max=10.0,
+        step_size=10.0,
+        profile_length=2,
+    )
+
+    assert (
+        settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str)
+        == '/tmp/zluts/retry.txt'
+    )
+
+    clear_ui_manager_singleton()
+
+
+def test_unload_zlut_clears_remembered_filepath():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/loaded_zlut.txt')
+    settings.setValue(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, '/tmp/zluts')
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager.unload_zlut()
+
+    assert commands == [UnloadZLUTCommand()]
     assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
     assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
 
@@ -5819,6 +5891,11 @@ def test_save_generated_zlut_sends_command(ui_manager, monkeypatch):
         SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5, load_after_save=True)
     ]
 
+    ui_manager.update_zlut_metadata(filepath='C:/tmp/test.txt')
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str) == 'C:/tmp/test.txt'
+
 
 def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypatch):
     commands = []
@@ -5831,6 +5908,11 @@ def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypat
     assert commands == [
         SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5, load_after_save=False)
     ]
+
+    ui_manager.update_zlut_metadata(filepath='C:/tmp/test.txt')
+
+    settings = QSettings('MagScope', 'MagScope')
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
 
 
 def test_update_zlut_generation_state_tracks_axis_metadata_without_panel(ui_manager):
