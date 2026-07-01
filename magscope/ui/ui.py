@@ -4166,11 +4166,37 @@ class UIManager(ManagerProcessBase):
         self._pending_zlut_filepath_to_remember = None
         self._pending_zlut_load_request_id = None
 
+    def _should_apply_zlut_metadata(
+        self,
+        filepath: str | None,
+        load_request_id: int | None = None,
+    ) -> bool:
+        pending_filepath = self._pending_zlut_filepath_to_remember
+        pending_request_id = self._pending_zlut_load_request_id
+
+        if load_request_id is not None:
+            if pending_request_id is None or load_request_id != pending_request_id:
+                return False
+            if filepath and pending_filepath is not None:
+                return self._normalized_zlut_filepath(filepath) == pending_filepath
+            return True
+
+        if pending_filepath is not None:
+            return bool(filepath) and self._normalized_zlut_filepath(filepath) == pending_filepath
+
+        return not (
+            filepath
+            and self._zlut_disabled_preference()
+        )
+
     def _update_remembered_zlut_from_metadata(
         self,
         filepath: str | None,
         load_request_id: int | None = None,
     ) -> None:
+        if not self._should_apply_zlut_metadata(filepath, load_request_id=load_request_id):
+            return
+
         pending_filepath = self._pending_zlut_filepath_to_remember
         pending_request_id = self._pending_zlut_load_request_id
         request_id_matches = (
@@ -4501,12 +4527,7 @@ class UIManager(ManagerProcessBase):
                              step_size: float | None = None,
                              profile_length: int | None = None,
                              load_request_id: int | None = None) -> None:
-        if (
-            filepath
-            and load_request_id is None
-            and self._pending_zlut_filepath_to_remember is None
-            and self._zlut_disabled_preference()
-        ):
+        if not self._should_apply_zlut_metadata(filepath, load_request_id=load_request_id):
             return
 
         self._set_current_zlut(
