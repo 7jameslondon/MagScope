@@ -6203,10 +6203,12 @@ def test_select_generated_zlut_bead_sends_command(ui_manager):
     assert commands == [SelectGeneratedZLUTBeadCommand(bead_id=7)]
 
 
-def test_save_generated_zlut_sends_command(ui_manager, monkeypatch):
+def test_save_generated_zlut_sends_command(ui_manager, monkeypatch, qtbot):
     commands = []
     ui_manager.send_ipc = commands.append
-    ui_manager.windows = [QMainWindow()]
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    ui_manager.windows = [window]
     monkeypatch.setattr('magscope.ui.ui.QFileDialog.getSaveFileName', lambda *args, **kwargs: ('C:/tmp/test.txt', ''))
 
     ui_manager.save_generated_zlut(5)
