@@ -1131,6 +1131,32 @@ def test_run_applies_prequeued_startup_unload_before_processing_task(monkeypatch
     )
 
 
+def test_startup_quit_drain_stops_before_processing_task(monkeypatch):
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    registry = CommandRegistry()
+    registry.register_manager(manager)
+    pipe = DummyStartupPipe([QuitCommand()])
+    manager._command_registry = registry
+    manager._command_handlers = {
+        command_type: spec.handler
+        for command_type, spec in registry.handlers_for_target(manager.name).items()
+    }
+    manager._pipe = pipe
+    manager._magscope_quitting = SimpleNamespace(is_set=lambda: False)
+    manager._running = True
+    manager.quit = lambda: setattr(manager, '_running', False)
+    manager.video_buffer = SimpleNamespace(
+        check_read_stack=lambda: pytest.fail('processing should not be checked after startup quit')
+    )
+
+    manager.do_main_loop()
+
+    assert pipe.recv_calls == 1
+    assert manager._startup_ipc_drained is True
+    assert manager._running is False
+
+
 def test_load_zlut_file_success_broadcasts_metadata_with_request_id(manager, tmp_path):
     zlut = np.asarray(
         [

@@ -277,7 +277,10 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.warning('Could not queue tracking data file close request: %s', exc)
 
     def do_main_loop(self):
+        was_running = self._running
         self._drain_startup_ipc_before_processing()
+        if was_running and not self._running:
+            return
         self._process_profile_length_reports()
         self._process_zlut_profile_length_reports()
         self._process_zlut_capture_reports()
