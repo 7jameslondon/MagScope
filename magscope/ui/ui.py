@@ -173,6 +173,7 @@ FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
 LAST_ZLUT_FILEPATH_SETTINGS_KEY = 'last zlut filepath'
 LAST_ZLUT_DIRECTORY_SETTINGS_KEY = 'last zlut directory'
+LAST_ZLUT_DISABLED_SETTINGS_KEY = 'last zlut disabled'
 
 
 def _default_restored_window_geometry(
@@ -4108,6 +4109,13 @@ class UIManager(ManagerProcessBase):
         if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
             return
 
+        if self._zlut_disabled_preference():
+            self._clear_pending_zlut_filepath_to_remember()
+            self._remember_zlut_filepath(None)
+            self._set_current_zlut(filepath=None)
+            self.send_ipc(UnloadZLUTCommand())
+            return
+
         filepath = self._zlut_settings().value(
             LAST_ZLUT_FILEPATH_SETTINGS_KEY,
             '',
@@ -4132,10 +4140,21 @@ class UIManager(ManagerProcessBase):
             settings.remove(LAST_ZLUT_FILEPATH_SETTINGS_KEY)
             return
 
+        settings.setValue(LAST_ZLUT_DISABLED_SETTINGS_KEY, False)
         settings.setValue(LAST_ZLUT_FILEPATH_SETTINGS_KEY, filepath)
         directory = os.path.dirname(filepath)
         if directory:
             settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
+
+    def _set_zlut_disabled_preference(self, disabled: bool) -> None:
+        self._zlut_settings().setValue(LAST_ZLUT_DISABLED_SETTINGS_KEY, bool(disabled))
+
+    def _zlut_disabled_preference(self) -> bool:
+        return self._zlut_settings().value(
+            LAST_ZLUT_DISABLED_SETTINGS_KEY,
+            False,
+            type=bool,
+        )
 
     def _start_pending_zlut_filepath_to_remember(self, filepath: str) -> int:
         self._next_zlut_load_request_id += 1
@@ -4163,8 +4182,10 @@ class UIManager(ManagerProcessBase):
             if request_id_matches:
                 self._clear_pending_zlut_filepath_to_remember()
                 self._remember_zlut_filepath(None)
+                self._set_zlut_disabled_preference(True)
             elif load_request_id is None and pending_filepath is None:
                 self._remember_zlut_filepath(None)
+                self._set_zlut_disabled_preference(True)
             return
 
         if pending_filepath is None:
@@ -4185,6 +4206,7 @@ class UIManager(ManagerProcessBase):
     def unload_zlut(self) -> None:
         self._clear_pending_zlut_filepath_to_remember()
         self._remember_zlut_filepath(None)
+        self._set_zlut_disabled_preference(True)
         self._set_current_zlut(filepath=None)
         command = UnloadZLUTCommand()
         self.send_ipc(command)
@@ -4479,6 +4501,14 @@ class UIManager(ManagerProcessBase):
                              step_size: float | None = None,
                              profile_length: int | None = None,
                              load_request_id: int | None = None) -> None:
+        if (
+            filepath
+            and load_request_id is None
+            and self._pending_zlut_filepath_to_remember is None
+            and self._zlut_disabled_preference()
+        ):
+            return
+
         self._set_current_zlut(
             filepath=filepath,
             z_min=z_min,
