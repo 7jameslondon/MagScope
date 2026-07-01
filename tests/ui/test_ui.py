@@ -1567,7 +1567,7 @@ def test_disabled_zlut_ignores_unrequested_default_metadata():
     manager = UIManager()
 
     manager.update_zlut_metadata(
-        filepath='/tmp/defaults/simulation_zlut.txt',
+        filepath=manager._default_zlut_filepath(),
         z_min=0.0,
         z_max=10.0,
         step_size=10.0,
@@ -1575,6 +1575,54 @@ def test_disabled_zlut_ignores_unrequested_default_metadata():
     )
 
     assert manager._current_zlut_filepath is None
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DISABLED_SETTINGS_KEY, False, type=bool) is True
+
+    clear_ui_manager_singleton()
+
+
+def test_disabled_zlut_applies_untagged_load_after_startup_default_metadata():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/stale.txt')
+    settings.setValue(ui_module.LAST_ZLUT_DISABLED_SETTINGS_KEY, True)
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+    manager._command_registry = object()
+    manager._pipe = object()
+    manager._magscope_quitting = object()
+
+    manager._load_remembered_zlut()
+    manager.update_zlut_metadata(
+        filepath=manager._default_zlut_filepath(),
+        z_min=0.0,
+        z_max=10.0,
+        step_size=10.0,
+        profile_length=2,
+    )
+
+    assert commands == [UnloadZLUTCommand()]
+    assert manager._current_zlut_filepath is None
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DISABLED_SETTINGS_KEY, False, type=bool) is True
+
+    manager.update_zlut_metadata(
+        filepath='/tmp/zluts/script_loaded.txt',
+        z_min=25.0,
+        z_max=125.0,
+        step_size=50.0,
+        profile_length=64,
+        load_request_id=None,
+    )
+
+    assert manager._current_zlut_filepath == '/tmp/zluts/script_loaded.txt'
+    assert manager._current_zlut_metadata == {
+        'z_min': 25.0,
+        'z_max': 125.0,
+        'step_size': 50.0,
+        'profile_length': 64,
+    }
     assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
     assert settings.value(ui_module.LAST_ZLUT_DISABLED_SETTINGS_KEY, False, type=bool) is True
 

@@ -819,6 +819,7 @@ class UIManager(ManagerProcessBase):
         self._pending_zlut_filepath_to_remember: str | None = None
         self._pending_zlut_load_request_id: int | None = None
         self._next_zlut_load_request_id = 0
+        self._suppress_startup_default_zlut_metadata = self._zlut_disabled_preference()
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -4134,6 +4135,12 @@ class UIManager(ManagerProcessBase):
     def _normalized_zlut_filepath(filepath: str) -> str:
         return os.path.normcase(os.path.abspath(os.path.expanduser(filepath)))
 
+    @classmethod
+    def _default_zlut_filepath(cls) -> str:
+        return cls._normalized_zlut_filepath(
+            str(resources.files('magscope').joinpath('simulation_zlut.txt'))
+        )
+
     def _remember_zlut_filepath(self, filepath: str | None) -> None:
         settings = self._zlut_settings()
         if not filepath:
@@ -4184,10 +4191,15 @@ class UIManager(ManagerProcessBase):
         if pending_filepath is not None:
             return bool(filepath) and self._normalized_zlut_filepath(filepath) == pending_filepath
 
-        return not (
+        if (
             filepath
-            and self._zlut_disabled_preference()
-        )
+            and self._suppress_startup_default_zlut_metadata
+            and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+        ):
+            self._suppress_startup_default_zlut_metadata = False
+            return False
+
+        return True
 
     def _update_remembered_zlut_from_metadata(
         self,
