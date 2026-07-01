@@ -9,7 +9,14 @@ import numpy as np
 import pytest
 
 from magscope.ipc import CommandRegistry, Delivery, register_ipc_command
-from magscope.ipc_commands import Command, QuitCommand, SetSettingsCommand, StartupReadyCommand
+from magscope.ipc_commands import (
+    Command,
+    LoadZLUTCommand,
+    QuitCommand,
+    SetSettingsCommand,
+    StartupReadyCommand,
+    UnloadZLUTCommand,
+)
 
 
 class DummyEvent:
@@ -184,6 +191,14 @@ def load_scope_with_stubs(monkeypatch):
     class VideoProcessorManager(StubManagerProcessBase):
         def __init__(self):
             super().__init__(name="VideoProcessorManager")
+
+        @register_ipc_command(LoadZLUTCommand)
+        def load_zlut_file(self, filepath: str, load_request_id: int | None = None) -> None:
+            pass
+
+        @register_ipc_command(UnloadZLUTCommand)
+        def unload_zlut(self) -> None:
+            pass
 
     class UIManager(StubManagerProcessBase):
         def __init__(self):
@@ -505,6 +520,7 @@ def test_start_launches_and_cleans_up_splash(scope_module, monkeypatch):
     monkeypatch.setattr(scope, "_stop_startup_splash", lambda: calls.append("stop_splash"))
     monkeypatch.setattr(scope, "_collect_processes", lambda: calls.append("collect"))
     monkeypatch.setattr(scope, "_initialize_shared_state", lambda: calls.append("init"))
+    monkeypatch.setattr(scope, "_queue_startup_zlut_preference", lambda: calls.append("queue_zlut"))
     monkeypatch.setattr(scope, "_start_managers", lambda: calls.append("start_managers"))
     monkeypatch.setattr(scope, "_join_processes", lambda: calls.append("join"))
 
@@ -520,6 +536,7 @@ def test_start_launches_and_cleans_up_splash(scope_module, monkeypatch):
         "start_splash",
         "collect",
         "init",
+        "queue_zlut",
         "start_managers",
         "loop",
         "join",
@@ -1376,6 +1393,44 @@ def test_initialize_shared_state_runs_setup_steps(scope_module, monkeypatch):
     scope._initialize_shared_state()
 
     assert calls == ["freeze", "registry", "resources", "scripts"]
+
+
+def _scope_with_registered_video_processor(scope_module):
+    scope = make_scope(scope_module)
+    scope._collect_processes()
+    scope._setup_command_registry()
+    scope.pipes = {scope.video_processor_manager.name: DummyPipe()}
+    return scope
+
+
+def test_queue_startup_zlut_preference_sends_disabled_unload_before_managers_start(scope_module, monkeypatch):
+    scope = _scope_with_registered_video_processor(scope_module)
+    monkeypatch.setattr(
+        scope_module,
+        "startup_zlut_preference_from_qsettings",
+        lambda: (True, None),
+    )
+
+    scope._queue_startup_zlut_preference()
+
+    pipe = scope.pipes[scope.video_processor_manager.name]
+    assert pipe.sent == [UnloadZLUTCommand()]
+    assert scope.video_processor_manager.start_called is False
+
+
+def test_queue_startup_zlut_preference_sends_remembered_load_before_managers_start(scope_module, monkeypatch):
+    scope = _scope_with_registered_video_processor(scope_module)
+    monkeypatch.setattr(
+        scope_module,
+        "startup_zlut_preference_from_qsettings",
+        lambda: (False, "C:/zluts/remembered.txt"),
+    )
+
+    scope._queue_startup_zlut_preference()
+
+    pipe = scope.pipes[scope.video_processor_manager.name]
+    assert pipe.sent == [LoadZLUTCommand(filepath="C:/zluts/remembered.txt")]
+    assert scope.video_processor_manager.start_called is False
 
 
 def test_start_managers_starts_each_process(scope_module):

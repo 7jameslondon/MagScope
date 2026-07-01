@@ -13,6 +13,9 @@ import yaml
 DEFAULT_GUI_ACCENT_COLOR = '#78c7ff'
 GUI_ACCENT_COLOR_SETTING = 'gui accent color'
 GUI_LIVE_PLOT_PROGRESS_BAR_SETTING = 'gui live plot progress bar'
+LAST_ZLUT_FILEPATH_SETTINGS_KEY = 'last zlut filepath'
+LAST_ZLUT_DIRECTORY_SETTINGS_KEY = 'last zlut directory'
+LAST_ZLUT_DISABLED_SETTINGS_KEY = 'last zlut disabled'
 PREFERENCES_BUNDLE_VERSION = 1
 SAVE_TRACKING_ROI_POSITIONS_SETTING = 'save tracking ROI positions'
 TRACKING_DATA_FILE_ROTATION_ENABLED_SETTING = 'tracking data file rotation enabled'
@@ -224,6 +227,24 @@ def save_tracking_options_to_qsettings(options: Mapping[str, Any]) -> None:
     settings.setValue(TRACKING_OPTIONS_QSETTINGS_KEY, yaml.safe_dump(validated))
     settings.endGroup()
     settings.sync()
+
+
+def startup_zlut_preference_from_qsettings() -> tuple[bool, str | None]:
+    settings = QSettings('MagScope', 'MagScope')
+    disabled = settings.value(
+        LAST_ZLUT_DISABLED_SETTINGS_KEY,
+        False,
+        type=bool,
+    )
+    if disabled:
+        return True, None
+
+    filepath = settings.value(
+        LAST_ZLUT_FILEPATH_SETTINGS_KEY,
+        '',
+        type=str,
+    )
+    return False, filepath or None
 
 
 def build_preferences_bundle(

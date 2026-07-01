@@ -67,14 +67,16 @@ from magscope.ipc import (
 )
 from magscope.ipc_commands import (
     Command,
+    LoadZLUTCommand,
     LogExceptionCommand,
     QuitCommand,
     SetSettingsCommand,
     StartupReadyCommand,
+    UnloadZLUTCommand,
     UpdateSettingsCommand,
 )
 from magscope.processes import InterprocessValues, ManagerProcessBase, SingletonMeta
-from magscope.settings import MagScopeSettings
+from magscope.settings import MagScopeSettings, startup_zlut_preference_from_qsettings
 from magscope.scripting import ScriptManager
 from magscope.ui import UIManager
 from magscope.videoprocessing import VideoProcessorManager
@@ -211,6 +213,7 @@ class MagScope(metaclass=SingletonMeta):
                 return
 
             self._initialize_shared_state()
+            self._queue_startup_zlut_preference()
             self._start_managers()
             self._main_ipc_loop()
             self._join_processes()
@@ -486,6 +489,34 @@ class MagScope(metaclass=SingletonMeta):
         """Start each manager process."""
         for proc in self.processes.values():
             proc.start()  # calls 'run()'
+
+    def _queue_startup_zlut_preference(self) -> None:
+        """Queue the remembered startup Z-LUT command before managers run."""
+
+        command = self._startup_zlut_command()
+        if command is None:
+            return
+
+        spec = self.command_registry.route_for(command)
+        if spec.delivery != Delivery.DIRECT or spec.target != self.video_processor_manager.name:
+            raise RuntimeError(
+                f'Startup Z-LUT command has invalid route: {type(command).__name__} -> {spec}'
+            )
+
+        pipe = self.pipes.get(spec.target)
+        if pipe is None:
+            warn(f'No pipe available for startup Z-LUT command target {spec.target}')
+            return
+
+        pipe.send(command)
+
+    def _startup_zlut_command(self) -> LoadZLUTCommand | UnloadZLUTCommand | None:
+        disabled, filepath = startup_zlut_preference_from_qsettings()
+        if disabled:
+            return UnloadZLUTCommand()
+        if filepath:
+            return LoadZLUTCommand(filepath=filepath)
+        return None
 
     def _main_ipc_loop(self) -> None:
         """Forward IPC messages until a quit request is observed."""

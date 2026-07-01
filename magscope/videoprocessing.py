@@ -122,6 +122,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_profile_length_queue: QueueType | None = None
         self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
+        self._startup_ipc_drained = False
         self._waiting_for_acquisition: bool | None = None
         self._tracking_data_queue: QueueType | None = None
         self._tracking_data_writer: TrackingDataWriter | None = None
@@ -276,6 +277,7 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.warning('Could not queue tracking data file close request: %s', exc)
 
     def do_main_loop(self):
+        self._drain_startup_ipc_before_processing()
         self._process_profile_length_reports()
         self._process_zlut_profile_length_reports()
         self._process_zlut_capture_reports()
@@ -288,6 +290,14 @@ class VideoProcessorManager(ManagerProcessBase):
             if self.video_buffer.check_read_stack() and self._try_reserve_processing_stack():
                 if not self._add_task():
                     self._release_reserved_processing_stack()
+
+    def _drain_startup_ipc_before_processing(self) -> None:
+        if self._startup_ipc_drained:
+            return
+
+        self._startup_ipc_drained = True
+        while self._pipe is not None and self._pipe.poll():
+            self.receive_ipc()
 
     def _try_reserve_processing_stack(self) -> bool:
         reserved_stacks = self.shared_values.video_process_reserved_stacks

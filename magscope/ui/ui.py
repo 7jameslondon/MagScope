@@ -131,6 +131,9 @@ from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import (
     GUI_ACCENT_COLOR_SETTING,
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
+    LAST_ZLUT_DISABLED_SETTINGS_KEY,
+    LAST_ZLUT_FILEPATH_SETTINGS_KEY,
     MagScopeSettings,
     tracking_options_from_qsettings,
 )
@@ -171,9 +174,6 @@ TOP_BAR_ACTION_ICONS = {
 DEFAULT_RESTORED_WINDOW_SCREEN_FRACTION = 0.9
 FULLSCREENISH_GEOMETRY_TOLERANCE = 12
 STARTUP_READY_FALLBACK_DELAY_MS = 1000
-LAST_ZLUT_FILEPATH_SETTINGS_KEY = 'last zlut filepath'
-LAST_ZLUT_DIRECTORY_SETTINGS_KEY = 'last zlut directory'
-LAST_ZLUT_DISABLED_SETTINGS_KEY = 'last zlut disabled'
 
 
 def _default_restored_window_geometry(
