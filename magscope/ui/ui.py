@@ -816,6 +816,8 @@ class UIManager(ManagerProcessBase):
             'profile_length': None,
         }
         self._pending_zlut_filepath_to_remember: str | None = None
+        self._pending_zlut_load_request_id: int | None = None
+        self._next_zlut_load_request_id = 0
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -4097,9 +4099,9 @@ class UIManager(ManagerProcessBase):
         if not filepath:
             return
 
-        self._pending_zlut_filepath_to_remember = self._normalized_zlut_filepath(filepath)
+        load_request_id = self._start_pending_zlut_filepath_to_remember(filepath)
         self._set_current_zlut(filepath=filepath)
-        command = LoadZLUTCommand(filepath=filepath)
+        command = LoadZLUTCommand(filepath=filepath, load_request_id=load_request_id)
         self.send_ipc(command)
 
     def _load_remembered_zlut(self) -> None:
@@ -4132,26 +4134,51 @@ class UIManager(ManagerProcessBase):
         if directory:
             settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
 
-    def _update_remembered_zlut_from_metadata(self, filepath: str | None) -> None:
+    def _start_pending_zlut_filepath_to_remember(self, filepath: str) -> int:
+        self._next_zlut_load_request_id += 1
+        self._pending_zlut_filepath_to_remember = self._normalized_zlut_filepath(filepath)
+        self._pending_zlut_load_request_id = self._next_zlut_load_request_id
+        return self._next_zlut_load_request_id
+
+    def _clear_pending_zlut_filepath_to_remember(self) -> None:
+        self._pending_zlut_filepath_to_remember = None
+        self._pending_zlut_load_request_id = None
+
+    def _update_remembered_zlut_from_metadata(
+        self,
+        filepath: str | None,
+        load_request_id: int | None = None,
+    ) -> None:
         pending_filepath = self._pending_zlut_filepath_to_remember
         if pending_filepath is None:
             return
 
+        pending_request_id = self._pending_zlut_load_request_id
+        request_id_matches = (
+            load_request_id is not None
+            and pending_request_id is not None
+            and load_request_id == pending_request_id
+        )
         if not filepath:
-            self._remember_zlut_filepath(None)
+            if request_id_matches:
+                self._clear_pending_zlut_filepath_to_remember()
+                self._remember_zlut_filepath(None)
+            return
+
+        if load_request_id is not None and not request_id_matches:
             return
 
         if self._normalized_zlut_filepath(filepath) != pending_filepath:
             return
 
-        self._pending_zlut_filepath_to_remember = None
+        self._clear_pending_zlut_filepath_to_remember()
         self._remember_zlut_filepath(filepath)
 
     def clear_zlut(self) -> None:
         self.unload_zlut()
 
     def unload_zlut(self) -> None:
-        self._pending_zlut_filepath_to_remember = None
+        self._clear_pending_zlut_filepath_to_remember()
         self._remember_zlut_filepath(None)
         self._set_current_zlut(filepath=None)
         command = UnloadZLUTCommand()
@@ -4424,13 +4451,15 @@ class UIManager(ManagerProcessBase):
 
         directory = os.path.dirname(filepath) or last_value
         settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
+        load_request_id = None
         if bool(load_after_save):
-            self._pending_zlut_filepath_to_remember = self._normalized_zlut_filepath(filepath)
+            load_request_id = self._start_pending_zlut_filepath_to_remember(filepath)
         self.send_ipc(
             SaveGeneratedZLUTCommand(
                 filepath=filepath,
                 bead_id=int(bead_id),
                 load_after_save=bool(load_after_save),
+                load_request_id=load_request_id,
             )
         )
 
@@ -4443,7 +4472,8 @@ class UIManager(ManagerProcessBase):
                              z_min: float | None = None,
                              z_max: float | None = None,
                              step_size: float | None = None,
-                             profile_length: int | None = None) -> None:
+                             profile_length: int | None = None,
+                             load_request_id: int | None = None) -> None:
         self._set_current_zlut(
             filepath=filepath,
             z_min=z_min,
@@ -4451,7 +4481,7 @@ class UIManager(ManagerProcessBase):
             step_size=step_size,
             profile_length=profile_length,
         )
-        self._update_remembered_zlut_from_metadata(filepath)
+        self._update_remembered_zlut_from_metadata(filepath, load_request_id=load_request_id)
 
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:

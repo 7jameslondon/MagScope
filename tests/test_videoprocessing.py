@@ -943,7 +943,7 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
     sent_commands = []
     manager.send_ipc = sent_commands.append
 
-    manager.load_zlut_file(str(tmp_path / 'bad_zlut.txt'))
+    manager.load_zlut_file(str(tmp_path / 'bad_zlut.txt'), load_request_id=7)
 
     assert manager._zlut is None
     assert manager._zlut_path is None
@@ -957,6 +957,7 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
         z_max=None,
         step_size=None,
         profile_length=None,
+        load_request_id=7,
     )
 
 

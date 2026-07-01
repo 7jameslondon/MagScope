@@ -289,7 +289,13 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._send_evaluation_state(active=True)
 
     @register_ipc_command(SaveGeneratedZLUTCommand)
-    def save_generated_zlut(self, filepath: str, bead_id: int, load_after_save: bool = True):
+    def save_generated_zlut(
+        self,
+        filepath: str,
+        bead_id: int,
+        load_after_save: bool = True,
+        load_request_id: int | None = None,
+    ):
         if self._phase != 'evaluating':
             return
 
@@ -312,7 +318,9 @@ class ZLUTGenerationManager(ManagerProcessBase):
             return
 
         if load_after_save:
-            self.send_ipc(LoadZLUTCommand(filepath=str(path)))
+            self.send_ipc(
+                LoadZLUTCommand(filepath=str(path), load_request_id=load_request_id)
+            )
             self.send_ipc(
                 ShowMessageCommand(
                     text='Generated Z-LUT loaded.',

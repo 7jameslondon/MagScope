@@ -332,7 +332,7 @@ class VideoProcessorManager(ManagerProcessBase):
             self._tracking_data_writer.terminate()
 
     @register_ipc_command(LoadZLUTCommand)
-    def load_zlut_file(self, filepath: str) -> None:
+    def load_zlut_file(self, filepath: str, load_request_id: int | None = None) -> None:
         path = Path(filepath).expanduser()
         self._zlut = None
         try:
@@ -341,10 +341,10 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.exception('Failed to load Z-LUT file: %s', exc)
             self._clear_zlut_state()
             self._notify_zlut_error(path, exc)
-            self._broadcast_zlut_metadata()
+            self._broadcast_zlut_metadata(load_request_id=load_request_id)
             return
 
-        self._broadcast_zlut_metadata()
+        self._broadcast_zlut_metadata(load_request_id=load_request_id)
 
     def _load_default_zlut(self) -> None:
         try:
@@ -400,13 +400,14 @@ class VideoProcessorManager(ManagerProcessBase):
             return cp.asarray(zlut_array)
         return zlut_array
 
-    def _broadcast_zlut_metadata(self) -> None:
+    def _broadcast_zlut_metadata(self, load_request_id: int | None = None) -> None:
         command = UpdateZLUTMetadataCommand(
             filepath=str(self._zlut_path) if self._zlut_path is not None else None,
             z_min=None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
             z_max=None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
             step_size=None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
             profile_length=None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
+            load_request_id=load_request_id,
         )
         self.send_ipc(command)
 

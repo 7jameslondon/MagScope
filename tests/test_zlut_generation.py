@@ -141,11 +141,14 @@ def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     monkeypatch.setattr('magscope.zlut_generation.np.savetxt', fake_savetxt)
 
     filepath = tmp_path / 'generated.txt'
-    manager.save_generated_zlut(str(filepath), 3)
+    manager.save_generated_zlut(str(filepath), 3, load_request_id=42)
 
     assert saved[0][0] == filepath
     np.testing.assert_allclose(saved[0][1], np.asarray([[1.0, 2.0], [3.0, 4.0]]))
-    assert isinstance(manager._sent_commands[0], LoadZLUTCommand)
+    assert manager._sent_commands[0] == LoadZLUTCommand(
+        filepath=str(filepath),
+        load_request_id=42,
+    )
     assert isinstance(manager._sent_commands[1], ShowMessageCommand)
     assert isinstance(manager._sent_commands[2], UpdateZLUTGenerationStateCommand)
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
