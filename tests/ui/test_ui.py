@@ -47,6 +47,7 @@ from magscope.ipc_commands import (
     AddRandomBeadsCommand,
     CancelGeneratedZLUTEvaluationCommand,
     CancelZLUTGenerationCommand,
+    ClearPendingZLUTLoadRequestCommand,
     LoadZLUTCommand,
     RemoveBeadsFromPendingMovesCommand,
     SaveGeneratedZLUTCommand,
@@ -6225,17 +6226,91 @@ def test_save_generated_zlut_sends_command(ui_manager, monkeypatch):
     assert settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str) == 'C:/tmp/test.txt'
 
 
-def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypatch):
+def test_generated_save_load_failure_clear_allows_later_untagged_metadata(
+    ui_manager,
+    monkeypatch,
+    qtbot,
+):
     commands = []
     ui_manager.send_ipc = commands.append
-    ui_manager.windows = [QMainWindow()]
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    ui_manager.windows = [window]
+    monkeypatch.setattr(
+        'magscope.ui.ui.QFileDialog.getSaveFileName',
+        lambda *args, **kwargs: ('C:/tmp/generated.txt', ''),
+    )
+
+    ui_manager.save_generated_zlut(5, load_after_save=True)
+    command = commands[0]
+
+    assert command == SaveGeneratedZLUTCommand(
+        filepath='C:/tmp/generated.txt',
+        bead_id=5,
+        load_after_save=True,
+        load_request_id=1,
+    )
+    assert ui_manager._pending_zlut_load_request_id == 1
+
+    clear_command = ClearPendingZLUTLoadRequestCommand(
+        load_request_id=command.load_request_id
+    )
+    ui_manager.clear_pending_zlut_load_request(clear_command.load_request_id)
+    ui_manager.update_zlut_metadata(
+        filepath='C:/tmp/later.txt',
+        z_min=0.0,
+        z_max=10.0,
+        step_size=5.0,
+        profile_length=32,
+        load_request_id=None,
+    )
+
+    assert ui_manager._pending_zlut_load_request_id is None
+    assert ui_manager._pending_zlut_filepath_to_remember is None
+    assert ui_manager._current_zlut_filepath == 'C:/tmp/later.txt'
+    assert ui_manager._current_zlut_metadata == {
+        'z_min': 0.0,
+        'z_max': 10.0,
+        'step_size': 5.0,
+        'profile_length': 32,
+    }
+
+
+def test_stale_generated_save_load_failure_does_not_clear_newer_pending_request(ui_manager):
+    ui_manager._start_pending_zlut_filepath_to_remember('C:/tmp/old.txt')
+    ui_manager._start_pending_zlut_filepath_to_remember('C:/tmp/new.txt')
+
+    ui_manager.clear_pending_zlut_load_request(1)
+
+    assert ui_manager._pending_zlut_load_request_id == 2
+    assert (
+        ui_manager._pending_zlut_filepath_to_remember
+        == ui_manager._normalized_zlut_filepath('C:/tmp/new.txt')
+    )
+
+
+def test_save_generated_zlut_without_loading_sends_command(ui_manager, monkeypatch, qtbot):
+    commands = []
+    ui_manager.send_ipc = commands.append
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    ui_manager.windows = [window]
     monkeypatch.setattr('magscope.ui.ui.QFileDialog.getSaveFileName', lambda *args, **kwargs: ('C:/tmp/test.txt', ''))
+
+    pending_request_id = ui_manager._start_pending_zlut_filepath_to_remember(
+        'C:/tmp/existing.txt'
+    )
 
     ui_manager.save_generated_zlut(5, load_after_save=False)
 
     assert commands == [
         SaveGeneratedZLUTCommand(filepath='C:/tmp/test.txt', bead_id=5, load_after_save=False)
     ]
+    assert ui_manager._pending_zlut_load_request_id == pending_request_id
+    assert (
+        ui_manager._pending_zlut_filepath_to_remember
+        == ui_manager._normalized_zlut_filepath('C:/tmp/existing.txt')
+    )
 
     ui_manager.update_zlut_metadata(filepath='C:/tmp/test.txt')
 

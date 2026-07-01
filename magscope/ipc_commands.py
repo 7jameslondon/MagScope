@@ -222,6 +222,11 @@ class LoadZLUTCommand(Command):
 
 
 @dataclass(frozen=True)
+class ClearPendingZLUTLoadRequestCommand(Command):
+    load_request_id: int
+
+
+@dataclass(frozen=True)
 class UnloadZLUTCommand(Command):
     """Clear the currently loaded Z-LUT."""
 

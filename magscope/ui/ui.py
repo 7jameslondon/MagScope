@@ -4173,6 +4173,11 @@ class UIManager(ManagerProcessBase):
         self._pending_zlut_filepath_to_remember = None
         self._pending_zlut_load_request_id = None
 
+    @register_ipc_command(ClearPendingZLUTLoadRequestCommand)
+    def clear_pending_zlut_load_request(self, load_request_id: int) -> None:
+        if load_request_id == self._pending_zlut_load_request_id:
+            self._clear_pending_zlut_filepath_to_remember()
+
     def _should_apply_zlut_metadata(
         self,
         filepath: str | None,
