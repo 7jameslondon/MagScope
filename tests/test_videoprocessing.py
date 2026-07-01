@@ -1131,6 +1131,42 @@ def test_run_applies_prequeued_startup_unload_before_processing_task(monkeypatch
     )
 
 
+def test_load_zlut_file_success_broadcasts_metadata_with_request_id(manager, tmp_path):
+    zlut = np.asarray(
+        [
+            [5.0, 15.0, 25.0],
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+        ],
+        dtype=np.float64,
+    )
+    zlut_path = tmp_path / 'loaded_zlut.txt'
+    np.savetxt(zlut_path, zlut)
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+
+    manager.load_zlut_file(str(zlut_path), load_request_id=42)
+
+    np.testing.assert_allclose(manager._zlut, zlut)
+    assert manager._zlut_path == zlut_path
+    assert manager._zlut_metadata == {
+        'z_min': 5.0,
+        'z_max': 25.0,
+        'step_size': 10.0,
+        'profile_length': 2,
+    }
+    assert sent_commands == [
+        UpdateZLUTMetadataCommand(
+            filepath=str(zlut_path),
+            z_min=5.0,
+            z_max=25.0,
+            step_size=10.0,
+            profile_length=2,
+            load_request_id=42,
+        )
+    ]
+
+
 def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manager, monkeypatch, tmp_path):
     manager._zlut_path = Path('existing.txt')
     manager._zlut_metadata = {
