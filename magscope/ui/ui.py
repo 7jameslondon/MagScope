@@ -4105,6 +4105,9 @@ class UIManager(ManagerProcessBase):
         self.send_ipc(command)
 
     def _load_remembered_zlut(self) -> None:
+        if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
+            return
+
         filepath = self._zlut_settings().value(
             LAST_ZLUT_FILEPATH_SETTINGS_KEY,
             '',
@@ -4150,9 +4153,6 @@ class UIManager(ManagerProcessBase):
         load_request_id: int | None = None,
     ) -> None:
         pending_filepath = self._pending_zlut_filepath_to_remember
-        if pending_filepath is None:
-            return
-
         pending_request_id = self._pending_zlut_load_request_id
         request_id_matches = (
             load_request_id is not None
@@ -4163,6 +4163,11 @@ class UIManager(ManagerProcessBase):
             if request_id_matches:
                 self._clear_pending_zlut_filepath_to_remember()
                 self._remember_zlut_filepath(None)
+            elif load_request_id is None and pending_filepath is None:
+                self._remember_zlut_filepath(None)
+            return
+
+        if pending_filepath is None:
             return
 
         if load_request_id is not None and not request_id_matches:

@@ -1457,6 +1457,21 @@ def test_update_zlut_metadata_without_pending_request_does_not_remember_filepath
     clear_ui_manager_singleton()
 
 
+def test_update_zlut_metadata_clear_without_pending_request_clears_remembered_filepath():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/loaded_zlut.txt')
+    settings.setValue(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, '/tmp/zluts')
+    manager = UIManager()
+
+    manager.update_zlut_metadata(filepath=None, load_request_id=None)
+
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
+
+    clear_ui_manager_singleton()
+
+
 def test_request_zlut_file_waits_for_matching_metadata_before_remembering():
     clear_ui_manager_singleton()
     manager = UIManager()
@@ -1505,11 +1520,30 @@ def test_load_remembered_zlut_requests_saved_filepath():
     manager = UIManager()
     commands = []
     manager.send_ipc = commands.append
+    manager._command_registry = object()
+    manager._pipe = object()
+    manager._magscope_quitting = object()
 
     manager._load_remembered_zlut()
 
     assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/remembered.txt', load_request_id=1)]
     assert manager._current_zlut_filepath == '/tmp/zluts/remembered.txt'
+
+    clear_ui_manager_singleton()
+
+
+def test_load_remembered_zlut_without_ipc_configuration_is_noop():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/remembered.txt')
+    manager = UIManager()
+    commands = []
+    manager.send_ipc = commands.append
+
+    manager._load_remembered_zlut()
+
+    assert commands == []
+    assert manager._current_zlut_filepath is None
 
     clear_ui_manager_singleton()
 
