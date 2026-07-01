@@ -1437,7 +1437,7 @@ def test_zlut_load_action_opens_file_picker_and_loads(qtbot, monkeypatch):
     clear_ui_manager_singleton()
 
 
-def test_request_zlut_file_remembers_filepath_and_directory():
+def test_request_zlut_file_waits_for_metadata_before_remembering():
     clear_ui_manager_singleton()
     manager = UIManager()
     commands = []
@@ -1446,12 +1446,31 @@ def test_request_zlut_file_remembers_filepath_and_directory():
     manager.request_zlut_file('/tmp/zluts/loaded_zlut.txt')
 
     settings = QSettings('MagScope', 'MagScope')
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/loaded_zlut.txt')]
+    assert manager._current_zlut_filepath == '/tmp/zluts/loaded_zlut.txt'
+
+    clear_ui_manager_singleton()
+
+
+def test_update_zlut_metadata_remembers_filepath_and_directory():
+    clear_ui_manager_singleton()
+    manager = UIManager()
+
+    manager.update_zlut_metadata(
+        filepath='/tmp/zluts/loaded_zlut.txt',
+        z_min=0.0,
+        z_max=10.0,
+        step_size=10.0,
+        profile_length=2,
+    )
+
+    settings = QSettings('MagScope', 'MagScope')
     assert (
         settings.value(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, type=str)
         == '/tmp/zluts/loaded_zlut.txt'
     )
     assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
-    assert commands == [LoadZLUTCommand(filepath='/tmp/zluts/loaded_zlut.txt')]
 
     clear_ui_manager_singleton()
 
@@ -1470,6 +1489,22 @@ def test_load_remembered_zlut_requests_saved_filepath():
     assert manager._current_zlut_filepath == '/tmp/zluts/remembered.txt'
 
     clear_ui_manager_singleton()
+
+
+def test_update_zlut_metadata_clears_remembered_filepath():
+    clear_ui_manager_singleton()
+    settings = QSettings('MagScope', 'MagScope')
+    settings.setValue(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY, '/tmp/zluts/stale.txt')
+    settings.setValue(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, '/tmp/zluts')
+    manager = UIManager()
+
+    manager.update_zlut_metadata(filepath=None)
+
+    assert not settings.contains(ui_module.LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+    assert settings.value(ui_module.LAST_ZLUT_DIRECTORY_SETTINGS_KEY, type=str) == '/tmp/zluts'
+
+    clear_ui_manager_singleton()
+
 
 def test_current_zlut_dialog_renders_loaded_zlut_preview(qtbot, tmp_path):
     zlut_path = tmp_path / 'zlut.txt'

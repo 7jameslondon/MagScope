@@ -4116,10 +4116,11 @@ class UIManager(ManagerProcessBase):
         return QSettings('MagScope', 'MagScope')
 
     def _remember_zlut_filepath(self, filepath: str | None) -> None:
+        settings = self._zlut_settings()
         if not filepath:
+            settings.remove(LAST_ZLUT_FILEPATH_SETTINGS_KEY)
             return
 
-        settings = self._zlut_settings()
         settings.setValue(LAST_ZLUT_FILEPATH_SETTINGS_KEY, filepath)
         directory = os.path.dirname(filepath)
         if directory:
@@ -4246,7 +4247,6 @@ class UIManager(ManagerProcessBase):
         profile_length: int | None = None,
     ) -> None:
         self._current_zlut_filepath = filepath
-        self._remember_zlut_filepath(filepath)
         self._current_zlut_metadata = {
             'z_min': z_min,
             'z_max': z_max,
@@ -4426,6 +4426,7 @@ class UIManager(ManagerProcessBase):
             step_size=step_size,
             profile_length=profile_length,
         )
+        self._remember_zlut_filepath(filepath)
 
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:
