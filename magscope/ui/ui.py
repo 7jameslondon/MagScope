@@ -819,7 +819,10 @@ class UIManager(ManagerProcessBase):
         self._pending_zlut_filepath_to_remember: str | None = None
         self._pending_zlut_load_request_id: int | None = None
         self._next_zlut_load_request_id = 0
-        self._suppress_startup_default_zlut_metadata = self._zlut_disabled_preference()
+        self._suppress_startup_default_zlut_metadata = (
+            self._zlut_disabled_preference()
+            or bool(self._remembered_zlut_filepath())
+        )
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -4114,18 +4117,13 @@ class UIManager(ManagerProcessBase):
             self._clear_pending_zlut_filepath_to_remember()
             self._remember_zlut_filepath(None)
             self._set_current_zlut(filepath=None)
-            self.send_ipc(UnloadZLUTCommand())
             return
 
-        filepath = self._zlut_settings().value(
-            LAST_ZLUT_FILEPATH_SETTINGS_KEY,
-            '',
-            type=str,
-        )
+        filepath = self._remembered_zlut_filepath()
         if not filepath:
             return
 
-        self.request_zlut_file(filepath)
+        self._set_current_zlut(filepath=filepath)
 
     @staticmethod
     def _zlut_settings() -> QSettings:
@@ -4134,6 +4132,14 @@ class UIManager(ManagerProcessBase):
     @staticmethod
     def _normalized_zlut_filepath(filepath: str) -> str:
         return os.path.normcase(os.path.abspath(os.path.expanduser(filepath)))
+
+    def _remembered_zlut_filepath(self) -> str | None:
+        filepath = self._zlut_settings().value(
+            LAST_ZLUT_FILEPATH_SETTINGS_KEY,
+            '',
+            type=str,
+        )
+        return filepath or None
 
     @classmethod
     def _default_zlut_filepath(cls) -> str:
@@ -4186,23 +4192,34 @@ class UIManager(ManagerProcessBase):
         pending_filepath = self._pending_zlut_filepath_to_remember
         pending_request_id = self._pending_zlut_load_request_id
 
-        if load_request_id is not None:
-            if pending_request_id is None or load_request_id != pending_request_id:
+        if pending_request_id is not None:
+            if (
+                load_request_id is None
+                and filepath
+                and self._suppress_startup_default_zlut_metadata
+                and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+            ):
+                self._suppress_startup_default_zlut_metadata = False
+            if load_request_id != pending_request_id:
                 return False
             if filepath and pending_filepath is not None:
                 return self._normalized_zlut_filepath(filepath) == pending_filepath
             return True
 
-        if pending_filepath is not None:
-            return bool(filepath) and self._normalized_zlut_filepath(filepath) == pending_filepath
+        if load_request_id is not None:
+            return False
 
         if (
-            filepath
-            and self._suppress_startup_default_zlut_metadata
-            and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+            self._suppress_startup_default_zlut_metadata
+            and load_request_id is None
         ):
+            suppress_default = (
+                filepath
+                and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+            )
             self._suppress_startup_default_zlut_metadata = False
-            return False
+            if suppress_default:
+                return False
 
         return True
 
