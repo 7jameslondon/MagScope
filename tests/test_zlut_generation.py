@@ -3,6 +3,7 @@ import pytest
 
 from magscope.ipc_commands import (
     ArmZLUTSweepCaptureCommand,
+    ClearPendingZLUTLoadRequestCommand,
     ClearPendingZLUTProfileLengthCommand,
     LoadZLUTCommand,
     RequestFocusMotorLimitsCommand,
@@ -141,11 +142,14 @@ def test_save_generated_zlut_writes_and_loads(monkeypatch, tmp_path):
     monkeypatch.setattr('magscope.zlut_generation.np.savetxt', fake_savetxt)
 
     filepath = tmp_path / 'generated.txt'
-    manager.save_generated_zlut(str(filepath), 3)
+    manager.save_generated_zlut(str(filepath), 3, load_request_id=42)
 
     assert saved[0][0] == filepath
     np.testing.assert_allclose(saved[0][1], np.asarray([[1.0, 2.0], [3.0, 4.0]]))
-    assert isinstance(manager._sent_commands[0], LoadZLUTCommand)
+    assert manager._sent_commands[0] == LoadZLUTCommand(
+        filepath=str(filepath),
+        load_request_id=42,
+    )
     assert isinstance(manager._sent_commands[1], ShowMessageCommand)
     assert isinstance(manager._sent_commands[2], UpdateZLUTGenerationStateCommand)
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
@@ -178,6 +182,49 @@ def test_save_generated_zlut_without_loading_keeps_evaluation_active(monkeypatch
     assert state_command.status == 'Generated Z-LUT saved.'
     assert state_command.phase == 'evaluating'
     assert any(isinstance(command, UpdateZLUTGenerationEvaluationCommand) for command in manager._sent_commands)
+
+
+def test_save_generated_zlut_missing_directory_clears_pending_load_request(tmp_path):
+    manager = make_manager()
+    manager._phase = 'evaluating'
+    manager._generated_zluts = {
+        3: type('Result', (), {'zlut_array': np.asarray([[1.0, 2.0], [3.0, 4.0]])})()
+    }
+
+    manager.save_generated_zlut(
+        str(tmp_path / 'missing' / 'generated.txt'),
+        3,
+        load_after_save=True,
+        load_request_id=42,
+    )
+
+    assert not any(isinstance(command, LoadZLUTCommand) for command in manager._sent_commands)
+    assert ClearPendingZLUTLoadRequestCommand(load_request_id=42) in manager._sent_commands
+    error_command = next(
+        command for command in manager._sent_commands if isinstance(command, ShowErrorCommand)
+    )
+    assert error_command.details == f"Directory does not exist: {tmp_path / 'missing'}"
+
+
+def test_save_generated_zlut_without_loading_failure_does_not_clear_pending_load_request(tmp_path):
+    manager = make_manager()
+    manager._phase = 'evaluating'
+    manager._generated_zluts = {
+        3: type('Result', (), {'zlut_array': np.asarray([[1.0, 2.0], [3.0, 4.0]])})()
+    }
+
+    manager.save_generated_zlut(
+        str(tmp_path / 'missing' / 'generated.txt'),
+        3,
+        load_after_save=False,
+        load_request_id=42,
+    )
+
+    assert not any(isinstance(command, LoadZLUTCommand) for command in manager._sent_commands)
+    assert not any(
+        isinstance(command, ClearPendingZLUTLoadRequestCommand)
+        for command in manager._sent_commands
+    )
 
 
 def test_prepare_session_uses_requested_profiles_per_bead():

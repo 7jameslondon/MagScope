@@ -131,6 +131,9 @@ from magscope.scripting import ScriptStatus, register_script_command
 from magscope.settings import (
     GUI_ACCENT_COLOR_SETTING,
     GUI_LIVE_PLOT_PROGRESS_BAR_SETTING,
+    LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
+    LAST_ZLUT_DISABLED_SETTINGS_KEY,
+    LAST_ZLUT_FILEPATH_SETTINGS_KEY,
     MagScopeSettings,
     tracking_options_from_qsettings,
 )
@@ -813,6 +816,13 @@ class UIManager(ManagerProcessBase):
             'step_size': None,
             'profile_length': None,
         }
+        self._pending_zlut_filepath_to_remember: str | None = None
+        self._pending_zlut_load_request_id: int | None = None
+        self._next_zlut_load_request_id = 0
+        self._suppress_startup_default_zlut_metadata = (
+            self._zlut_disabled_preference()
+            or bool(self._remembered_zlut_filepath())
+        )
         self._zlut_generation_phase = 'idle'
         self._zlut_generation_z_axis_min_nm: float | None = None
         self._zlut_generation_z_axis_max_nm: float | None = None
@@ -1199,6 +1209,7 @@ class UIManager(ManagerProcessBase):
         self._create_view_menu(window)
         self._create_tools_menu(window)
         self._create_zlut_menu(window)
+        self._load_remembered_zlut()
         self._create_help_menu_action(window)
         self._create_search_menu_widget(window)
         self._apply_default_viewer_layout()
@@ -4093,22 +4104,177 @@ class UIManager(ManagerProcessBase):
         if not filepath:
             return
 
+        load_request_id = self._start_pending_zlut_filepath_to_remember(filepath)
         self._set_current_zlut(filepath=filepath)
-        command = LoadZLUTCommand(filepath=filepath)
+        command = LoadZLUTCommand(filepath=filepath, load_request_id=load_request_id)
         self.send_ipc(command)
+
+    def _load_remembered_zlut(self) -> None:
+        if self._command_registry is None or self._pipe is None or self._magscope_quitting is None:
+            return
+
+        if self._zlut_disabled_preference():
+            self._clear_pending_zlut_filepath_to_remember()
+            self._remember_zlut_filepath(None)
+            self._set_current_zlut(filepath=None)
+            return
+
+        filepath = self._remembered_zlut_filepath()
+        if not filepath:
+            return
+
+        self._set_current_zlut(filepath=filepath)
+
+    @staticmethod
+    def _zlut_settings() -> QSettings:
+        return QSettings('MagScope', 'MagScope')
+
+    @staticmethod
+    def _normalized_zlut_filepath(filepath: str) -> str:
+        return os.path.normcase(os.path.abspath(os.path.expanduser(filepath)))
+
+    def _remembered_zlut_filepath(self) -> str | None:
+        filepath = self._zlut_settings().value(
+            LAST_ZLUT_FILEPATH_SETTINGS_KEY,
+            '',
+            type=str,
+        )
+        return filepath or None
+
+    @classmethod
+    def _default_zlut_filepath(cls) -> str:
+        return cls._normalized_zlut_filepath(
+            str(resources.files('magscope').joinpath('simulation_zlut.txt'))
+        )
+
+    def _remember_zlut_filepath(self, filepath: str | None) -> None:
+        settings = self._zlut_settings()
+        if not filepath:
+            settings.remove(LAST_ZLUT_FILEPATH_SETTINGS_KEY)
+            return
+
+        settings.setValue(LAST_ZLUT_DISABLED_SETTINGS_KEY, False)
+        settings.setValue(LAST_ZLUT_FILEPATH_SETTINGS_KEY, filepath)
+        directory = os.path.dirname(filepath)
+        if directory:
+            settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
+
+    def _set_zlut_disabled_preference(self, disabled: bool) -> None:
+        self._zlut_settings().setValue(LAST_ZLUT_DISABLED_SETTINGS_KEY, bool(disabled))
+
+    def _zlut_disabled_preference(self) -> bool:
+        return self._zlut_settings().value(
+            LAST_ZLUT_DISABLED_SETTINGS_KEY,
+            False,
+            type=bool,
+        )
+
+    def _start_pending_zlut_filepath_to_remember(self, filepath: str) -> int:
+        self._next_zlut_load_request_id += 1
+        self._pending_zlut_filepath_to_remember = self._normalized_zlut_filepath(filepath)
+        self._pending_zlut_load_request_id = self._next_zlut_load_request_id
+        return self._next_zlut_load_request_id
+
+    def _clear_pending_zlut_filepath_to_remember(self) -> None:
+        self._pending_zlut_filepath_to_remember = None
+        self._pending_zlut_load_request_id = None
+
+    @register_ipc_command(ClearPendingZLUTLoadRequestCommand)
+    def clear_pending_zlut_load_request(self, load_request_id: int) -> None:
+        if load_request_id == self._pending_zlut_load_request_id:
+            self._clear_pending_zlut_filepath_to_remember()
+
+    def _should_apply_zlut_metadata(
+        self,
+        filepath: str | None,
+        load_request_id: int | None = None,
+    ) -> bool:
+        pending_filepath = self._pending_zlut_filepath_to_remember
+        pending_request_id = self._pending_zlut_load_request_id
+
+        if pending_request_id is not None:
+            if (
+                load_request_id is None
+                and filepath
+                and self._suppress_startup_default_zlut_metadata
+                and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+            ):
+                self._suppress_startup_default_zlut_metadata = False
+            if load_request_id != pending_request_id:
+                return False
+            if filepath and pending_filepath is not None:
+                return self._normalized_zlut_filepath(filepath) == pending_filepath
+            return True
+
+        if load_request_id is not None:
+            return False
+
+        if (
+            self._suppress_startup_default_zlut_metadata
+            and load_request_id is None
+        ):
+            suppress_default = (
+                filepath
+                and self._normalized_zlut_filepath(filepath) == self._default_zlut_filepath()
+            )
+            self._suppress_startup_default_zlut_metadata = False
+            if suppress_default:
+                return False
+
+        return True
+
+    def _update_remembered_zlut_from_metadata(
+        self,
+        filepath: str | None,
+        load_request_id: int | None = None,
+    ) -> None:
+        if not self._should_apply_zlut_metadata(filepath, load_request_id=load_request_id):
+            return
+
+        pending_filepath = self._pending_zlut_filepath_to_remember
+        pending_request_id = self._pending_zlut_load_request_id
+        request_id_matches = (
+            load_request_id is not None
+            and pending_request_id is not None
+            and load_request_id == pending_request_id
+        )
+        if not filepath:
+            if request_id_matches:
+                self._clear_pending_zlut_filepath_to_remember()
+                self._remember_zlut_filepath(None)
+                self._set_zlut_disabled_preference(True)
+            elif load_request_id is None and pending_filepath is None:
+                self._remember_zlut_filepath(None)
+                self._set_zlut_disabled_preference(True)
+            return
+
+        if pending_filepath is None:
+            return
+
+        if load_request_id is not None and not request_id_matches:
+            return
+
+        if self._normalized_zlut_filepath(filepath) != pending_filepath:
+            return
+
+        self._clear_pending_zlut_filepath_to_remember()
+        self._remember_zlut_filepath(filepath)
 
     def clear_zlut(self) -> None:
         self.unload_zlut()
 
     def unload_zlut(self) -> None:
+        self._clear_pending_zlut_filepath_to_remember()
+        self._remember_zlut_filepath(None)
+        self._set_zlut_disabled_preference(True)
         self._set_current_zlut(filepath=None)
         command = UnloadZLUTCommand()
         self.send_ipc(command)
 
     def load_zlut_file_dialog(self) -> None:
-        settings = QSettings('MagScope', 'MagScope')
+        settings = self._zlut_settings()
         last_value = settings.value(
-            'last zlut directory',
+            LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
             os.path.expanduser('~'),
             type=str,
         )
@@ -4122,7 +4288,7 @@ class UIManager(ManagerProcessBase):
             return
 
         directory = os.path.dirname(path) or last_value
-        settings.setValue('last zlut directory', directory)
+        settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
         self.request_zlut_file(path)
 
     def show_current_zlut_dialog(self) -> None:
@@ -4354,8 +4520,12 @@ class UIManager(ManagerProcessBase):
         self._zlut_preview_last_poll = 0.0
 
     def save_generated_zlut(self, bead_id: int, load_after_save: bool = True) -> None:
-        settings = QSettings('MagScope', 'MagScope')
-        last_value = settings.value('last zlut directory', os.path.expanduser('~'), type=str)
+        settings = self._zlut_settings()
+        last_value = settings.value(
+            LAST_ZLUT_DIRECTORY_SETTINGS_KEY,
+            os.path.expanduser('~'),
+            type=str,
+        )
         default_path = os.path.join(last_value, f'generated_zlut_bead_{int(bead_id)}.txt')
         filepath, _ = QFileDialog.getSaveFileName(
             self.windows[0] if self.windows else None,
@@ -4367,12 +4537,16 @@ class UIManager(ManagerProcessBase):
             return
 
         directory = os.path.dirname(filepath) or last_value
-        settings.setValue('last zlut directory', directory)
+        settings.setValue(LAST_ZLUT_DIRECTORY_SETTINGS_KEY, directory)
+        load_request_id = None
+        if bool(load_after_save):
+            load_request_id = self._start_pending_zlut_filepath_to_remember(filepath)
         self.send_ipc(
             SaveGeneratedZLUTCommand(
                 filepath=filepath,
                 bead_id=int(bead_id),
                 load_after_save=bool(load_after_save),
+                load_request_id=load_request_id,
             )
         )
 
@@ -4385,7 +4559,11 @@ class UIManager(ManagerProcessBase):
                              z_min: float | None = None,
                              z_max: float | None = None,
                              step_size: float | None = None,
-                             profile_length: int | None = None) -> None:
+                             profile_length: int | None = None,
+                             load_request_id: int | None = None) -> None:
+        if not self._should_apply_zlut_metadata(filepath, load_request_id=load_request_id):
+            return
+
         self._set_current_zlut(
             filepath=filepath,
             z_min=z_min,
@@ -4393,6 +4571,7 @@ class UIManager(ManagerProcessBase):
             step_size=step_size,
             profile_length=profile_length,
         )
+        self._update_remembered_zlut_from_metadata(filepath, load_request_id=load_request_id)
 
     @register_ipc_command(ReportProfileLengthCommand)
     def report_profile_length(self, profile_length: int | None = None) -> None:

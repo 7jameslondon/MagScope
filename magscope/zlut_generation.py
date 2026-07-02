@@ -14,6 +14,7 @@ from magscope.ipc_commands import (
     ArmZLUTSweepCaptureCommand,
     CancelGeneratedZLUTEvaluationCommand,
     CancelZLUTGenerationCommand,
+    ClearPendingZLUTLoadRequestCommand,
     ClearPendingZLUTProfileLengthCommand,
     DisarmZLUTSweepCaptureCommand,
     LoadZLUTCommand,
@@ -289,30 +290,54 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._send_evaluation_state(active=True)
 
     @register_ipc_command(SaveGeneratedZLUTCommand)
-    def save_generated_zlut(self, filepath: str, bead_id: int, load_after_save: bool = True):
+    def save_generated_zlut(
+        self,
+        filepath: str,
+        bead_id: int,
+        load_after_save: bool = True,
+        load_request_id: int | None = None,
+    ):
+        pending_load_request_id = load_request_id if bool(load_after_save) else None
         if self._phase != 'evaluating':
+            if pending_load_request_id is not None:
+                self.send_ipc(
+                    ClearPendingZLUTLoadRequestCommand(
+                        load_request_id=pending_load_request_id
+                    )
+                )
             return
 
         bead_id = int(bead_id)
         result = self._generated_zluts.get(bead_id)
         if result is None:
-            self._fail_evaluation(f'Generated Z-LUT bead {bead_id} is not available.')
+            self._fail_evaluation(
+                f'Generated Z-LUT bead {bead_id} is not available.',
+                load_request_id=pending_load_request_id,
+            )
             return
 
         path = Path(filepath).expanduser()
         if not path.parent.exists():
-            self._fail_evaluation(f'Directory does not exist: {path.parent}')
+            self._fail_evaluation(
+                f'Directory does not exist: {path.parent}',
+                load_request_id=pending_load_request_id,
+            )
             return
 
         try:
             np.savetxt(path, result.zlut_array)
         except Exception as exc:
             reason = str(exc).strip() or repr(exc)
-            self._fail_evaluation(f'Failed to save generated Z-LUT: {reason}')
+            self._fail_evaluation(
+                f'Failed to save generated Z-LUT: {reason}',
+                load_request_id=pending_load_request_id,
+            )
             return
 
         if load_after_save:
-            self.send_ipc(LoadZLUTCommand(filepath=str(path)))
+            self.send_ipc(
+                LoadZLUTCommand(filepath=str(path), load_request_id=load_request_id)
+            )
             self.send_ipc(
                 ShowMessageCommand(
                     text='Generated Z-LUT loaded.',
@@ -528,9 +553,13 @@ class ZLUTGenerationManager(ManagerProcessBase):
         self._send_state('Z-LUT generation failed.', detail=reason, running=False, can_cancel=False, phase='idle')
         self._cleanup_runtime_state(destroy_dataset=True)
 
-    def _fail_evaluation(self, reason: str) -> None:
+    def _fail_evaluation(self, reason: str, load_request_id: int | None = None) -> None:
         logger.warning('Z-LUT evaluation failed: %s', reason)
         self.send_ipc(ShowErrorCommand(text='Generated Z-LUT evaluation failed', details=reason))
+        if load_request_id is not None:
+            self.send_ipc(
+                ClearPendingZLUTLoadRequestCommand(load_request_id=load_request_id)
+            )
         self._send_state(
             'Generated Z-LUT evaluation failed.',
             detail=reason,

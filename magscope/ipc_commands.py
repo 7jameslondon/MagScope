@@ -212,11 +212,18 @@ class UpdateZLUTMetadataCommand(Command):
     z_max: float | None = None
     step_size: float | None = None
     profile_length: int | None = None
+    load_request_id: int | None = None
 
 
 @dataclass(frozen=True)
 class LoadZLUTCommand(Command):
     filepath: str
+    load_request_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ClearPendingZLUTLoadRequestCommand(Command):
+    load_request_id: int
 
 
 @dataclass(frozen=True)
@@ -275,6 +282,7 @@ class SaveGeneratedZLUTCommand(Command):
     filepath: str
     bead_id: int
     load_after_save: bool = True
+    load_request_id: int | None = None
 
 
 @dataclass(frozen=True)

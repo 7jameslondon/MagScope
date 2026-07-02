@@ -7,8 +7,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from magscope.ipc_commands import ShowMessageCommand, ShowWarningCommand, UpdateZLUTMetadataCommand
-
+from magscope.ipc import CommandRegistry
+from magscope.ipc_commands import (
+    LoadZLUTCommand,
+    QuitCommand,
+    ShowMessageCommand,
+    ShowWarningCommand,
+    UnloadZLUTCommand,
+    UpdateZLUTMetadataCommand,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -93,6 +100,11 @@ class DummyQueue:
     def put(self, item):
         self.items.append(item)
 
+    def get_nowait(self):
+        if not self.items:
+            raise videoprocessing.Empty
+        return self.items.pop(0)
+
     def put_nowait(self, item):
         self.items.append(item)
 
@@ -167,6 +179,23 @@ class DummyTracksBuffer:
         self.rows.append(np.asarray(rows).copy())
 
 
+class DummyStartupPipe:
+    def __init__(self, incoming=()):
+        self.incoming = list(incoming)
+        self.recv_calls = 0
+        self.sent = []
+
+    def poll(self):
+        return bool(self.incoming)
+
+    def recv(self):
+        self.recv_calls += 1
+        return self.incoming.pop(0)
+
+    def send(self, command):
+        self.sent.append(command)
+
+
 class DummyReadableVideoBuffer:
     def __init__(self, *, unread_stacks: int, n_images: int = 5, level: float = 0.0):
         self.unread_stacks = unread_stacks
@@ -190,6 +219,21 @@ class DummyReadableVideoBuffer:
 
     def get_level(self):
         return self._level
+
+
+def configure_manager_ipc(manager, incoming):
+    registry = CommandRegistry()
+    registry.register_manager(manager)
+    manager._command_registry = registry
+    manager._command_handlers = {
+        command_type: spec.handler
+        for command_type, spec in registry.handlers_for_target(manager.name).items()
+    }
+    pipe = DummyStartupPipe(incoming)
+    manager._pipe = pipe
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+    return pipe, sent_commands
 
 
 @pytest.fixture
@@ -539,6 +583,71 @@ def test_do_main_loop_skips_enqueue_when_stack_already_reserved(manager):
     manager.do_main_loop()
 
     assert calls == []
+
+
+def test_do_main_loop_applies_queued_startup_unload_before_first_task(manager):
+    default_zlut = np.asarray([[0.0, 10.0], [99.0, 99.0]], dtype=np.float64)
+    manager._zlut = default_zlut
+    manager._zlut_path = Path('simulation_zlut.txt')
+    manager._zlut_metadata = {
+        'z_min': 0.0,
+        'z_max': 10.0,
+        'step_size': 10.0,
+        'profile_length': 1,
+    }
+    pipe, sent_commands = configure_manager_ipc(manager, [UnloadZLUTCommand()])
+    manager._acquisition_on = True
+    manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    manager.shared_values = SimpleNamespace(video_process_reserved_stacks=DummyValue(0))
+
+    manager.do_main_loop()
+
+    assert pipe.recv_calls == 1
+    assert manager._startup_ipc_drained is True
+    assert manager._tasks.items[0]['zlut'] is None
+    assert manager._zlut is None
+    assert sent_commands[-1] == UpdateZLUTMetadataCommand(
+        filepath=None,
+        z_min=None,
+        z_max=None,
+        step_size=None,
+        profile_length=None,
+    )
+
+
+def test_do_main_loop_applies_queued_startup_load_before_first_task(manager, tmp_path):
+    default_zlut = np.asarray([[0.0, 10.0], [99.0, 99.0]], dtype=np.float64)
+    remembered_zlut = np.asarray(
+        [
+            [5.0, 15.0, 25.0],
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+        ],
+        dtype=np.float64,
+    )
+    zlut_path = tmp_path / 'remembered_zlut.txt'
+    np.savetxt(zlut_path, remembered_zlut)
+    manager._zlut = default_zlut
+    pipe, sent_commands = configure_manager_ipc(manager, [LoadZLUTCommand(filepath=str(zlut_path))])
+    manager._acquisition_on = True
+    manager.video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    manager.shared_values = SimpleNamespace(video_process_reserved_stacks=DummyValue(0))
+
+    manager.do_main_loop()
+
+    assert pipe.recv_calls == 1
+    assert manager._startup_ipc_drained is True
+    scheduled_zlut = manager._tasks.items[0]['zlut']
+    assert scheduled_zlut is not default_zlut
+    np.testing.assert_allclose(scheduled_zlut, remembered_zlut)
+    assert sent_commands[-1] == UpdateZLUTMetadataCommand(
+        filepath=str(zlut_path),
+        z_min=5.0,
+        z_max=25.0,
+        step_size=10.0,
+        profile_length=2,
+        load_request_id=None,
+    )
 
 
 def test_worker_reports_zlut_capture_failure_to_manager():
@@ -923,6 +1032,167 @@ def test_extract_zlut_metadata_rejects_non_finite_z_reference_values(bad_value):
         )
 
 
+def test_run_applies_prequeued_startup_unload_before_processing_task(monkeypatch):
+    import magscope.processes as processes_module
+
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    default_zlut = np.asarray([[0.0, 10.0], [99.0, 99.0]], dtype=np.float64)
+    manager._zlut = default_zlut
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+
+    class FakeSettings(dict):
+        def clone(self):
+            return FakeSettings(self)
+
+    class FakeEvent:
+        def is_set(self):
+            return False
+
+    class FakeBeadRoiBuffer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_beads(self):
+            return np.zeros((0,), dtype=np.uint32), np.zeros((0, 4), dtype=np.uint32)
+
+    class FakeWorker:
+        def __init__(self, *args, **kwargs):
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+        def is_alive(self):
+            return False
+
+        def join(self):
+            pass
+
+        def terminate(self):
+            pass
+
+    created_queues = []
+
+    def fake_queue(*args, **kwargs):
+        queue = DummyQueue()
+        created_queues.append(queue)
+        return queue
+
+    video_buffer = DummyReadableVideoBuffer(unread_stacks=1)
+    monkeypatch.setattr(processes_module, 'LiveProfileBuffer', lambda create, locks: object())
+    monkeypatch.setattr(processes_module, 'BeadRoiBuffer', FakeBeadRoiBuffer)
+    monkeypatch.setattr(processes_module, 'MatrixBuffer', lambda create, name, locks: object())
+    monkeypatch.setattr(processes_module, 'VideoBuffer', lambda create, locks: video_buffer)
+    monkeypatch.setattr(videoprocessing, 'Queue', fake_queue)
+    monkeypatch.setattr(videoprocessing, 'VideoWorker', FakeWorker)
+
+    registry = CommandRegistry()
+    registry.register_manager(manager)
+    pipe = DummyStartupPipe([UnloadZLUTCommand()])
+    manager.configure_shared_resources(
+        camera_type=type('CameraType', (), {'nm_per_px': 123.0}),
+        hardware_types={},
+        quitting_event=FakeEvent(),
+        settings=FakeSettings({'video processors n': 1, 'magnification': 60}),
+        shared_values=SimpleNamespace(
+            video_process_reserved_stacks=DummyValue(0),
+            video_process_completed_stacks=DummyValue(0),
+            video_process_busy_count=DummyValue(0),
+            live_profile_enabled=DummyValue(0),
+            live_profile_bead=DummyValue(0),
+        ),
+        locks={'VideoProcessingReservation': DummyLock()},
+        pipe_end=pipe,
+        command_registry=registry,
+    )
+    original_add_task = manager._add_task
+
+    def add_one_task_then_stop():
+        result = original_add_task()
+        manager._running = False
+        return result
+
+    monkeypatch.setattr(manager, '_add_task', add_one_task_then_stop)
+
+    manager.run()
+
+    assert pipe.recv_calls == 1
+    assert manager._startup_ipc_drained is True
+    assert created_queues[0].items[0]['zlut'] is None
+    assert created_queues[0].items[0]['zlut'] is not default_zlut
+    assert sent_commands[-1] == UpdateZLUTMetadataCommand(
+        filepath=None,
+        z_min=None,
+        z_max=None,
+        step_size=None,
+        profile_length=None,
+    )
+
+
+def test_startup_quit_drain_stops_before_processing_task(monkeypatch):
+    type(VideoProcessorManager)._instances.pop(VideoProcessorManager, None)
+    manager = VideoProcessorManager()
+    registry = CommandRegistry()
+    registry.register_manager(manager)
+    pipe = DummyStartupPipe([QuitCommand()])
+    manager._command_registry = registry
+    manager._command_handlers = {
+        command_type: spec.handler
+        for command_type, spec in registry.handlers_for_target(manager.name).items()
+    }
+    manager._pipe = pipe
+    manager._magscope_quitting = SimpleNamespace(is_set=lambda: False)
+    manager._running = True
+    manager.quit = lambda: setattr(manager, '_running', False)
+    manager.video_buffer = SimpleNamespace(
+        check_read_stack=lambda: pytest.fail('processing should not be checked after startup quit')
+    )
+
+    manager.do_main_loop()
+
+    assert pipe.recv_calls == 1
+    assert manager._startup_ipc_drained is True
+    assert manager._running is False
+
+
+def test_load_zlut_file_success_broadcasts_metadata_with_request_id(manager, tmp_path):
+    zlut = np.asarray(
+        [
+            [5.0, 15.0, 25.0],
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+        ],
+        dtype=np.float64,
+    )
+    zlut_path = tmp_path / 'loaded_zlut.txt'
+    np.savetxt(zlut_path, zlut)
+    sent_commands = []
+    manager.send_ipc = sent_commands.append
+
+    manager.load_zlut_file(str(zlut_path), load_request_id=42)
+
+    np.testing.assert_allclose(manager._zlut, zlut)
+    assert manager._zlut_path == zlut_path
+    assert manager._zlut_metadata == {
+        'z_min': 5.0,
+        'z_max': 25.0,
+        'step_size': 10.0,
+        'profile_length': 2,
+    }
+    assert sent_commands == [
+        UpdateZLUTMetadataCommand(
+            filepath=str(zlut_path),
+            z_min=5.0,
+            z_max=25.0,
+            step_size=10.0,
+            profile_length=2,
+            load_request_id=42,
+        )
+    ]
+
+
 def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manager, monkeypatch, tmp_path):
     manager._zlut_path = Path('existing.txt')
     manager._zlut_metadata = {
@@ -943,7 +1213,7 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
     sent_commands = []
     manager.send_ipc = sent_commands.append
 
-    manager.load_zlut_file(str(tmp_path / 'bad_zlut.txt'))
+    manager.load_zlut_file(str(tmp_path / 'bad_zlut.txt'), load_request_id=7)
 
     assert manager._zlut is None
     assert manager._zlut_path is None
@@ -957,6 +1227,7 @@ def test_load_zlut_file_failure_clears_state_and_broadcasts_empty_metadata(manag
         z_max=None,
         step_size=None,
         profile_length=None,
+        load_request_id=7,
     )
 
 

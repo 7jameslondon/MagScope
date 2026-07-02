@@ -122,6 +122,7 @@ class VideoProcessorManager(ManagerProcessBase):
         self._zlut_profile_length_queue: QueueType | None = None
         self._pending_zlut_profile_length_request = False
         self._lookup_z_warning_reported = False
+        self._startup_ipc_drained = False
         self._waiting_for_acquisition: bool | None = None
         self._tracking_data_queue: QueueType | None = None
         self._tracking_data_writer: TrackingDataWriter | None = None
@@ -276,6 +277,10 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.warning('Could not queue tracking data file close request: %s', exc)
 
     def do_main_loop(self):
+        was_running = self._running
+        self._drain_startup_ipc_before_processing()
+        if was_running and not self._running:
+            return
         self._process_profile_length_reports()
         self._process_zlut_profile_length_reports()
         self._process_zlut_capture_reports()
@@ -288,6 +293,14 @@ class VideoProcessorManager(ManagerProcessBase):
             if self.video_buffer.check_read_stack() and self._try_reserve_processing_stack():
                 if not self._add_task():
                     self._release_reserved_processing_stack()
+
+    def _drain_startup_ipc_before_processing(self) -> None:
+        if self._startup_ipc_drained:
+            return
+
+        self._startup_ipc_drained = True
+        while self._pipe is not None and self._pipe.poll():
+            self.receive_ipc()
 
     def _try_reserve_processing_stack(self) -> bool:
         reserved_stacks = self.shared_values.video_process_reserved_stacks
@@ -332,7 +345,7 @@ class VideoProcessorManager(ManagerProcessBase):
             self._tracking_data_writer.terminate()
 
     @register_ipc_command(LoadZLUTCommand)
-    def load_zlut_file(self, filepath: str) -> None:
+    def load_zlut_file(self, filepath: str, load_request_id: int | None = None) -> None:
         path = Path(filepath).expanduser()
         self._zlut = None
         try:
@@ -341,10 +354,10 @@ class VideoProcessorManager(ManagerProcessBase):
             logger.exception('Failed to load Z-LUT file: %s', exc)
             self._clear_zlut_state()
             self._notify_zlut_error(path, exc)
-            self._broadcast_zlut_metadata()
+            self._broadcast_zlut_metadata(load_request_id=load_request_id)
             return
 
-        self._broadcast_zlut_metadata()
+        self._broadcast_zlut_metadata(load_request_id=load_request_id)
 
     def _load_default_zlut(self) -> None:
         try:
@@ -400,13 +413,14 @@ class VideoProcessorManager(ManagerProcessBase):
             return cp.asarray(zlut_array)
         return zlut_array
 
-    def _broadcast_zlut_metadata(self) -> None:
+    def _broadcast_zlut_metadata(self, load_request_id: int | None = None) -> None:
         command = UpdateZLUTMetadataCommand(
             filepath=str(self._zlut_path) if self._zlut_path is not None else None,
             z_min=None if self._zlut_metadata is None else self._zlut_metadata['z_min'],
             z_max=None if self._zlut_metadata is None else self._zlut_metadata['z_max'],
             step_size=None if self._zlut_metadata is None else self._zlut_metadata['step_size'],
             profile_length=None if self._zlut_metadata is None else self._zlut_metadata['profile_length'],
+            load_request_id=load_request_id,
         )
         self.send_ipc(command)
 
