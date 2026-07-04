@@ -14,7 +14,8 @@ import magscope
 from magscope.datatypes import MatrixBuffer
 from magscope.hardware import FocusMotorBase
 from magscope.ipc import register_ipc_command
-from magscope.ipc_commands import Command, MoveFocusMotorAbsoluteCommand
+from magscope.ipc_commands import Command, MoveFocusMotorAbsoluteCommand, ScriptMoveErrorCommand, UpdateWaitingCommand
+from magscope.utils import register_script_command
 from pipython import GCSDevice
 
 
@@ -41,6 +42,18 @@ class JogPiE709RelativeCommand(Command):
 @dataclass(frozen=True)
 class ZeroPiE709PositionCommand(Command):
     pass
+
+
+@dataclass(frozen=True)
+class FocusMoveCommand(Command):
+    z_nm: float
+    wait_until_done: bool = False
+
+
+@dataclass(frozen=True)
+class FocusJogCommand(Command):
+    delta_nm: float
+    wait_until_done: bool = False
 
 
 def controller_to_nm(value: float) -> float:
@@ -81,6 +94,7 @@ class PiE709FocusMotor(FocusMotorBase):
         self._last_timestamp = time()
         self._controller_idn = "-"
         self._servo_enabled = False
+        self._script_move_pending: bool = False
 
     def connect(self):
         if self._is_connected:
@@ -140,6 +154,12 @@ class PiE709FocusMotor(FocusMotorBase):
     def get_position_limits(self) -> tuple[float, float]:
         return self.position_min_max
 
+    def _poll_hardware(self, now: float) -> None:
+        if self._script_move_pending and self._pidevice is not None:
+            if self.is_at_target():
+                self.send_ipc(UpdateWaitingCommand())
+                self._script_move_pending = False
+
     @register_ipc_command(ConnectPiE709Command)
     def handle_connect(self):
         self.connect()
@@ -169,6 +189,30 @@ class PiE709FocusMotor(FocusMotorBase):
             self._pidevice.ATZ({self._axis: 0.0})
             self._target_z = 0.0
             self._write_state(time(), float(self.get_current_z()), force=True)
+
+    @register_ipc_command(FocusMoveCommand)
+    @register_script_command(FocusMoveCommand)
+    def handle_focus_move(self, z_nm: float, wait_until_done: bool = False):
+        if self._pidevice is None:
+            return
+        try:
+            self.handle_move_absolute(z_nm)
+            if wait_until_done:
+                self._script_move_pending = True
+        except Exception:
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Focus move to {z_nm} nm failed"))
+
+    @register_ipc_command(FocusJogCommand)
+    @register_script_command(FocusJogCommand)
+    def handle_focus_jog(self, delta_nm: float, wait_until_done: bool = False):
+        if self._pidevice is None:
+            return
+        try:
+            self.handle_jog(delta_nm)
+            if wait_until_done:
+                self._script_move_pending = True
+        except Exception:
+            self.send_ipc(ScriptMoveErrorCommand(text=f"Focus jog by {delta_nm} nm failed"))
 
 
 class DeviceInfoDialog(QDialog):
