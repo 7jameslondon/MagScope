@@ -21,8 +21,9 @@ from typing import Callable, Iterable
 from magscope._logging import get_logger
 from magscope.ipc import UnknownCommandError, register_ipc_command
 from magscope.ipc_commands import (Command, LoadScriptCommand, PauseScriptCommand, ResumeScriptCommand,
-                                   ShowErrorCommand, SleepCommand, StartScriptCommand,
-                                   UpdateScriptStatusCommand, UpdateScriptStepCommand, UpdateWaitingCommand)
+                                   ScriptMoveErrorCommand, ShowErrorCommand, SleepCommand,
+                                   StartScriptCommand, UpdateScriptStatusCommand, UpdateScriptStepCommand,
+                                   UpdateWaitingCommand)
 from magscope.processes import ManagerProcessBase
 from magscope.utils import register_script_command
 
@@ -367,7 +368,7 @@ class ScriptManager(ManagerProcessBase):
 
         registration = self.script_registry(type(step.command))
 
-        if step.wait or isinstance(step.command, SleepCommand):
+        if step.wait or isinstance(step.command, SleepCommand) or getattr(step.command, 'wait_until_done', False):
             self._script_waiting = True
 
         command_type = self._command_registry.command_for_handler(
@@ -385,6 +386,11 @@ class ScriptManager(ManagerProcessBase):
     def update_waiting(self):
         """Let the script resume after waiting for a previous step to finish."""
         self._script_waiting = False
+
+    @register_ipc_command(ScriptMoveErrorCommand)
+    def handle_script_move_error(self, text: str):
+        """Handle a motor move error that occurred during script execution."""
+        self._handle_script_error(text, details=None)
 
     @register_ipc_command(SleepCommand)
     @register_script_command(SleepCommand)
