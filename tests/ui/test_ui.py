@@ -72,6 +72,7 @@ from magscope.settings import (
 from magscope.ui.controls import (
     AcquisitionPanel,
     AllanDeviationPanel,
+    CameraPanel,
     ControlPanelBase,
     CurrentZLUTDialog,
     PlotSettingsPanel,
@@ -3020,6 +3021,25 @@ def test_search_guides_to_saving_setting_in_preferences(qtbot):
     assert duration_widget.selectedText() == duration_widget.text()
 
     clear_ui_manager_singleton()
+
+
+def test_camera_panel_uses_setting_display_names(qtbot):
+    manager = SimpleNamespace(
+        camera_type=SimpleNamespace(
+            settings=['framerate', 'fixed_n'],
+            setting_display_names={
+                'framerate': 'Frame Rate',
+                'fixed_n': '# of Fixed Beads',
+            },
+        ),
+        send_ipc=lambda command: None,
+    )
+
+    panel = CameraPanel(manager)
+    qtbot.addWidget(panel)
+
+    assert panel.settings['framerate'].label.text() == 'Frame Rate'
+    assert panel.settings['fixed_n'].label.text() == '# of Fixed Beads'
 
 
 def test_preferences_places_reset_layout_in_appearance_layout_tab(qtbot, monkeypatch):
